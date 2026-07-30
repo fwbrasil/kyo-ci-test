@@ -132,29 +132,34 @@ class JvmAeronTransportTest extends kyo.Test:
     // concurrent add reaches by luck. The client stays open here so the check reads a gate rather than
     // the freed memory the same handle would face once the runtime closes the client behind closeAll.
     "a registration that completes after closeAll is handed back closed, not live" in {
-        for
-            dir    <- Path.tempDir("kyo-aeron-add-vs-close")
-            driver <- Sync.Unsafe.defer(launchDriver(dir.unsafe.show))
-            client <- Sync.Unsafe.defer(connectClient(dir.unsafe.show))
-            t = new JvmAeronTransport(client, AtomicRef.Unsafe.init(Absent: Maybe[String]))
-            asyncPub <- Sync.Unsafe.defer(t.asyncAddPublication(ipcUri, addRaceStreamId))
-            asyncSub <- Sync.Unsafe.defer(t.asyncAddSubscription(ipcUri, addRaceStreamId))
-            _ = assert(asyncPub.isDefined && asyncSub.isDefined, "the driver rejected the registrations before the race began")
-            _       <- Sync.Unsafe.defer(t.closeAll())
-            pub     <- pollAddUntilDone("publication")(t.pollAddPublication(asyncPub.get))
-            sub     <- pollAddUntilDone("subscription")(t.pollAddSubscription(asyncSub.get))
-            pubLive <- Sync.Unsafe.defer(holds(pub.gate))
-            subLive <- Sync.Unsafe.defer(holds(sub.gate))
-            _ <- Sync.Unsafe.defer {
-                t.closePublication(pub)
-                t.closeSubscription(sub)
-                client.close()
-                driver.close()
-            }
-            _ <- dir.removeAll
-        yield
-            assert(!pubLive, "closeAll handed back a live publication, which the client close then unmaps under")
-            assert(!subLive, "closeAll handed back a live subscription, which the client close then unmaps under")
+        // Path.tempDir registers its own recursive removal with the enclosing Scope, so the directory
+        // goes away when this scope closes rather than through an explicit removeAll at the end of the
+        // body. That also covers the paths the explicit call did not: an assertion failure or an
+        // interrupt partway through no longer leaves the directory behind.
+        Scope.run(Path.run {
+            for
+                dir    <- Path.tempDir("kyo-aeron-add-vs-close")
+                driver <- Sync.Unsafe.defer(launchDriver(dir.unsafe.show))
+                client <- Sync.Unsafe.defer(connectClient(dir.unsafe.show))
+                t = new JvmAeronTransport(client, AtomicRef.Unsafe.init(Absent: Maybe[String]))
+                asyncPub <- Sync.Unsafe.defer(t.asyncAddPublication(ipcUri, addRaceStreamId))
+                asyncSub <- Sync.Unsafe.defer(t.asyncAddSubscription(ipcUri, addRaceStreamId))
+                _ = assert(asyncPub.isDefined && asyncSub.isDefined, "the driver rejected the registrations before the race began")
+                _       <- Sync.Unsafe.defer(t.closeAll())
+                pub     <- pollAddUntilDone("publication")(t.pollAddPublication(asyncPub.get))
+                sub     <- pollAddUntilDone("subscription")(t.pollAddSubscription(asyncSub.get))
+                pubLive <- Sync.Unsafe.defer(holds(pub.gate))
+                subLive <- Sync.Unsafe.defer(holds(sub.gate))
+                _ <- Sync.Unsafe.defer {
+                    t.closePublication(pub)
+                    t.closeSubscription(sub)
+                    client.close()
+                    driver.close()
+                }
+            yield
+                assert(!pubLive, "closeAll handed back a live publication, which the client close then unmaps under")
+                assert(!subLive, "closeAll handed back a live subscription, which the client close then unmaps under")
+        })
     }
 
 end JvmAeronTransportTest
