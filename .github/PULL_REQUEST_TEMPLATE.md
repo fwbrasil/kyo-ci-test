@@ -1,5 +1,7 @@
 <!--
 PRs require an approval from any of the core contributors, other than the PR author.
+CI on pull requests may require maintainer approval before it runs. To run CI yourself in the
+meantime, see "Running CI in Your Fork" in CONTRIBUTING.md.
 
 Include this header if applicable:
 Fixes #issue1, #issue2, ...
