@@ -1,0 +1,36 @@
+name: podman-diag
+
+# Final ship-state validation: HEAD ae28b4f4 (PidsLimit fix + dead-retry removed + comment hygiene),
+# setup = Delegate=yes kept, exit_command_delay + pin removed. Full kyo-pod JVM suite (podman + docker)
+# under CI-faithful serialization (SBT_TASK_LIMIT=1). Expect green.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          os: linux-arm64
+      - name: Full kyo-pod suite, ship state, serialized
+        shell: bash
+        env:
+          SBT_TASK_LIMIT: 1
+          JAVA_OPTS: "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8 -Xmx5g"
+          JVM_OPTS: "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8 -Xmx5g"
+        run: |
+          set +e
+          echo "delegated controllers: [$(cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/cgroup.controllers 2>/dev/null)]"
+          sbt -batch 'kyo-podJVM/test' > /tmp/pod.log 2>&1
+          echo "sbt rc=$?"
+          echo "---- per-suite results ----"; grep -aE 'Results:.*passed' /tmp/pod.log | tail -40
+          echo "---- fork errors ----"; grep -acE 'catatonit|fork: Resource|failed to spawn pid1' /tmp/pod.log | sed 's/^/fork-error lines: /'
+          echo "---- failed leaves ----"; grep -acE '\*\*\* FAILED' /tmp/pod.log | sed 's/^/failed leaves: /'
+          echo "---- FAILED names + detail ----"
+          grep -anE '\*\*\* FAILED' /tmp/pod.log | head -30 | while IFS=: read -r ln rest; do
+            echo ">>>> $rest"; sed -n "$((ln+1)),$((ln+8))p" /tmp/pod.log | grep -avE '^\s*$|\[PASS\]'; echo "----"
+          done
+          echo "=== DIAG COMPLETE ==="
