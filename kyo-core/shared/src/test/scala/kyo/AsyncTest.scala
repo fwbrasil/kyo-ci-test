@@ -89,6 +89,27 @@ class AsyncTest extends kyo.test.Test[Any]:
         }
     }
 
+    "Async.timeout arms the deadline before the guarded body starts (deterministic under time control)".notJs in {
+        // Regression: the timeout must arm its deadline before the guarded body can run, so a body that
+        // starts and suspends cannot outrun the timer. Under a controlled clock this is observable:
+        // advancing past the deadline after the body has started must still fire the timeout. If the
+        // body forked before the sleep armed, advance would find no pending sleep and the deadline would
+        // land in the already-elapsed past, hanging forever.
+        Clock.withTimeControl { control =>
+            for
+                started <- Latch.init(1)
+                fiber <- Fiber.initUnscoped(
+                    Abort.run[Timeout](Async.timeout(100.millis)(started.release.andThen(Async.never)))
+                )
+                _       <- started.await
+                _       <- control.advance(101.millis)
+                outcome <- fiber.get
+            yield outcome match
+                case Result.Failure(_: Timeout) => succeed
+                case other                      => fail(s"expected Timeout, got $other")
+        }
+    }
+
     val panic = Result.Panic(new Exception)
 
     "interrupt" - {
