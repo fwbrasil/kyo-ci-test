@@ -62,18 +62,35 @@ object AllocationProbe:
       * `(after - before) / measuredIters <= maxBytesPerOp`. When the allocation counter is unsupported or
       * cannot be enabled the probe FAILS LOUD rather than passing silently: an unmeasurable claim is not a
       * satisfied one.
+      *
+      * `perWindowFloorBytes` admits a bounded, one-off, per-WINDOW cost on top of the per-op bound. The
+      * per-thread counter attributes a JIT deopt or safepoint landing inside a window to the measuring
+      * thread; on a contended runner one such event can recur in every window, and the best-of-[[trials]]
+      * minimum does not filter it (that filter only drops an event confined to some windows). The cost does
+      * not scale with `measuredIters`, so it is a per-window constant, not a per-op allocation. A positive
+      * zero-allocation assertion over a decode-heavy op passes a small floor to stay green under that noise;
+      * a genuine per-op allocation is at least one 16-byte object every op (`16 * measuredIters` per window,
+      * three orders of magnitude above a sane floor at the usual 2000 iters), so it still fails. Defaults to
+      * 0 (strict): an op whose allocation is being MEASURED rather than asserted absent (a negative check
+      * that a boxing path DOES allocate) must keep the floor at 0.
       */
-    def assertBoundedPerOp[A](warmupIters: Int, measuredIters: Int, maxBytesPerOp: Double)(
+    def assertBoundedPerOp[A](warmupIters: Int, measuredIters: Int, maxBytesPerOp: Double, perWindowFloorBytes: Long = 0L)(
         op: => A
     )(using Frame, AssertScope): Unit =
-        assertBoundedPerOp(hotSpotCounter, warmupIters, measuredIters, maxBytesPerOp)(op)
+        assertBoundedPerOp(hotSpotCounter, warmupIters, measuredIters, maxBytesPerOp, perWindowFloorBytes)(op)
 
     /** Test seam: the same measurement, routed through an injected [[AllocationCounter]] instead of the
       * real HotSpot bean. The real bean always reports its counter supported, so the unsupported branch
       * above is unreachable through the public overload; this seam is what lets that branch be exercised
       * by a named test rather than staying an asserted-but-unverified safety claim.
       */
-    private[kyo] def assertBoundedPerOp[A](counter: AllocationCounter, warmupIters: Int, measuredIters: Int, maxBytesPerOp: Double)(
+    private[kyo] def assertBoundedPerOp[A](
+        counter: AllocationCounter,
+        warmupIters: Int,
+        measuredIters: Int,
+        maxBytesPerOp: Double,
+        perWindowFloorBytes: Long
+    )(
         op: => A
     )(using frame: Frame, scope: AssertScope): Unit =
         scope.recordEvaluated()
@@ -85,7 +102,7 @@ object AllocationProbe:
             if !counter.isEnabled then counter.enable()
             iterate(warmupIters, op)
             val minPerOp = minPerOpAcrossTrials(counter, op, measuredIters)
-            if minPerOp > maxBytesPerOp then
+            if minPerOp > maxBytesPerOp + perWindowFloorBytes.toDouble / measuredIters then
                 violation(
                     s"per-op allocation $minPerOp bytes exceeds the bound $maxBytesPerOp (measured over $measuredIters ops)"
                 )
