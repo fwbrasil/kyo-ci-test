@@ -261,6 +261,19 @@ else rm -f "'"$SELFDIR"'/abrt"; echo "Tests: succeeded 99, failed 0"; exit 0; fi
     nat "Native persistent teardown SIGABRT fails after retries" 1 'echo "Tests: succeeded 99, failed 0"
 echo "[warn] Process /x/kyo-jsonrpc-test finished with non-zero value 134 (0x86)"; exit 134'
 
+    # A native crash-retry re-runs through testKyo --quick: attempt 1 is the full run, the retry appends
+    # --quick so only the tests sbt did not record as passed (the crashed suites) re-run.
+    rm -f "$SELFDIR/qk"
+    run_runner Native test 'case "$*" in *--phase*) exit 0;; esac
+if [ ! -f "'"$SELFDIR"'/qk" ]; then touch "'"$SELFDIR"'/qk"
+echo "Tests: succeeded 99, failed 0"
+echo "[warn] Process /x/kyo-schema-yaml-test finished with non-zero value 134 (0x86)"; exit 134
+else rm -f "'"$SELFDIR"'/qk"; echo "Tests: succeeded 99, failed 0"; exit 0; fi'
+    rm -f "$SELFDIR/qk"
+    if exit_is 0 && [ "$(grep -c -- '--quick' "$CALLS")" = 1 ] && tail -1 "$CALLS" | grep -q -- '--quick'
+    then record ok "native crash-retry re-runs through testKyo --quick; attempt 1 is the full run"
+    else record no "native crash-retry re-runs through testKyo --quick; attempt 1 is the full run"; fi
+
     # 21-22: argument validation exits 2 before any sbt.
     run_runner Frob test 'exit 0'
     if exit_is 2 && calls_count 0; then record ok "unknown platform exits 2 before any sbt"
@@ -276,7 +289,7 @@ echo "[warn] Process /x/kyo-jsonrpc-test finished with non-zero value 134 (0x86)
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 29 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 30 ]
     exit $?
 fi
 
@@ -460,12 +473,22 @@ run_native_retry() {
     trap native_cleanup EXIT
     local attempt
     for attempt in $(seq 1 "$MAX_RETRIES"); do
-        log "attempt $attempt/$MAX_RETRIES running: sbt $*"
+        # A retry re-runs through testKyo --quick so only the tests sbt did not record as passed run
+        # again: a crashed native suite is left unrecorded and re-runs, while every module that already
+        # passed is skipped, keeping the reroll off the whole module set the first attempt cleared (a
+        # per-process-startup crash rerolled across ~50 modules never converges). The testKyo command is
+        # the final positional arg; an optional -J-Xmx heap arg precedes it.
+        local -a cmd=("$@")
+        if [ "$attempt" -ge 2 ]; then
+            local li=$(( ${#cmd[@]} - 1 ))
+            case "${cmd[$li]}" in *testKyo*) cmd[$li]="${cmd[$li]} --quick" ;; esac
+        fi
+        log "attempt $attempt/$MAX_RETRIES running: sbt ${cmd[*]}"
         : > "$LOG"; watchdog_killed=0
         if command -v setsid >/dev/null 2>&1; then
-            setsid sbt "$@" >> "$LOG" 2>&1 &
+            setsid sbt "${cmd[@]}" >> "$LOG" 2>&1 &
         else
-            sbt "$@" >> "$LOG" 2>&1 &
+            sbt "${cmd[@]}" >> "$LOG" 2>&1 &
         fi
         sbt_pid=$!
         tail -f "$LOG" 2>/dev/null & tail_pid=$!

@@ -31,10 +31,10 @@ object TestKyo {
       * phases as separate sbt processes keeps the driver from holding a full compile heap while test
       * forks run, which is what over-commits the memory-constrained CI runners.
       */
-    private def taskFor(phase: String, name: String): String = phase match {
+    private def taskFor(phase: String, name: String, quick: Boolean): String = phase match {
         case "compile-main" => s"$name/Compile/compile"
         case "compile-test" => s"$name/Test/compile"
-        case _              => s"$name/test"
+        case _              => if (quick) s"$name/testQuick" else s"$name/test"
     }
 
     private def phaseLabel(phase: String): String = phase match {
@@ -46,6 +46,10 @@ object TestKyo {
     def command: Command = Command.args("testKyo", "") { (state, args) =>
         val isAll           = args.contains("--all")
         val isDryRun        = args.contains("--dry-run")
+        // --quick emits `testQuick` per module instead of `test`, so a re-invocation re-runs only the
+        // tests sbt did not record as passed. The native crash-retry loop (ci-test.sh) uses it on retry
+        // attempts so a crashed suite's re-run stays scoped to what failed, not the whole module set.
+        val isQuick         = args.contains("--quick")
         val scalaIdx        = args.indexOf("--scala")
         val scalaVersionArg = if (scalaIdx >= 0 && scalaIdx + 1 < args.length) Some(args(scalaIdx + 1)) else None
         // Phase selects the per-module task: compile-main, compile-test, or test (default). CI runs the
@@ -68,7 +72,7 @@ object TestKyo {
                 .split(",").map(_.trim).filter(_.nonEmpty).toSet
 
         val remaining = args
-            .filterNot(a => a == "--all" || a == "--dry-run")
+            .filterNot(a => a == "--all" || a == "--dry-run" || a == "--quick")
             .filterNot(a => a == "--scala" || (scalaIdx >= 0 && args.indexOf(a) == scalaIdx + 1))
             .filterNot(a => a == "--phase" || (phaseIdx >= 0 && args.indexOf(a) == phaseIdx + 1))
             .filterNot(a => a == "--exclude" || (excludeIdx >= 0 && args.indexOf(a) == excludeIdx + 1))
@@ -92,8 +96,8 @@ object TestKyo {
         val targetScala = scalaVersionOpt.getOrElse(scala3)
 
         def commandForScala(sv: String): String =
-            if (isAll || scalaVersionOpt.isDefined) runAll(state, platform, sv, phase, excludeBases, onlyBases)
-            else runDiff(state, baseRef, platform, sv, phase, excludeBases, onlyBases)
+            if (isAll || scalaVersionOpt.isDefined) runAll(state, platform, sv, phase, excludeBases, onlyBases, isQuick)
+            else runDiff(state, baseRef, platform, sv, phase, excludeBases, onlyBases, isQuick)
 
         // Assemble the whole run as ONE ordered command string. sbt's Command.process queues a command
         // onto the state's remaining commands rather than running it inline, so issuing each Scala-version
@@ -132,7 +136,8 @@ object TestKyo {
         scalaVersion: String,
         phase: String = "test",
         exclude: Set[String] = Set.empty,
-        only: Set[String] = Set.empty
+        only: Set[String] = Set.empty,
+        quick: Boolean = false
     ): String = {
         val extracted = Project.extract(state)
         val structure = extracted.structure
@@ -157,7 +162,7 @@ object TestKyo {
         } else {
             val sorted = testable.map(_.project).sorted
             log(s"${phaseLabel(phase)} ${sorted.size} projects (Scala $scalaVersion): ${sorted.mkString(", ")}")
-            val commands = sorted.map(name => taskFor(phase, name)).mkString("; ")
+            val commands = sorted.map(name => taskFor(phase, name, quick)).mkString("; ")
             log(s"running: $commands")
             commands
         }
@@ -176,7 +181,8 @@ object TestKyo {
         scalaVersion: String,
         phase: String = "test",
         exclude: Set[String] = Set.empty,
-        only: Set[String] = Set.empty
+        only: Set[String] = Set.empty,
+        quick: Boolean = false
     ): String = {
         val changedFiles = diffFiles(baseRef)
         if (changedFiles.isEmpty) {
@@ -189,7 +195,7 @@ object TestKyo {
 
         if (metaBuildChanged(changedFiles)) {
             log("meta-build changed (project/ or .github/), running all modules")
-            return runAll(state, platform, scalaVersion, phase, exclude, only)
+            return runAll(state, platform, scalaVersion, phase, exclude, only, quick)
         }
 
         val extracted = Project.extract(state)
@@ -204,7 +210,7 @@ object TestKyo {
             if (!changedFiles.contains("build.sbt")) Set.empty
             else buildSbtAffectedProjects(extracted, baseRef) match {
                 case Some(names) => names
-                case None        => return runAll(state, platform, scalaVersion, phase, exclude, only)
+                case None        => return runAll(state, platform, scalaVersion, phase, exclude, only, quick)
             }
 
         val directlyChanged = (changedFiles.flatMap(fileToProjects(_, allNames)) ++ buildSbtProjects).toSet
@@ -243,7 +249,7 @@ object TestKyo {
             val sorted = toTest.toSeq.sorted
             log(s"directly changed: ${filtered.toSeq.sorted.mkString(", ")}")
             log(s"with dependents (${phaseLabel(phase)}): ${sorted.mkString(", ")}")
-            val commands = sorted.map(name => taskFor(phase, name)).mkString("; ")
+            val commands = sorted.map(name => taskFor(phase, name, quick)).mkString("; ")
             log(s"running: $commands")
             commands
         }
