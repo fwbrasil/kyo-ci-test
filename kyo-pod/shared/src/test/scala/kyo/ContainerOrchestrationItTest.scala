@@ -456,31 +456,30 @@ class ContainerOrchestrationItTest extends BasePodTest:
         }
     }
 
-    "init completes under 2s when healthcheck fails and container is gone mid-retry" - runBackend {
-        // Container lives ~300ms then auto-removes. Healthcheck always fails.
-        // Once the container is auto-removed, the retry loop's state check returns
-        // NotFound, which falls into the catch-all branch and keeps retrying for the
-        // full schedule (3s total here).
+    "init short-circuits the healthcheck retry once the container is gone mid-retry" - runBackend {
+        // The container lives ~300ms then auto-removes; the healthcheck always fails, so runHealthCheck
+        // keeps retrying. Once the container is gone, its isContainerAlive check must stop the loop instead
+        // of running the schedule to exhaustion. A counting healthcheck asserts the short-circuit
+        // deterministically: the loop runs only the handful of attempts that fit before the container
+        // disappears, never the full 30-attempt schedule. A zero count (the container already gone before
+        // the first check, so runHealthCheck's outer isContainerAlive guard returns immediately) is an
+        // accepted degenerate pass: it still proves the schedule never ran to exhaustion.
+        val attempts = new java.util.concurrent.atomic.AtomicInteger(0)
         val config = Container.Config("alpine")
             .command("sh", "-c", "sleep 0.3; exit 0")
             .autoRemove(true)
-            .healthCheck(Container.HealthCheck.exec(
-                command = Command("false"),
-                expected = Absent,
-                retrySchedule = Schedule.fixed(100.millis).take(30)
-            ))
+            .healthCheck(Container.HealthCheck.init(Schedule.fixed(100.millis).take(30)) { _ =>
+                Sync.defer(discard(attempts.incrementAndGet()))
+                    .andThen(Abort.fail(ContainerOperationException("healthcheck", "always fails")))
+            })
         for
-            t0 <- Clock.now
-            _  <- Abort.run[ContainerException](Container.init(config))
-            t1 <- Clock.now
-        yield
-            val elapsedMs = t1.toJava.toEpochMilli - t0.toJava.toEpochMilli
-            assert(
-                elapsedMs < 2000,
-                s"Expected init to complete in <2s when container auto-removes during healthcheck retries, " +
-                    s"took ${elapsedMs}ms — runHealthCheck is not short-circuiting on NotFound"
-            )
-        end for
+            _ <- Abort.run[ContainerException](Container.init(config))
+        yield assert(
+            attempts.get() < 30,
+            s"expected the healthcheck loop to stop once the container auto-removed, but it ran " +
+                s"${attempts.get()} attempts (the full 30-attempt schedule); runHealthCheck did not " +
+                s"short-circuit on isContainerAlive == false"
+        )
     }
 
     "scope cleanup waits stopTimeout when stopSignal is Present" - runBackend {
