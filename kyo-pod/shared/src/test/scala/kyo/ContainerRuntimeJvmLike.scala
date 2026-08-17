@@ -19,7 +19,10 @@ private[kyo] trait ContainerRuntimeJvmLike extends ContainerRuntimeBase:
 
     private[kyo] def queryPodmanMachineSockets: Seq[String] =
         try
-            val pb = new java.lang.ProcessBuilder("podman", "machine", "inspect", "--format", "json")
+            // `--format` is a Go template, so the JSON form is `{{json .}}`. A bare `json` is emitted
+            // literally (podman prints the string "json"), leaving nothing for the api.sock scrape below
+            // and, on macOS, silently falling back to Docker Desktop's socket path.
+            val pb = new java.lang.ProcessBuilder("podman", "machine", "inspect", "--format", "{{json .}}")
             pb.redirectErrorStream(true)
             val proc        = pb.start()
             val output      = new String(proc.getInputStream.readAllBytes())
