@@ -52,7 +52,7 @@ object HttpClient:
         import AllowUnsafe.embrace.danger
         given Frame   = Frame.internal
         val transport = kyo.net.NetPlatform.transport
-        initUnsafe(transport, 100, 60.seconds)
+        initUnsafe(transport, 100, kyo.http.client.defaultIdleTimeout())
     end defaultClient
 
     private val local: Local[(HttpClient, HttpClientConfig)] =

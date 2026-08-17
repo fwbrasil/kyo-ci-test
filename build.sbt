@@ -201,6 +201,11 @@ lazy val `kyo-settings` = Seq(
     Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-oDG"),
     ThisBuild / versionScheme := Some("early-semver"),
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    // The process-lifetime default HttpClient is never closed, so its pool relies on the idle-expiry reaper to release
+    // sockets. Its 60s production idle timeout outlasts the leak check's 30s fd-drain window, so a connection pooled just
+    // before a fork ends would still be open at the check. Shorten it in the test fork only (production keeps 60s) so a
+    // reaped default-client connection drains well within the window. See kyo.http.client.defaultIdleTimeout.
+    Test / javaOptions += "-Dkyo.http.client.defaultIdleTimeout=2seconds",
     // Exclude generated FFI binding impls (src_managed *BindingsImpl from the kyo-ffi codegen): measuring
     // them tracks the generator, not hand-written code.
     coverageExcludedFiles := ".*src_managed.*",
