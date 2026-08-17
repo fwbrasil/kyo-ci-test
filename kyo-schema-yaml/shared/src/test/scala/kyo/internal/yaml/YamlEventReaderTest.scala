@@ -145,7 +145,10 @@ class YamlEventReaderTest extends kyo.test.Test[Any]:
             assert(observed.bytesValue == bytes.toSeq, s"bytesValue actual=${observed.bytesValue}")
             assert(observed.bigIntValue == BigInt("123456789012345678901234567890"), s"bigIntValue actual=${observed.bigIntValue}")
             assert(observed.bigDecimalValue == BigDecimal("12345.6789"), s"bigDecimalValue actual=${observed.bigDecimalValue}")
-            assert(observed.instantValue == java.time.Instant.parse("2026-06-01T12:34:56Z"), s"instantValue actual=${observed.instantValue}")
+            assert(
+                observed.instantValue == java.time.Instant.parse("2026-06-01T12:34:56Z"),
+                s"instantValue actual=${observed.instantValue}"
+            )
             assert(observed.durationValue == java.time.Duration.parse("PT2H3M"), s"durationValue actual=${observed.durationValue}")
         }
 
