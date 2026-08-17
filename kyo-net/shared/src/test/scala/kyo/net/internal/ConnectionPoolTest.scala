@@ -165,6 +165,32 @@ class ConnectionPoolTest extends Test:
         end for
     }
 
+    "reaper expires idle connections across multiple host pools" in {
+        // The sweep iterates every host pool, so a connection idle past the timeout is closed regardless of which host it
+        // belongs to. Release one to each of two hosts, never poll, and assert both are closed by the reaper.
+        val discardCount = AtomicInt.Unsafe.init(0)
+        val pool = ConnectionPool.init[NetAddress, String](
+            2,
+            100.millis,
+            _ => true,
+            _ => discard(discardCount.incrementAndGet())
+        )
+        pool.release(key1, "a")
+        pool.release(key2, "b")
+        def waitForReap(remaining: Int): Boolean < Async =
+            if discardCount.get() == 2 then true
+            else if remaining <= 0 then false
+            else Async.sleep(20.millis).andThen(waitForReap(remaining - 1))
+        for
+            reaped <- waitForReap(250) // up to ~5s
+            _      <- Sync.defer(discard(pool.close()))
+        yield assert(
+            reaped && discardCount.get() == 2,
+            s"reaper must close both hosts' idle connections; discardCount=${discardCount.get()}"
+        )
+        end for
+    }
+
     "release that observes close mid-publish disposes the connection, never orphans it (fd-leak race regression, CI #1837)" in {
         // The shared-transport fd leak: release(key, conn) passes its `closed` check, then close() runs (drains every host
         // pool, sets closed, clears the map). Release then re-creates a host pool via computeIfAbsent and publishes into a

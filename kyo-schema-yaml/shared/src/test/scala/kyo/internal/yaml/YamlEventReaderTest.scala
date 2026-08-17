@@ -135,18 +135,18 @@ class YamlEventReaderTest extends kyo.test.Test[Any]:
                 durationValue = reader("PT2H3M").duration()
             )
 
-            assert(observed.toSeqMap == (
-                longValue = 9007199254740993L,
-                floatValue = 1.25f,
-                shortValue = 123.toShort,
-                byteValue = 12.toByte,
-                charValue = 'K',
-                bytesValue = bytes.toSeq,
-                bigIntValue = BigInt("123456789012345678901234567890"),
-                bigDecimalValue = BigDecimal("12345.6789"),
-                instantValue = java.time.Instant.parse("2026-06-01T12:34:56Z"),
-                durationValue = java.time.Duration.parse("PT2H3M")
-            ).toSeqMap)
+            // Per-field so a mismatch names the field and prints the actual value: the CI failure of this leaf on
+            // linux-x64 Native shows only the expected tuple, hiding which field (and to what) diverged.
+            assert(observed.longValue == 9007199254740993L, s"longValue actual=${observed.longValue}")
+            assert(observed.floatValue == 1.25f, s"floatValue actual=${observed.floatValue}")
+            assert(observed.shortValue == 123.toShort, s"shortValue actual=${observed.shortValue}")
+            assert(observed.byteValue == 12.toByte, s"byteValue actual=${observed.byteValue}")
+            assert(observed.charValue == 'K', s"charValue actual=${observed.charValue}")
+            assert(observed.bytesValue == bytes.toSeq, s"bytesValue actual=${observed.bytesValue}")
+            assert(observed.bigIntValue == BigInt("123456789012345678901234567890"), s"bigIntValue actual=${observed.bigIntValue}")
+            assert(observed.bigDecimalValue == BigDecimal("12345.6789"), s"bigDecimalValue actual=${observed.bigDecimalValue}")
+            assert(observed.instantValue == java.time.Instant.parse("2026-06-01T12:34:56Z"), s"instantValue actual=${observed.instantValue}")
+            assert(observed.durationValue == java.time.Duration.parse("PT2H3M"), s"durationValue actual=${observed.durationValue}")
         }
 
         "checks nil without consuming non-null scalar values" in {

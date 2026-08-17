@@ -213,11 +213,14 @@ private[kyo] object ConnectionPool:
         /** Close every connection idle past the timeout, scanning from the head.
           *
           * `release` appends to `tail` with a fresh timestamp and `poll` consumes from `head`, so the ring is ordered by
-          * idle age: the head is the oldest connection. Once a non-stale head is seen, everything behind it is fresher, so
-          * the scan stops. A stale head is claimed with the same `head` CAS `poll` uses, which makes the reaper race-free
-          * against a concurrent `poll` (whichever wins the CAS owns the slot, so no connection is both handed out and
-          * closed) and against `close`'s drain (same exactly-once arbitration). A head slot whose sequence is not yet
-          * readable is a just-released, fresh connection mid-publish: stop and let the next pass catch it.
+          * idle age from head to tail (approximately: two `release`s racing on adjacent slots can timestamp out of order by
+          * the interleaving gap). The scan stops at the first non-stale head, treating everything behind it as fresher. A
+          * small inversion can leave a stale connection one slot behind a fresh head unreaped for a cycle; the next sweep
+          * re-reads from the head and catches it, so the worst case is a bounded extra delay, never a stranded connection. A
+          * stale head is claimed with the same `head` CAS `poll` uses, which makes the reaper race-free against a concurrent
+          * `poll` (whichever wins the CAS owns the slot, so no connection is both handed out and closed) and against
+          * `close`'s drain (same exactly-once arbitration). A head slot whose sequence is not yet readable is a just-released,
+          * fresh connection mid-publish: stop and let the next pass catch it.
           *
           * A per-connection close failure is logged and the scan continues: a reaper that died on one bad connection would
           * silently stop expiring every other connection. NonFatal only, so a fatal error still escapes (mirrors kyo-sql's
