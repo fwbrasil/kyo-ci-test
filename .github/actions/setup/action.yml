@@ -227,10 +227,20 @@ runs:
         echo LIBPATH=%LIBPATH%>>"%GITHUB_ENV%"
         where cl
 
-    - uses: coursier/setup-action@v3.0.0
+    # coursier/setup-action is fetched from codeload like any `uses:`, and the runner retries that
+    # download only a few times with a short backoff, which a transient GitHub 429 (a rate-limit window
+    # of tens of seconds) outlasts, failing setup before any test runs. nick-fields/retry wraps `run:`
+    # commands, not a `uses:` action, so retry the action through wretry: it re-runs coursier/setup-action
+    # up to attempt_limit times with attempt_delay ms between attempts, riding out a throttled download.
+    - name: Set up JDK + sbt (coursier)
+      uses: Wandalen/wretry.action@v3.8.0
       with:
-        jvm: corretto:25
-        apps: sbt
+        action: coursier/setup-action@v3.0.0
+        with: |
+          jvm: corretto:25
+          apps: sbt
+        attempt_limit: 4
+        attempt_delay: 30000
 
     - name: Verify sbt resolves in bash (Windows)
       if: ${{ contains(inputs.os, 'windows') }}
