@@ -128,10 +128,41 @@ class ConnectionPoolTest extends Test:
         pool.release(key1, "stale1")
         pool.release(key1, "stale2")
         // Both released conns are immediately past the zero idle timeout: poll evicts+discards each
-        // and finds no live conn left, returning empty.
+        // and finds no live conn left, returning empty. (The synchronous poll runs long before the
+        // reaper's first sweep, so poll does the eviction here, as this case intends.)
         val result = pool.poll(key1)
+        // A zero timeout is finite, so init spawns a reaper; interrupt it so it does not outlive the test.
+        discard(pool.close())
         assert(result == Maybe.empty)
         assert(discardCount.get() == 2)
+    }
+
+    "reaper expires an idle connection with no further poll" in {
+        // The lazy-on-poll defect: without a background reaper a connection released and never polled again is
+        // never inspected, so its socket is never closed (the process-lifetime default client leaks it). A finite
+        // idle timeout now spawns a reaper that closes an idle connection within ~idleTimeout + reapInterval with
+        // no poll. Driven by the live Clock and a bounded Async wait (no Thread.sleep). The Duration.Infinity pools
+        // every other case here uses spawn no reaper, so they are unaffected.
+        val discardCount = AtomicInt.Unsafe.init(0)
+        val pool = ConnectionPool.init[NetAddress, String](
+            2,
+            100.millis,
+            _ => true,
+            _ => discard(discardCount.incrementAndGet())
+        )
+        pool.release(key1, "c")
+        def waitForReap(remaining: Int): Boolean < Async =
+            if discardCount.get() == 1 then true
+            else if remaining <= 0 then false
+            else Async.sleep(20.millis).andThen(waitForReap(remaining - 1))
+        for
+            reaped <- waitForReap(250)                  // up to ~5s
+            _      <- Sync.defer(discard(pool.close())) // interrupt the reaper so it does not outlive the test
+        yield assert(
+            reaped && discardCount.get() == 1,
+            s"reaper must close the idle connection exactly once with no poll; discardCount=${discardCount.get()}"
+        )
+        end for
     }
 
     "release that observes close mid-publish disposes the connection, never orphans it (fd-leak race regression, CI #1837)" in {
