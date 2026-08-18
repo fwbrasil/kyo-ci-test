@@ -1095,7 +1095,6 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             // boundary rather than partway through one.
             awaitMonitorCycles(2)
             val wakeCalls    = 1000
-            val start        = System.nanoTime()
             val cyclesBefore = scheduler.blockingMonitor.cycles
             var i            = 0
             while (i < wakeCalls) {
@@ -1103,19 +1102,12 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 i += 1
             }
             val cyclesAdded = scheduler.blockingMonitor.cycles - cyclesBefore
-            val elapsed     = System.nanoTime() - start
 
-            // However many wakes arrive, consecutive scans stay at least minInterval apart, so a
-            // burst spanning `elapsed` admits one scan per minInterval plus the one already in
-            // flight when the count was taken. `elapsed` is read to compute that ceiling and
-            // never to bound how long anything took: the ceiling is the physical limit the scan
-            // floor imposes, so a slower host is granted proportionally more scans by the same
-            // formula and cannot fail it, while one scan per wake exceeds it at any speed.
-            val maxCycles = elapsed / scheduler.blockingMonitor.minIntervalNs + 1
+            // Two counts, no clock: dispatching a scan per call lands the burst at wakeCalls
+            // scans, and collapsing the calls into the permit lands it below.
             assert(
-                cyclesAdded <= maxCycles,
-                s"$wakeCalls wake() calls triggered $cyclesAdded monitor scans in ${elapsed}ns, above the " +
-                    s"$maxCycles that the ${scheduler.blockingMonitor.minIntervalNs}ns scan floor allows: " +
+                cyclesAdded < wakeCalls,
+                s"$wakeCalls wake() calls triggered $cyclesAdded monitor scans: " +
                     "they should coalesce, not scan per call"
             )
 

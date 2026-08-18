@@ -71,9 +71,8 @@ private[scheduler] class BlockingMonitor(
     // counter resolution — the smallest interval where cross-thread samples reliably advance.
     // This ensures two consecutive samples are far enough apart for the OS to update. The
     // pressure-scaled block threshold handles load-dependent false positives on top of this.
-    // Can be overridden via system property. Read cross-thread by tests to derive how many
-    // scans a burst of wake() calls could have produced.
-    private[scheduler] val minIntervalNs: Long = {
+    // Can be overridden via system property.
+    private val minIntervalNs: Long = {
         val override_ = blockingMonitorMinIntervalNs()
         if (override_ > 0) override_.toLong
         else if (executor ne null) Math.max(ThreadUserTime.probeResolution(), 2000000L) // 2ms floor
