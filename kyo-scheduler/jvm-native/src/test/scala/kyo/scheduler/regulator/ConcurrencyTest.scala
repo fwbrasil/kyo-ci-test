@@ -1,6 +1,7 @@
 package kyo.scheduler.regulator
 
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kyo.scheduler.TestTimer
 import kyo.scheduler.util.Sleep
 import org.scalatest.NonImplicitAssertions
@@ -36,14 +37,22 @@ class ConcurrencyTest extends AnyFreeSpec with NonImplicitAssertions {
         assert(updates.isEmpty)
     }
 
-    "probe jitter stays below regulator threshold with real sleep" in {
-        val config          = Concurrency.defaultConfig
-        val timer           = TestTimer()
-        val concurrencyDiff = new AtomicInteger(0)
-        val probes          = new AtomicInteger(0)
+    "regulates on what the real sleep probe measures" in {
+        val config           = Concurrency.defaultConfig
+        val timer            = TestTimer()
+        val concurrencyDiff  = new AtomicInteger(0)
+        val probes           = new AtomicInteger(0)
+        var jitterAtDecision = -1.0
 
+        // The regulator reads the jitter and then the load average, both on this thread and with
+        // no probe able to land between them, so the load supplier is where the jitter that
+        // decided this cycle can be captured exactly.
+        val running = new AtomicReference[Concurrency](null)
         val concurrency = new Concurrency(
-            () => 0.9,
+            () => {
+                jitterAtDecision = running.get().status().regulator.measurementsJitter
+                0.9
+            },
             diff => { val _ = concurrencyDiff.addAndGet(diff) },
             ms => {
                 Sleep(ms)
@@ -53,33 +62,36 @@ class ConcurrencyTest extends AnyFreeSpec with NonImplicitAssertions {
             timer,
             config
         )
+        running.set(concurrency)
 
         // Virtual scheduling around a real probe: advanceAndRun fires the collect and regulate
-        // tasks on this thread, so every host gets the same number of real Sleep probes and the
-        // same number of regulation decisions, and only the measured jitter comes from the real
-        // clock. Letting wall time drive the schedule made the decision budget depend on host
-        // speed instead: a host slow enough to stretch the wait into one extra regulation cycle
-        // added a step large enough to break the floor on its own.
-        val cycles = 4
-        timer.advanceAndRun(config.regulateInterval * cycles)
+        // tasks on this thread, so every host runs the same number of real Sleep probes and
+        // reaches exactly one regulation decision, and only the measurement comes from the real
+        // clock. Wall time cannot drive this: a host slow enough to stretch the wait into an
+        // extra regulation cycle changed the decision budget the outcome was judged against.
+        timer.advanceAndRun(config.regulateInterval)
         concurrency.stop()
 
-        val expectedProbes = cycles * (config.regulateInterval / config.collectInterval).toInt
+        val expectedProbes = (config.regulateInterval / config.collectInterval).toInt
         val status         = concurrency.status().regulator
         assert(probes.get() == expectedProbes, s"expected $expectedProbes probes, got ${probes.get()}")
         assert(status.probesCompleted == expectedProbes.toLong, "every probe should have completed")
-        assert(status.adjustments == cycles.toLong, s"expected $cycles regulation cycles, got ${status.adjustments}")
+        assert(status.adjustments == 1L, s"expected one regulation cycle, got ${status.adjustments}")
 
-        // With stable jitter and high load, the regulator should
-        // be scaling UP or staying neutral, not reducing workers.
-        // Steps escalate as 1, 2, 3, 5 across the four cycles, so a total under the floor takes
-        // a reduction in at least three of them: sustained jitter above the threshold rather
-        // than one noisy cycle.
-        val totalDiff = concurrencyDiff.get()
+        // The decision has to follow the jitter the probe actually produced. Asserting the
+        // outcome directly instead (workers grew, or shrank by no more than a fixed amount)
+        // asserts that the host was quiet, which a shared or oversubscribed one is not: real
+        // contention raises real probe jitter, and shedding workers is then the correct answer.
+        // The first step in either direction is 1, so the expected diff is exact.
+        val expectedDiff =
+            if (jitterAtDecision > config.jitterUpperThreshold) -1
+            else if (jitterAtDecision < config.jitterLowerThreshold) 1
+            else 0
         assert(
-            totalDiff >= -8,
-            s"Concurrency regulator reduced workers by $totalDiff, " +
-                s"indicating excessive probe jitter (measured ${status.measurementsJitter.toLong}ns)"
+            concurrencyDiff.get() == expectedDiff,
+            s"probe jitter of ${jitterAtDecision.toLong}ns against a band of " +
+                s"[${config.jitterLowerThreshold.toLong}, ${config.jitterUpperThreshold.toLong}]ns " +
+                s"calls for $expectedDiff, got ${concurrencyDiff.get()}"
         )
     }
 
