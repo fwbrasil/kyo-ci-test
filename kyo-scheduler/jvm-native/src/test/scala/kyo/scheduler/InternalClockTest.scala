@@ -31,19 +31,27 @@ class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions {
     }
 
     "currentMillis" in withClock { clock =>
-        // Each published tick is a System.currentTimeMillis reading taken by the update thread
-        // after the previous value was read and before the new one was observed, so system
-        // readings taken around that window bracket it. Bracketing pins the reported time to
-        // real time without depending on how long anything took: the assertions hold whether
-        // the tick lands in a microsecond or after a scheduling stall.
+        // A published tick is a System.currentTimeMillis reading, so system readings taken around
+        // the window it was sampled in bracket it. That pins the reported time to real time
+        // without depending on how long anything took: the assertions hold whether a tick lands
+        // in a microsecond or after a scheduling stall.
+        //
+        // The bracket is asserted on the second tick because the update thread samples the system
+        // clock and publishes it as two steps, and can be descheduled in between. Observing the
+        // first tick only proves its publish came after `previous` was read, not its sample, so
+        // it can carry a value taken before the watch started. The second tick's sample follows
+        // the first tick's publish in the update thread's own program order, so it is provably
+        // taken after `systemBefore`.
         for (_ <- 0 until 5) {
             val systemBefore = System.currentTimeMillis()
             val previous     = clock.currentMillis()
-            val tick         = awaitTick(clock, previous)
+            val first        = awaitTick(clock, previous)
+            val second       = awaitTick(clock, first)
             val systemAfter  = System.currentTimeMillis()
-            assert(tick > previous, s"clock went backwards, from $previous to $tick")
-            assert(tick >= systemBefore, s"clock reported $tick, sampled before the watch started at $systemBefore")
-            assert(tick <= systemAfter, s"clock reported $tick, ahead of the system clock's $systemAfter")
+            assert(first > previous, s"clock went backwards, from $previous to $first")
+            assert(second > first, s"clock went backwards, from $first to $second")
+            assert(second >= systemBefore, s"clock reported $second, sampled before the watch started at $systemBefore")
+            assert(second <= systemAfter, s"clock reported $second, ahead of the system clock's $systemAfter")
         }
     }
 
