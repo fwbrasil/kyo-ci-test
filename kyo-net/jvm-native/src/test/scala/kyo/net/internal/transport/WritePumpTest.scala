@@ -605,14 +605,17 @@ class WritePumpTest extends Test:
         // Mirrors the writable-wait-failure test above (same setup: smallBufferedPair(2048,2048), a 1 MB payload guaranteeing EAGAIN, the
         // onAwaitWritable hook closing the handle the instant the writable wait registers), but pins the DROP-CORRECTNESS half of the lost-CAS
         // contract: once teardown wins (state swings to TornDown), the pump must never resurrect and must never issue
-        // another write for the now-undeliverable captured tail. closedLatch latches the teardown; the two extra assertions (writeCalls stays
-        // at 1, state reads TornDown) are the load-bearing ones a CAS-retry regression would break.
+        // another write for the now-undeliverable captured tail. closedLatch latches the teardown and the write count is sampled inside it; the
+        // load-bearing assertions a CAS-retry regression would break are that the state reads TornDown and that the pump's FINAL write count
+        // (read once the driver's loop fiber has died, so no further callback can reach the pump) still equals the count at teardown.
         "an error teardown racing a partial write drops the tail without resurrection" in {
             assumePoller()
             val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
-            discard(spy.start())
+            // The driver's loop fiber. It completes only after the terminal exit has settled every promise the pump could still be waiting on,
+            // which is what makes the write count read below a final one rather than a mid-flight snapshot.
+            val driverLoop = spy.start()
             PosixTestSockets.smallBufferedPair(2048, 2048).map { case (clientFd, peerFd) =>
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
@@ -649,20 +652,25 @@ class WritePumpTest extends Test:
                         state.get() == WriteState.TornDown,
                         s"the pump must not be resurrected after teardown won, state was ${state.get()}"
                     )
-                    // A survival window, not a settle: a resurrection issues its write shortly AFTER teardown, so the count must be given a
-                    // chance to move before it is read as final.
-                    Async.sleep(50.millis).andThen {
+                    // Closing the driver settles every promise the pump could still be waiting on, running each completion callback on the poll
+                    // carrier, and the loop fiber completing is the point past which no callback can reach the pump at all. The write count is
+                    // read there, so it is the pump's final count and not a snapshot taken while a resurrection is still on its way.
+                    spy.close()
+                    Abort.run[Timeout](Async.timeout(10.seconds)(driverLoop.safe.get)).map { exit =>
+                        // closeHandle closed clientFd; only peerFd remains to close.
+                        discard(sock.close(peerFd))
+                        assert(
+                            exit.isSuccess,
+                            s"the driver loop never exited, so the pump's outstanding callbacks were never delivered and the count below " +
+                                s"would be read off a live pump: $exit"
+                        )
                         val atTeardown = writesAtTeardown.get()
                         val now        = spy.writeCalls.get()
                         assert(
                             now == atTeardown,
                             s"no write may be issued for the undeliverable captured tail after teardown won: the pump had issued " +
-                                s"$atTeardown write(s) when teardown ran and $now afterwards, so it resurrected"
+                                s"$atTeardown write(s) when teardown ran and $now by the time the driver died, so it resurrected"
                         )
-                        spy.close()
-                        // closeHandle closed clientFd; only peerFd remains to close.
-                        discard(sock.close(peerFd))
-                        succeed
                     }
                 }
             }
