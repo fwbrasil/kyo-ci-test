@@ -1910,29 +1910,31 @@ class STMTest extends kyo.test.Test[Any]:
             STM.run(inner).map { v => assert(v == 42, s"top-level STM.run should evaluate body cleanly; got $v") }
         }
 
-        "STM.run with Schedule.fixed(20.millis) introduces gap between body attempts" in {
+        "STM.run gates each retry behind the schedule delay on the clock" in {
             val delay = 20.millis
-            for
-                stamps <- AtomicRef.init(List.empty[Long])
-                _ <- Abort.run[FailedTransaction] {
-                    STM.run(Schedule.fixed(delay).take(3)) {
-                        for
-                            _ <- Sync.defer(stamps.updateAndGet(java.lang.System.nanoTime :: _).unit)
-                            _ <- STM.retry
-                        yield ()
-                    }
-                }
-                ts <- stamps.get
-            yield
-                val asc    = ts.reverse
-                val deltas = asc.sliding(2).collect { case List(a, b) => (b - a).nanos }.toList
-                assert(deltas.nonEmpty, s"need at least 2 attempts; got ${asc.size}")
-                val bound = delay * 0.5
-                assert(
-                    deltas.forall(_ >= bound),
-                    s"retry delays should be >= $bound; got $deltas"
-                )
-            end for
+            Clock.withTimeControl { control =>
+                for
+                    attempts     <- AtomicInt.init(0)
+                    firstAttempt <- Promise.init[Unit, Any]
+                    fiber <- Fiber.initUnscoped(Abort.run[FailedTransaction] {
+                        STM.run(Schedule.fixed(delay).take(3)) {
+                            attempts.incrementAndGet.unit
+                                .andThen(firstAttempt.completeUnit)
+                                .andThen(STM.retry)
+                        }
+                    })
+                    // the first attempt runs immediately; with the clock frozen the retry cannot proceed
+                    _           <- firstAttempt.get
+                    whileFrozen <- attempts.get
+                    // advancing past each scheduled delay releases the remaining attempts to exhaustion
+                    advancer <- Fiber.initUnscoped(Loop.forever(control.advance(delay)))
+                    _        <- fiber.getResult
+                    _        <- advancer.interrupt
+                    total    <- attempts.get
+                yield
+                    assert(whileFrozen == 1)
+                    assert(total == 4)
+            }
         }
 
         "STM.run body observes Present(tick) for currentTransaction from its first statement" in {
