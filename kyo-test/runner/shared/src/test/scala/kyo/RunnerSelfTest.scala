@@ -31,17 +31,22 @@ private object RunnerSelfFixtures:
         "y" in Async.sleep(1.millis).andThen(assert(2 + 2 == 4))
     end MultiAsyncSuite
 
-    // Static counter for parallelism test: tracks concurrent active leaves.
+    // Process-global in-flight/peak counters for the parallelism-bound suite. The surviving deterministic
+    // assertion is peak <= globalK: a pool worker holds its leaf until the body completes, so at most globalK
+    // leaves are in-flight across the process at once.
     val parallelActive: AtomicInteger  = new AtomicInteger(0)
     val parallelMaxSeen: AtomicInteger = new AtomicInteger(0)
 
     class ParallelSuite extends TestBase[Any]:
+        // Each leaf raises the in-flight count, records the peak, yields once across an async boundary (fork-and-join a
+        // trivial fiber, NOT a sleep and NOT a cross-leaf barrier so nothing can deadlock under competition for the
+        // shared global pool), then lowers the count.
         private def track(using kyo.test.AssertScope): Unit < (Async & Abort[Throwable] & Scope) =
             Sync.defer {
                 val now = parallelActive.incrementAndGet()
                 var cur = parallelMaxSeen.get()
                 while now > cur && !parallelMaxSeen.compareAndSet(cur, now) do cur = parallelMaxSeen.get()
-            }.andThen(Async.sleep(30.millis)).andThen(Sync.defer {
+            }.andThen(Fiber.initUnscoped(()).map(_.get)).andThen(Sync.defer {
                 parallelActive.decrementAndGet(): Unit
             }).andThen(succeed)
         for i <- 0 until 8 yield s"leaf$i" in track
@@ -181,26 +186,26 @@ class RunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
     }
 
-    "parallelism enabled: concurrent execution" in {
-        // Reset static counters before this run
+    "parallelism enabled: all leaves run, bounded by the process-global pool" in {
+        // The parallelism config drives 8 leaves through the process-global LeafPool. The deterministic assertions are
+        // completeness (all 8 leaves ran and passed) and the global bound (peak <= globalK): a pool worker holds its
+        // leaf until the body completes, so at most globalK leaves are in-flight at once. Real concurrency cannot be
+        // observed deterministically through the shared global pool without a sleep or a barrier through the pool
+        // (which deadlocks under cross-suite competition), so peak > 1 is intentionally NOT asserted here; the
+        // deterministic concurrency-reaches-k proof lives in LeafPoolTest. globalK is computed in-test from the public
+        // formula (identical to LeafPool.globalK), no reflection.
+        val globalK = if Platform.isNative then 1 else math.max(1, Async.defaultConcurrency)
         RunnerSelfFixtures.parallelActive.set(0)
         RunnerSelfFixtures.parallelMaxSeen.set(0)
         val config = RunConfig.default.copy(parallelism = 4)
         discharge(TestRunner.runReport(classOf[RunnerSelfFixtures.ParallelSuite], config)).map { report =>
             assert(report.totalLeaves == 8)
             assert(report.passed == 8)
-            // On JVM: concurrency is real; assert max-concurrent > 1. The body runs off-pool, so runReport's 8
-            // leaves run on the global pool's workers concurrently and the shared counter observes the overlap.
-            // On JS/Native: shared static counter is unreliable when multiple test suites run concurrently;
-            // just verify all leaves completed.
-            // deliberate per-platform: assertion is structural-only on non-JVM targets
-            if Platform.isJVM then
-                assert(
-                    RunnerSelfFixtures.parallelMaxSeen.get() > 1,
-                    s"expected concurrent execution but max seen was ${RunnerSelfFixtures.parallelMaxSeen.get()}"
-                )
-            else succeed
-            end if
+            // Global bound (deterministic): the peak never exceeds globalK.
+            assert(
+                RunnerSelfFixtures.parallelMaxSeen.get() <= globalK,
+                s"expected peak <= globalK=$globalK, got ${RunnerSelfFixtures.parallelMaxSeen.get()}"
+            )
         }
     }
 
