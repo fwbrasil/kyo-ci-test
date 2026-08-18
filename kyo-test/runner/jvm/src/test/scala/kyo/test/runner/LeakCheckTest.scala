@@ -138,41 +138,48 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
 
     test("awaitSchedulerIdle returns Accounted without spending the budget when every busy worker is allowlisted") {
         // The process-lifetime transport case: load never reaches zero, but the only carrier holding it is allowlisted. Before quiescence
-        // accounted for the allowlist, such a fork parked for the whole budget and was then excused anyway, once per forked JVM.
-        val budget  = 2_000_000_000L
-        val started = java.lang.System.nanoTime()
+        // accounted for the allowlist, such a fork parked for the whole budget and was then excused anyway, once per forked JVM. The loop runs
+        // on a virtual clock (park advances it), so "settles without spending the budget" is an exact, load-independent fact rather than a
+        // measured wall-clock ceiling.
+        val budget = 2_000_000_000L
+        val clock  = new java.util.concurrent.atomic.AtomicLong(0L)
         val verdict = LeakCheck.awaitSchedulerIdle(
             budgetNanos = budget,
             settleNanos = 20_000_000L,
             pollNanos = 1_000_000L,
             loadNow = () => 1.0,
-            allAccounted = () => true
+            allAccounted = () => true,
+            now = () => clock.get(),
+            park = d =>
+                clock.addAndGet(d); ()
         )
-        val elapsed = java.lang.System.nanoTime() - started
         val ok = verdict match
             case LeakCheck.IdleResult.Accounted(la) => la == 1.0
             case _                                  => false
         assert(ok, s"work whose carriers are all allowlisted must read as Accounted, got $verdict")
-        assert(elapsed < budget / 2, s"Accounted must settle without spending the budget, took ${elapsed / 1000000}ms")
+        assert(clock.get() < budget, s"Accounted must settle without spending the budget, virtual elapsed ${clock.get()}ns of $budget")
     }
 
     test("awaitSchedulerIdle still spends the budget and reports Busy when work is unaccounted") {
         // The leak this check exists to find: nothing accounts for the running work, so the full settle budget is spent before the verdict.
-        val budget  = 200_000_000L
-        val started = java.lang.System.nanoTime()
+        // On the virtual clock the loop advances only through park, so it runs to exactly the deadline: spending the full budget is exact.
+        val budget = 200_000_000L
+        val clock  = new java.util.concurrent.atomic.AtomicLong(0L)
         val verdict = LeakCheck.awaitSchedulerIdle(
             budgetNanos = budget,
             settleNanos = 20_000_000L,
             pollNanos = 1_000_000L,
             loadNow = () => 2.0,
-            allAccounted = () => false
+            allAccounted = () => false,
+            now = () => clock.get(),
+            park = d =>
+                clock.addAndGet(d); ()
         )
-        val elapsed = java.lang.System.nanoTime() - started
         val ok = verdict match
             case LeakCheck.IdleResult.Busy(la, _) => la == 2.0
             case _                                => false
         assert(ok, s"unaccounted work must still be reported as Busy, got $verdict")
-        assert(elapsed >= budget, s"an unaccounted fork must still get its full budget, took ${elapsed / 1000000}ms")
+        assert(clock.get() >= budget, s"an unaccounted fork must still get its full budget, virtual elapsed ${clock.get()}ns of $budget")
     }
 
     test("awaitSchedulerIdle reports Idle at zero load without consulting the accounted probe") {
