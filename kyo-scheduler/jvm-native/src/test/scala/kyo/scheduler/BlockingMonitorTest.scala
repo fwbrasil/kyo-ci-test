@@ -742,7 +742,13 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             // worker there is never flagged, never compensated for, and never interrupted.
             val started     = new CountDownLatch(1)
             val interrupted = new AtomicBoolean(false)
+            // The monitor samples CPU time by the id a worker publishes at mount, which on Scala
+            // Native is the thread's own pthread handle rather than Thread.getId. The sleeper
+            // publishes it from inside itself for that reason: sampling an id the platform does
+            // not recognize returns no CPU time at all, and the slot is never read as blocked.
+            val sleeperId = new AtomicLong(0L)
             val sleeper = new Thread((() => {
+                sleeperId.set(ThreadUserTime.currentThreadId())
                 started.countDown()
                 try Thread.sleep(60000)
                 catch { case _: InterruptedException => interrupted.set(true) }
@@ -759,7 +765,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             val task = TestTask()
             task.interrupted = true
             worker.mount = sleeper
-            worker.mountId = sleeper.getId
+            worker.mountId = sleeperId.get()
             worker.currentTask = task
 
             val workers = new Array[Worker](4)
@@ -1104,8 +1110,8 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             assert(
                 cyclesAdded <= maxCycles,
                 s"1000 wake() calls triggered $cyclesAdded monitor scans in ${elapsed}ns, above the " +
-                    s"$maxCycles the ${scheduler.blockingMonitor.minIntervalNs}ns scan floor allows — " +
-                    "should coalesce, not scan per call"
+                    s"$maxCycles that the ${scheduler.blockingMonitor.minIntervalNs}ns scan floor allows: " +
+                    "they should coalesce, not scan per call"
             )
 
             wakeDone.countDown()
