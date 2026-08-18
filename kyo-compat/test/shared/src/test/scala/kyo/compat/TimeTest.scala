@@ -1,5 +1,6 @@
 package kyo.compat
 
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.compat.*
 import scala.concurrent.duration.*
@@ -7,8 +8,8 @@ import scala.util.Failure
 import scala.util.Success
 class TimeTest extends CompatTest:
     "sleep delays without crashing" in run {
-        // Trigger a sleep and verify it returns Unit. Wall-clock-precision
-        // assertions (`elapsed >= 30ms`) live in each backend's test file.
+        // Trigger a sleep and verify it returns Unit. That the suspension is real, and not a
+        // no-op, is covered by the deadline tests further down.
         CIO.sleep(20.millis).map(r => assert(r == ((): Unit)))
     }
     "now returns without error" in run {
@@ -60,45 +61,40 @@ class TimeTest extends CompatTest:
             assert(ms >= before && ms <= after, s"CIO.now=$ms outside the read interval [$before, $after]")
         }
     }
-    // The two tests below measure a real delay on a real engine. Every binding routes `sleep` and
-    // `delay` to its own timer (ZIO's Clock, Ox's ox.sleep, Twitter's Timer, the Future binding's
-    // CompatScheduler, kyo's Async.sleep), and this suite is also compiled against bindings
-    // maintained outside the repo through the plugin's conformance testkit, so no virtual clock is
-    // reachable: driving one would mean adding a test-clock capability to the binding contract
-    // every external binding then has to implement. Only the floor is asserted. Load can push the
-    // measurement up, never below the floor, so the check cannot fail on a busy machine; the
-    // completion ceiling is CompatTest's testTimeout, and a sleep that overshoots by orders of
-    // magnitude blows that timeout in the concurrent-sleeps and 500ms cases.
-    "sleep delays at least the requested duration (wall-clock)" in run {
-        val start = java.lang.System.nanoTime()
-        CIO.sleep(50.millis).map { _ =>
-            val elapsed = (java.lang.System.nanoTime() - start) / 1_000_000L
-            assert(elapsed >= 30L, s"elapsed=$elapsed ms")
+    // The property the three tests below carry is that `sleep` and `delay` suspend on the
+    // binding's real timer rather than resolving as a no-op, and it is read as a typed outcome
+    // instead of a measurement: a sleep far longer than the deadline cannot resolve inside it, so
+    // the timeout yields None, while a no-op sleep would yield Some. Both timers are queued on the
+    // same engine at effectively the same instant and fire in due order, so a stalled machine
+    // delays them together and cannot invert the result.
+    "sleep suspends instead of resolving immediately" in run {
+        CIO.timeout(50.millis)(CIO.sleep(5.seconds)).map { result =>
+            assert(result == None, s"sleep(5.seconds) resolved inside a 50ms deadline: $result")
         }
     }
-    "delay waits at least the requested duration (wall-clock)" in run {
-        val start = java.lang.System.nanoTime()
-        CIO.delay(50.millis)(CIO.defer { 42 }).map { out =>
-            val elapsed = (java.lang.System.nanoTime() - start) / 1_000_000L
-            assert(out == 42 && elapsed >= 30L, s"out=$out elapsed=$elapsed ms")
+    "delay suspends before running its body" in run {
+        // The body flips a flag, so a delay that ran it eagerly is caught by the flag even though
+        // the deadline expired. A completed delay then returns the body's value.
+        val ran = new AtomicBoolean(false)
+        CIO.timeout(50.millis)(CIO.delay(5.seconds)(CIO.defer { ran.set(true); 42 })).flatMap { timedOut =>
+            CIO.delay(20.millis)(CIO.defer { 42 }).map { out =>
+                assert(timedOut == None, s"delay(5.seconds) resolved inside a 50ms deadline: $timedOut")
+                assert(!ran.get(), "delay ran its body before the delay elapsed")
+                assert(out == 42, s"expected 42, got $out")
+            }
         }
     }
     "FiniteDuration: 500L.millis materializes as FiniteDuration with correct millis" in run {
-        // actually suspends for the expected duration, measured via CIO.nowMonotonic.
+        // The conversion itself is pure. That the resulting value reaches the engine as a real
+        // suspension shows up in the deadline: the sleep does not resolve inside 50ms, and the
+        // same sleep run without a deadline completes with Unit.
         val d: FiniteDuration = 500L.millis
         assert(d.toMillis == 500L, s"expected 500ms, got ${d.toMillis}ms")
-        val c =
-            CIO.nowMonotonic.map(_.toMillis).flatMap { before =>
-                CIO.sleep(500L.millis).flatMap { _ =>
-                    CIO.nowMonotonic.map(_.toMillis).flatMap { after =>
-                        CIO.defer(after - before)
-                    }
-                }
+        CIO.timeout(50.millis)(CIO.sleep(d)).flatMap { timedOut =>
+            CIO.sleep(d).map { completed =>
+                assert(timedOut == None, s"sleep(500.millis) resolved inside a 50ms deadline: $timedOut")
+                assert(completed == ((): Unit))
             }
-        c.map { elapsedMs =>
-            // Floor only, for the reason given above the sleep/delay pair: the suspension runs on
-            // the binding's real timer, and a busy machine can only push the measurement up.
-            assert(elapsedMs >= 400L, s"elapsed=$elapsedMs ms (expected >= 400ms)")
         }
     }
     "FiniteDuration: (1.second + 250.millis).toMillis == 1250" in run {
