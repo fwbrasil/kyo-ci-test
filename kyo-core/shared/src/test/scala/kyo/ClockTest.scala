@@ -388,15 +388,23 @@ class ClockTest extends kyo.test.Test[Any]:
     "repeatAtInterval" - {
         "with time control".notJs in {
             Clock.withTimeControl { control =>
+                val ticks = 12
                 for
-                    queue    <- Queue.Unbounded.init[Instant]()
-                    task     <- Clock.repeatAtInterval(5.millis)(Clock.now.map(queue.add))
-                    _        <- Loop.repeat(30)(control.advance(5.millis))
+                    queue <- Queue.Unbounded.init[Instant]()
+                    task  <- Clock.repeatAtInterval(5.millis)(Clock.now.map(queue.add))
+                    // startAfter is zero, so the first execution fires at Epoch during startup. Fence on the
+                    // fiber arming its next sleep, then advance exactly one interval per tick, each time waiting
+                    // for the fiber to re-arm before advancing again. With no interleaving slack the fiber fires
+                    // once per advance, so the fire at Epoch plus one fire per tick makes the count exact.
+                    _        <- control.awaitPendingSleepers(1)
+                    _        <- Loop.repeat(ticks)(control.advance(5.millis).andThen(control.awaitPendingSleepers(1)))
                     _        <- task.interrupt
                     instants <- queue.drain
                 yield
-                    assert(instants.size >= 10)
-                    instants.foreach(instant => assert((instant - Instant.Epoch).toNanos % 5.millis.toNanos == 0))
+                    val expected = (0 to ticks).map(i => Instant.Epoch + (5 * i).millis)
+                    assert(instants.size == ticks + 1)
+                    assert(instants.toSeq == expected)
+                end for
             }
         }
         "respects interrupt" in {
