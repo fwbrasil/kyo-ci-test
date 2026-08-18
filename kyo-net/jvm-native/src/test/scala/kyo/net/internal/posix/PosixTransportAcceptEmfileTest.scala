@@ -45,22 +45,20 @@ class PosixTransportAcceptEmfileTest extends Test:
     // branch for it), so it is spelled out here.
     private val EMFILE = 24
 
-    // How many resource-exhaustion re-arms the accept loop must perform before the call count is read. Each one is a whole backoff cycle: the
-    // poller re-fires the still-ready listen fd, `acceptAll` issues exactly one `acceptNow`, EMFILE comes back, and the loop backs off again.
-    // Requiring several proves the cadence repeats rather than the loop having stalled once.
-    private val backoffTarget = 3
+    // The accept loop's response to a persistent EMFILE settles the leaf with one of two events, and the assertion reads which one landed,
+    // never a count or an elapsed time. A resource-backoff re-arm (the fix) reports BackedOff; a loop that never backs off spins the acceptNow
+    // spy up to its cap and reports Spun. Reporting the event rather than counting re-arms makes the leaf platform-independent: epoll re-arms a
+    // still-ready listen fd fewer times than kqueue, but taking the backoff PATH even once is the whole anti-spin property.
+    private enum AcceptGuard derives CanEqual:
+        case BackedOff, Spun
 
-    // The accept loop issues one acceptNow per backoff re-arm for one pending connection, so the count sampled at the target re-arm is that
-    // many. The slack of one absorbs an extra drain (a spurious readiness on the listen fd) without admitting a spin, which issues hundreds.
-    private val bound = backoffTarget + 1
-
-    // Spin cap. A spinning loop never backs off, so nothing else would ever settle this leaf: at this many acceptNow calls for ONE pending
-    // connection the loop is provably spinning, and the spy settles the leaf with the spun count. Past it the spy stops injecting EMFILE so a
-    // regressed build's real accept drains the backlog and the test tears down cleanly.
+    // Spin cap. A spinning loop never backs off, so the spy recognizes the spin once acceptNow has been called this many times for ONE pending
+    // connection (a bounded-backoff loop issues only a small handful), settles the leaf with Spun, and stops injecting EMFILE so a regressed
+    // build's real accept drains the backlog and the test tears down cleanly. This is the cap the spy acts on, not a bound the assertion reads.
     private val spinThreshold = 200
 
-    // Deadlock ceiling, not a pass condition: the two settling events above are counts, and no assertion reads elapsed time. This turns an
-    // accept loop that neither backs off nor spins (a listener wedged with no re-arm at all) into a failed test instead of a hang.
+    // Deadlock ceiling, not a pass condition: the assertion reads which event settled the leaf, never elapsed time. This turns an accept loop
+    // that neither backs off nor spins (a listener wedged with no re-arm at all) into a failed test instead of a hang.
     private val settleCeiling = 15.seconds
 
     private def assumePollerReady(): Unit =
@@ -72,16 +70,16 @@ class PosixTransportAcceptEmfileTest extends Test:
       * test) and stops injecting, delegating to the real `acceptNow` so the backlog drains and teardown is clean. Every other method delegates to
       * the real bindings (the single controlled injection pattern: one syscall's result is overridden, the rest are real).
       */
-    final private class EmfileAcceptSockets(real: SocketBindings, settled: Promise.Unsafe[Int, Any]) extends SocketBindings:
+    final private class EmfileAcceptSockets(real: SocketBindings, settled: Promise.Unsafe[AcceptGuard, Any]) extends SocketBindings:
         val acceptNowCalls: AtomicInteger = new AtomicInteger(0)
 
         def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
             val n = acceptNowCalls.incrementAndGet()
             if n >= spinThreshold then
                 // Settle from the spin side: a spinning loop never reaches a backoff re-arm, so this is the only event that ends the leaf for
-                // it. The promise's own gate makes this idempotent, so whichever of the spin cap and the backoff target lands first owns the
+                // it. The promise's own gate makes this idempotent, so whichever of the spin cap and the first backoff lands first owns the
                 // outcome, and the real accept below drains the backlog so teardown is clean.
-                discard(settled.complete(Result.succeed(n)))
+                discard(settled.complete(Result.succeed(AcceptGuard.Spun)))
                 real.acceptNow(fd, addr, addrlen)
             else
                 // The pending connection stays in the backlog (EMFILE does not dequeue it); the listen fd remains read-ready.
@@ -133,18 +131,17 @@ class PosixTransportAcceptEmfileTest extends Test:
 
         "does not spin on acceptNow EMFILE while a connection is pending (bounded retry)" in {
             assumePollerReady()
-            val settled  = Promise.Unsafe.init[Int, Any]()
-            val spy      = new EmfileAcceptSockets(Ffi.load[SocketBindings], settled)
-            val backoffs = new AtomicInteger(0)
-            val driver   = PollerIoDriver.init()
+            val settled = Promise.Unsafe.init[AcceptGuard, Any]()
+            val spy     = new EmfileAcceptSockets(Ffi.load[SocketBindings], settled)
+            val driver  = PollerIoDriver.init()
             val transport = TestTransports.forTesting(
                 driver,
                 spy,
                 backendIsEpoll = false,
-                // Sampling the acceptNow count inside the hook, on the carrier that is about to park the loop for the backoff, pins the reading
-                // to the target re-arm rather than to whatever the loop had reached at some later instant.
-                onAcceptResourceBackoff = () =>
-                    if backoffs.incrementAndGet() == backoffTarget then discard(settled.complete(Result.succeed(spy.acceptNowCalls.get())))
+                // The first time the accept loop classifies EMFILE as resource exhaustion and schedules a backoff re-arm, it has taken the
+                // anti-spin path: settle BackedOff. The promise gate makes this idempotent, so the first backoff (or the spin cap, whichever
+                // the loop reaches) owns the outcome.
+                onAcceptResourceBackoff = () => discard(settled.complete(Result.succeed(AcceptGuard.BackedOff)))
             )
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
@@ -167,16 +164,16 @@ class PosixTransportAcceptEmfileTest extends Test:
                                 fd
                             }
                         }
-                    // Settles on the target backoff re-arm or on the spin cap, whichever the accept loop reaches first.
+                    // Settles on the first backoff re-arm or on the spin cap, whichever the accept loop reaches first.
                     outcome <- Abort.run[Timeout](Async.timeout(settleCeiling)(settled.safe.get))
                 yield outcome match
-                    case Result.Success(count) =>
-                        assert(
-                            count <= bound,
-                            s"accept loop spun: $count acceptNow(EMFILE) calls for ONE pending connection without reaching $backoffTarget " +
-                                s"resource-backoff re-arms (bound $bound). EMFILE leaves the connection in the backlog so the listen fd stays " +
-                                "read-ready; an immediate re-arm re-fires it at once and the loop livelocks. A bounded-backoff re-arm issues " +
-                                "one acceptNow per re-arm."
+                    case Result.Success(AcceptGuard.BackedOff) => succeed
+                    case Result.Success(AcceptGuard.Spun) =>
+                        fail(
+                            s"accept loop spun: it re-armed immediately under a persistent EMFILE instead of backing off, issuing acceptNow up " +
+                                s"to the spin cap ($spinThreshold) for ONE pending connection. EMFILE leaves the connection in the backlog, so an " +
+                                "immediate re-arm re-fires the still-ready listen fd at once and the loop livelocks; the fix re-arms only after a " +
+                                "bounded backoff."
                         )
                     case Result.Failure(_: Timeout) =>
                         fail(
