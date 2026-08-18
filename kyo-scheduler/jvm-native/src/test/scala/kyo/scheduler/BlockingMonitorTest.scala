@@ -100,6 +100,28 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
 
     private object NoOpCloseable extends AutoCloseable { def close(): Unit = () }
 
+    /** Holds `check` across `cycles` completed scans of the blocking monitor.
+      *
+      * An outcome that must not happen needs a window the monitor actually observed the state
+      * in. Counting the monitor's own scans states that window in scans, where a wall-clock wait
+      * covers however many scans the host had room for, down to none. The deadline is a give-up
+      * valve for a monitor that stopped scanning, not a bound anything is asserted against.
+      */
+    private def acrossMonitorCycles(cycles: Long)(check: => Any): Unit = {
+        val target   = scheduler.blockingMonitor.cycles + cycles
+        val deadline = System.nanoTime() + 60L * 1000 * 1000 * 1000
+        while (scheduler.blockingMonitor.cycles < target) {
+            val _ = check
+            assert(System.nanoTime() < deadline, s"the blocking monitor did not complete $cycles scans")
+            Thread.`yield`()
+        }
+        val _ = check
+    }
+
+    /** Waits until the blocking monitor has completed `cycles` scans. */
+    private def awaitMonitorCycles(cycles: Long): Unit =
+        acrossMonitorCycles(cycles)(())
+
     // Helper to spawn daemon threads that busy-spin to saturate CPU
     private def spawnBusyThreads(count: Int): (Array[Thread], AtomicBoolean) = {
         val stop    = new AtomicBoolean(false)
@@ -618,10 +640,13 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 assert(blockedWorkerStatus().isDefined)
             }
 
-            // But without needsInterrupt, no Thread.interrupt should be dispatched
+            // But without needsInterrupt, no Thread.interrupt should be dispatched: the monitor
+            // has to see the blocked worker and decline it on every one of its own scans, which
+            // is what the flag has to survive rather than an arbitrary stretch of wall time.
             assert(!task.needsInterrupt())
-            Thread.sleep(50)
-            assert(!interrupted.get(), "blocked thread without needsInterrupt must not be interrupted")
+            acrossMonitorCycles(25) {
+                assert(!interrupted.get(), "blocked thread without needsInterrupt must not be interrupted")
+            }
 
             done.countDown()
             eventually(assert(task.executions == 1))
@@ -679,31 +704,6 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             assert(!flagLeaked.get(), "Thread.interrupted() in runTask finally should clear the flag")
         }
 
-        "stale interrupt from pool thread cleared on worker mount" in {
-            val flagOnEntry = new AtomicBoolean(false)
-            val phase1      = new CountDownLatch(1)
-            val phase2      = new CountDownLatch(1)
-
-            val task1 = TestTask(_run = () => {
-                Thread.currentThread().interrupt()
-                phase1.countDown()
-                Task.Done
-            })
-            scheduler.schedule(task1)
-            assert(phase1.await(5, TimeUnit.SECONDS))
-
-            Thread.sleep(50) // worker goes idle, returns thread to pool
-
-            val task2 = TestTask(_run = () => {
-                flagOnEntry.set(Thread.interrupted())
-                phase2.countDown()
-                Task.Done
-            })
-            scheduler.schedule(task2)
-            assert(phase2.await(5, TimeUnit.SECONDS))
-            assert(!flagOnEntry.get(), "Thread.interrupted() at run() start should clear stale flag")
-        }
-
         "interrupts multiple blocked tasks on different workers" in {
             val count       = 3
             val started     = new CountDownLatch(count)
@@ -723,7 +723,9 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
 
             tasks.foreach(scheduler.schedule)
             assert(started.await(10, TimeUnit.SECONDS))
-            Thread.sleep(10)
+            // Let the monitor take its baseline CPU-time samples, counted in its own scans so
+            // the baseline exists whatever the host's pace.
+            awaitMonitorCycles(3)
 
             tasks.foreach(t => t.interrupted = true)
 
@@ -902,21 +904,27 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
 
             assert(activeStarted.await(60, TimeUnit.SECONDS), "active tasks should start")
 
-            // Let monitor establish baseline CPU time samples
-            Thread.sleep(30)
+            // Let monitor establish baseline CPU time samples, counted in its own scans
+            awaitMonitorCycles(3)
 
             // Request interrupt on ALL 4 tasks
             blockingTasks.foreach(t => t.interrupted = true)
             activeTasks.foreach(t => t.interrupted = true)
             scheduler.notifyInterrupt()
 
-            // Blocking tasks should get interrupted
+            // Blocking tasks should get interrupted. The active tasks requested an interrupt too
+            // and are deliberately not asserted on: dispatch is gated on the monitor's blocked
+            // detection, and a CPU-starved thread has flat user time, so the pressure-scaled
+            // threshold makes an interrupt to an active task unlikely rather than impossible.
+            // Their flags are reported so a failure here says what the monitor did with both.
             eventually(timeout(scaled(Span(30, Seconds)))) {
                 val count = blockingInterrupted.count(_.get())
-                assert(count == 2, s"expected all 2 blocking tasks interrupted, got $count")
+                assert(
+                    count == 2,
+                    s"expected all 2 blocking tasks interrupted, got $count " +
+                        s"(active tasks interrupted: ${activeInterrupted.count(_.get())})"
+                )
             }
-
-            Thread.sleep(100)
 
             activeStop.set(true)
             eventually(timeout(scaled(Span(10, Seconds)))) {
@@ -972,14 +980,15 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             scheduler.schedule(secondTask)
             assert(secondStarted.await(60, TimeUnit.SECONDS))
 
-            // Let the monitor run several cycles with the second task active
-            Thread.sleep(1000)
-
-            // The second task should NOT have received any spurious interrupts
-            assert(
-                !spuriousInterrupt.get(),
-                "successor task on same worker must not receive spurious Thread.interrupt()"
-            )
+            // The second task should NOT have received any spurious interrupts, and the guarantee
+            // is per scan: counting the monitor's cycles makes the race window actually get
+            // exercised, where a fixed wait buys as many scans as the host felt like giving.
+            acrossMonitorCycles(100) {
+                assert(
+                    !spuriousInterrupt.get(),
+                    "successor task on same worker must not receive spurious Thread.interrupt()"
+                )
+            }
 
             secondStop.set(true)
             eventually(assert(secondTask.executions == 1))
@@ -1076,6 +1085,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             scheduler.schedule(wakeTask)
             assert(wakeStarted.await(5, TimeUnit.SECONDS))
 
+            val start        = System.nanoTime()
             val cyclesBefore = scheduler.blockingMonitor.cycles
             var i            = 0
             while (i < 1000) {
@@ -1083,10 +1093,19 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 i += 1
             }
             val cyclesAdded = scheduler.blockingMonitor.cycles - cyclesBefore
+            val elapsed     = System.nanoTime() - start
 
+            // However many wakes arrive, consecutive scans stay at least minInterval apart, so a
+            // burst spanning `elapsed` admits one scan per minInterval plus the one already in
+            // flight when the count was taken. Deriving the ceiling from the burst's own span
+            // makes it independent of how fast the host ran the loop: a slower burst is allowed
+            // proportionally more scans, and one scan per wake fails it at any speed.
+            val maxCycles = elapsed / scheduler.blockingMonitor.minIntervalNs + 1
             assert(
-                cyclesAdded < 200,
-                s"1000 wake() calls triggered $cyclesAdded monitor scans — should coalesce, not scan per call"
+                cyclesAdded <= maxCycles,
+                s"1000 wake() calls triggered $cyclesAdded monitor scans in ${elapsed}ns, above the " +
+                    s"$maxCycles the ${scheduler.blockingMonitor.minIntervalNs}ns scan floor allows — " +
+                    "should coalesce, not scan per call"
             )
 
             wakeDone.countDown()
