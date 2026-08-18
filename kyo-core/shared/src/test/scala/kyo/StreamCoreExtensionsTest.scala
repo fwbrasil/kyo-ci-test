@@ -70,7 +70,6 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 _ <- Async.foreach(1 to merges, merges)(_ =>
                     Stream.collectAllHalting(Seq(Stream.init(0 to 50), infinite)).run
                 )
-                _ <- Async.sleep(3.seconds)
             yield
                 watchdog.interrupt()
                 assert(
@@ -642,10 +641,10 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                     Kyo.zip(streamHub.subscribe, streamHub.subscribe)
                 }.map:
                     case (s1, s2) =>
-                        // Ensure boundary works
-                        Async.sleep(30.millis).andThen:
-                            Kyo.zip(s1.run, s2.run).map:
-                                case (c1, c2) => assert(c1 == c2 && c1 == (0 to 10))
+                        // The source is latch-gated: it emits only after both subscriptions register and
+                        // the first stream runs, so both receive the full sequence without a settle delay.
+                        Kyo.zip(s1.run, s2.run).map:
+                            case (c1, c2) => assert(c1 == c2 && c1 == (0 to 10))
             }
 
             "broadcast2" in {

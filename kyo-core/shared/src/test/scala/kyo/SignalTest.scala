@@ -356,9 +356,9 @@ class SignalTest extends kyo.test.Test[Any]:
                 inner <- Signal.initRef(10)
                 sm = outer.switchMap(_ => inner)
                 f  <- Fiber.initUnscoped(sm.streamChanges.take(3).run)
-                _  <- Async.sleep(100.millis)
+                _  <- assertEventually(inner.waiters.map(_ == 1))
                 _  <- inner.set(11)
-                _  <- Async.sleep(100.millis)
+                _  <- assertEventually(inner.waiters.map(_ == 1))
                 _  <- inner.set(12)
                 vs <- f.get
             yield assert(vs == Chunk(10, 11, 12))
@@ -511,17 +511,19 @@ class SignalTest extends kyo.test.Test[Any]:
                 refA <- Signal.initRef(0)
                 refB <- Signal.initRef(0)
                 cl = refA.combineLatest(refB)
-                f  <- Fiber.initUnscoped(cl.streamChanges.take(5).run)
-                _  <- Async.sleep(50.millis)
+                captured <- AtomicRef.init(Chunk.empty[(Int, Int)])
+                f        <- Fiber.initUnscoped(cl.streamChanges.take(5).map(v => captured.updateAndGet(_.append(v)).andThen(v)).run)
+                // fire each change only after the stream has captured the previous emit, so no two coalesce
+                _  <- assertEventually(captured.get.map(_.size >= 1))
                 _  <- refA.set(1)
-                _  <- Async.sleep(50.millis)
+                _  <- assertEventually(captured.get.map(_.size >= 2))
                 _  <- refB.set(1)
-                _  <- Async.sleep(50.millis)
+                _  <- assertEventually(captured.get.map(_.size >= 3))
                 _  <- refA.set(2)
-                _  <- Async.sleep(50.millis)
+                _  <- assertEventually(captured.get.map(_.size >= 4))
                 _  <- refB.set(2)
                 vs <- f.get
-            yield assert(vs.size >= 4 && vs.last == (2, 2))
+            yield assert(vs == Chunk((0, 0), (1, 0), (1, 1), (2, 1), (2, 2)))
         }
 
         "source remains usable after concurrent waiters complete" in {
@@ -781,9 +783,9 @@ class SignalTest extends kyo.test.Test[Any]:
                 mapped = outer.map(_ * 2)
                 sm     = mapped.switchMap(_ => inner)
                 f  <- Fiber.initUnscoped(sm.streamChanges.take(3).run)
-                _  <- Async.sleep(100.millis)
+                _  <- assertEventually(inner.waiters.map(_ == 1))
                 _  <- inner.set(11)
-                _  <- Async.sleep(100.millis)
+                _  <- assertEventually(inner.waiters.map(_ == 1))
                 _  <- inner.set(12)
                 vs <- f.get
             yield assert(vs == Chunk(10, 11, 12))
@@ -794,17 +796,19 @@ class SignalTest extends kyo.test.Test[Any]:
                 refA <- Signal.initRef(0)
                 refB <- Signal.initRef(0)
                 cl = refA.combineLatest(refB)
-                f  <- Fiber.initUnscoped(cl.streamChanges.take(5).run)
-                _  <- Async.sleep(50.millis)
+                captured <- AtomicRef.init(Chunk.empty[(Int, Int)])
+                f        <- Fiber.initUnscoped(cl.streamChanges.take(5).map(v => captured.updateAndGet(_.append(v)).andThen(v)).run)
+                // fire each change only after the stream has captured the previous emit, so no two coalesce
+                _  <- assertEventually(captured.get.map(_.size >= 1))
                 _  <- refA.set(1)
-                _  <- Async.sleep(50.millis)
+                _  <- assertEventually(captured.get.map(_.size >= 2))
                 _  <- refB.set(1)
-                _  <- Async.sleep(50.millis)
+                _  <- assertEventually(captured.get.map(_.size >= 3))
                 _  <- refA.set(2)
-                _  <- Async.sleep(50.millis)
+                _  <- assertEventually(captured.get.map(_.size >= 4))
                 _  <- refB.set(2)
                 vs <- f.get
-            yield assert(vs.size >= 4 && vs.last == (2, 2))
+            yield assert(vs == Chunk((0, 0), (1, 0), (1, 1), (2, 1), (2, 2)))
         }
 
     }
@@ -897,8 +901,8 @@ class SignalTest extends kyo.test.Test[Any]:
                 fiber  <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
                 _      <- pollUntil(seen.get.map(_ == Chunk(0)))
                 _      <- fiber.interrupt
+                _      <- fiber.getResult // the observer has fully stopped before the change is published
                 _      <- ref.set(1)
-                _      <- Async.sleep(50.millis)
                 result <- seen.get
             yield assert(result == Chunk(0)) // the post-interrupt change is not observed
         }

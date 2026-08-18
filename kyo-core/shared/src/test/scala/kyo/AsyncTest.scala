@@ -35,21 +35,31 @@ class AsyncTest extends kyo.test.Test[Any]:
     }
 
     "sleep" in {
-        for
-            start <- Sync.defer(java.lang.System.currentTimeMillis())
-            _     <- Async.sleep(10.millis)
-            end   <- Sync.defer(java.lang.System.currentTimeMillis())
-        yield assert(end - start >= 8)
+        Clock.withTimeControl { control =>
+            for
+                fiber <- Fiber.initUnscoped(Async.sleep(10.millis))
+                // the sleep does not complete until virtual time reaches its deadline
+                early    <- fiber.done
+                advancer <- Fiber.initUnscoped(Loop.forever(control.advance(10.millis)))
+                _        <- fiber.get
+                _        <- advancer.interrupt
+            yield assert(!early)
+        }
     }
 
     "delay" in {
-        for
-            start <- Sync.defer(java.lang.System.currentTimeMillis())
-            res   <- Async.delay(5.millis)(42)
-            end   <- Sync.defer(java.lang.System.currentTimeMillis())
-        yield
-            assert(end - start >= 4)
-            assert(res == 42)
+        Clock.withTimeControl { control =>
+            for
+                fiber <- Fiber.initUnscoped(Async.delay(5.millis)(42))
+                // the delayed value is withheld until virtual time reaches the deadline
+                early    <- fiber.done
+                advancer <- Fiber.initUnscoped(Loop.forever(control.advance(5.millis)))
+                res      <- fiber.get
+                _        <- advancer.interrupt
+            yield
+                assert(!early)
+                assert(res == 42)
+        }
     }
 
     "runAndBlock" - {
@@ -186,13 +196,18 @@ class AsyncTest extends kyo.test.Test[Any]:
             def repeat(n: Int): Unit < Async =
                 if n <= 0 then ()
                 else once.andThen(repeat(n - 1))
-            for
-                _  <- repeat(200)
-                p1 <- Sync.defer(progress.get())
-                _  <- Async.sleep(50.millis)
-                p2 <- Sync.defer(progress.get())
-            yield assert(p1 == p2)
-            end for
+            repeat(200).andThen {
+                // Every child was interrupted and awaited, so the shared counter is settled: two
+                // reads taken a scheduling gap apart agree. An orphaned child left running would keep
+                // incrementing it and never let the reads converge before the leaf timeout.
+                assertEventually {
+                    for
+                        before <- Sync.defer(progress.get())
+                        _      <- Async.sleep(10.millis)
+                        after  <- Sync.defer(progress.get())
+                    yield before == after
+                }
+            }
         }
     }
 

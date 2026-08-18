@@ -2,6 +2,10 @@ package kyo
 
 class MeterTest extends kyo.test.Test[Any]:
 
+    // A permanently blocked acquisition can never complete, so any window over which `Async.timeout`
+    // reports it did not finish proves the block. Kept short since the assertion is on the failure outcome.
+    val blockedWindow = 100.millis
+
     "mutex" - {
         "init" in {
             Scope.run(Meter.initMutex).map: meter =>
@@ -629,31 +633,30 @@ class MeterTest extends kyo.test.Test[Any]:
 
             "non-reentrant" in {
                 for
-                    meter  <- Meter.initMutex(reentrant = false)
-                    p      <- Promise.init[Int, Any]
-                    f      <- Fiber.initUnscoped(meter.run(meter.run(42)))
-                    _      <- Async.sleep(5.millis)
-                    done   <- f.done
-                    _      <- f.interrupt
-                    result <- f.getResult
-                yield assert(!done && result.isPanic)
+                    meter <- Meter.initMutex(reentrant = false)
+                    f     <- Fiber.initUnscoped(meter.run(meter.run(42)))
+                    // the outer run holds the permit; the inner run cannot reenter and never completes
+                    blocked <- Abort.run[Timeout](Async.timeout(blockedWindow)(f.get))
+                    _       <- f.interrupt
+                    result  <- f.getResult
+                yield assert(blocked.isFailure && result.isPanic)
             }
 
             "nested forked fiber can't reenter" in {
                 for
                     meter <- Meter.initMutex
-                    (done, result) <- meter.run {
+                    (blocked, result) <- meter.run {
                         meter.run {
                             for
-                                f      <- Fiber.initUnscoped(meter.run(42))
-                                _      <- Async.sleep(5.millis)
-                                done   <- f.done
-                                _      <- f.interrupt
-                                result <- f.getResult
-                            yield (done, result)
+                                f <- Fiber.initUnscoped(meter.run(42))
+                                // the forked fiber cannot reenter the held meter and never completes
+                                blocked <- Abort.run[Timeout](Async.timeout(blockedWindow)(f.get))
+                                _       <- f.interrupt
+                                result  <- f.getResult
+                            yield (blocked, result)
                         }
                     }
-                yield assert(!done && result.isPanic)
+                yield assert(blocked.isFailure && result.isPanic)
             }
         }
 
@@ -671,31 +674,30 @@ class MeterTest extends kyo.test.Test[Any]:
 
             "non-reentrant" in {
                 for
-                    meter  <- Meter.initSemaphore(1, reentrant = false)
-                    p      <- Promise.init[Int, Any]
-                    f      <- Fiber.initUnscoped(meter.run(meter.run(42)))
-                    _      <- Async.sleep(5.millis)
-                    done   <- f.done
-                    _      <- f.interrupt
-                    result <- f.getResult
-                yield assert(!done && result.isPanic)
+                    meter <- Meter.initSemaphore(1, reentrant = false)
+                    f     <- Fiber.initUnscoped(meter.run(meter.run(42)))
+                    // the outer run holds the permit; the inner run cannot reenter and never completes
+                    blocked <- Abort.run[Timeout](Async.timeout(blockedWindow)(f.get))
+                    _       <- f.interrupt
+                    result  <- f.getResult
+                yield assert(blocked.isFailure && result.isPanic)
             }
 
             "nested forked fiber can't reenter" in {
                 for
                     meter <- Meter.initSemaphore(1)
-                    (done, result) <- meter.run {
+                    (blocked, result) <- meter.run {
                         meter.run {
                             for
-                                f      <- Fiber.initUnscoped(meter.run(42))
-                                _      <- Async.sleep(5.millis)
-                                done   <- f.done
-                                _      <- f.interrupt
-                                result <- f.getResult
-                            yield (done, result)
+                                f <- Fiber.initUnscoped(meter.run(42))
+                                // the forked fiber cannot reenter the held meter and never completes
+                                blocked <- Abort.run[Timeout](Async.timeout(blockedWindow)(f.get))
+                                _       <- f.interrupt
+                                result  <- f.getResult
+                            yield (blocked, result)
                         }
                     }
-                yield assert(!done && result.isPanic)
+                yield assert(blocked.isFailure && result.isPanic)
             }
         }
 
@@ -713,31 +715,30 @@ class MeterTest extends kyo.test.Test[Any]:
 
             "non-reentrant" in {
                 for
-                    meter  <- Meter.initRateLimiter(1, 60.seconds, reentrant = false)
-                    p      <- Promise.init[Int, Any]
-                    f      <- Fiber.initUnscoped(meter.run(meter.run(42)))
-                    _      <- Async.sleep(5.millis)
-                    done   <- f.done
-                    _      <- f.interrupt
-                    result <- f.getResult
-                yield assert(!done && result.isPanic)
+                    meter <- Meter.initRateLimiter(1, 60.seconds, reentrant = false)
+                    f     <- Fiber.initUnscoped(meter.run(meter.run(42)))
+                    // the outer run holds the permit; the inner run cannot reenter and never completes
+                    blocked <- Abort.run[Timeout](Async.timeout(blockedWindow)(f.get))
+                    _       <- f.interrupt
+                    result  <- f.getResult
+                yield assert(blocked.isFailure && result.isPanic)
             }
 
             "nested forked fiber can't reenter" in {
                 for
                     meter <- Meter.initRateLimiter(1, 60.seconds)
-                    (done, result) <- meter.run {
+                    (blocked, result) <- meter.run {
                         meter.run {
                             for
-                                f      <- Fiber.initUnscoped(meter.run(42))
-                                _      <- Async.sleep(5.millis)
-                                done   <- f.done
-                                _      <- f.interrupt
-                                result <- f.getResult
-                            yield (done, result)
+                                f <- Fiber.initUnscoped(meter.run(42))
+                                // the forked fiber cannot reenter the held meter and never completes
+                                blocked <- Abort.run[Timeout](Async.timeout(blockedWindow)(f.get))
+                                _       <- f.interrupt
+                                result  <- f.getResult
+                            yield (blocked, result)
                         }
                     }
-                yield assert(!done && result.isPanic)
+                yield assert(blocked.isFailure && result.isPanic)
             }
         }
 
@@ -762,15 +763,14 @@ class MeterTest extends kyo.test.Test[Any]:
                     sem         <- Meter.initSemaphore(1, reentrant = false)
                     rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
                     pipeline    <- Meter.pipeline(mutex, sem, rateLimiter)
-                    p           <- Promise.init[Int, Any]
                     f <- Fiber.initUnscoped(pipeline.run {
                         pipeline.run(42)
                     })
-                    _      <- Async.sleep(5.millis)
-                    done   <- f.done
-                    _      <- f.interrupt
-                    result <- f.getResult
-                yield assert(!done && result.isPanic)
+                    // the non-reentrant component blocks the inner run, which never completes
+                    blocked <- Abort.run[Timeout](Async.timeout(blockedWindow)(f.get))
+                    _       <- f.interrupt
+                    result  <- f.getResult
+                yield assert(blocked.isFailure && result.isPanic)
             }
 
             "nested forked fiber can't reenter" in {
@@ -779,18 +779,18 @@ class MeterTest extends kyo.test.Test[Any]:
                     sem         <- Meter.initSemaphore(1)
                     rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
                     meter       <- Meter.pipeline(mutex, sem, rateLimiter)
-                    (done, result) <- meter.run {
+                    (blocked, result) <- meter.run {
                         meter.run {
                             for
-                                f      <- Fiber.initUnscoped(meter.run(42))
-                                _      <- Async.sleep(5.millis)
-                                done   <- f.done
-                                _      <- f.interrupt
-                                result <- f.getResult
-                            yield (done, result)
+                                f <- Fiber.initUnscoped(meter.run(42))
+                                // the forked fiber cannot reenter the held meter and never completes
+                                blocked <- Abort.run[Timeout](Async.timeout(blockedWindow)(f.get))
+                                _       <- f.interrupt
+                                result  <- f.getResult
+                            yield (blocked, result)
                         }
                     }
-                yield assert(!done && result.isPanic)
+                yield assert(blocked.isFailure && result.isPanic)
             }
         }
     }
