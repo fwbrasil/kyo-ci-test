@@ -511,16 +511,22 @@ class SignalTest extends kyo.test.Test[Any]:
                 refA <- Signal.initRef(0)
                 refB <- Signal.initRef(0)
                 cl = refA.combineLatest(refB)
-                captured <- AtomicRef.init(Chunk.empty[(Int, Int)])
-                f        <- Fiber.initUnscoped(cl.streamChanges.take(5).map(v => captured.updateAndGet(_.append(v)).andThen(v)).run)
-                // fire each change only after the stream has captured the previous emit, so no two coalesce
-                _  <- assertEventually(captured.get.map(_.size >= 1))
-                _  <- refA.set(1)
-                _  <- assertEventually(captured.get.map(_.size >= 2))
+                f <- Fiber.initUnscoped(cl.streamChanges.take(5).run)
+                // After emitting the initial (0, 0), streamChanges re-subscribes by racing refA.next and refB.next.
+                // Fire each change only once the stream has re-armed its waiter on the signal being changed. Gating
+                // on captured emits instead witnesses consumption, not re-subscription, so a set landing in the
+                // re-arm gap is dropped and the take never completes. The first re-subscription is clean (no ghost
+                // waiters yet): both refs arm to exactly 1.
+                _ <- assertEventually(Kyo.zip(refA.waiters, refB.waiters).map { case (a, b) => a == 1 && b == 1 })
+                _ <- refA.set(1)
+                // Each awaitAny cancels its losing branch without unregistering, leaving one ghost waiter on the
+                // signal that did not fire; the next re-subscription arms that signal to 2 (1 ghost + 1 live). >= 2
+                // proves the live re-arm landed rather than matching the stale ghost alone.
+                _  <- assertEventually(refB.waiters.map(_ >= 2))
                 _  <- refB.set(1)
-                _  <- assertEventually(captured.get.map(_.size >= 3))
+                _  <- assertEventually(refA.waiters.map(_ >= 2))
                 _  <- refA.set(2)
-                _  <- assertEventually(captured.get.map(_.size >= 4))
+                _  <- assertEventually(refB.waiters.map(_ >= 2))
                 _  <- refB.set(2)
                 vs <- f.get
             yield assert(vs == Chunk((0, 0), (1, 0), (1, 1), (2, 1), (2, 2)))
@@ -796,16 +802,22 @@ class SignalTest extends kyo.test.Test[Any]:
                 refA <- Signal.initRef(0)
                 refB <- Signal.initRef(0)
                 cl = refA.combineLatest(refB)
-                captured <- AtomicRef.init(Chunk.empty[(Int, Int)])
-                f        <- Fiber.initUnscoped(cl.streamChanges.take(5).map(v => captured.updateAndGet(_.append(v)).andThen(v)).run)
-                // fire each change only after the stream has captured the previous emit, so no two coalesce
-                _  <- assertEventually(captured.get.map(_.size >= 1))
-                _  <- refA.set(1)
-                _  <- assertEventually(captured.get.map(_.size >= 2))
+                f <- Fiber.initUnscoped(cl.streamChanges.take(5).run)
+                // After emitting the initial (0, 0), streamChanges re-subscribes by racing refA.next and refB.next.
+                // Fire each change only once the stream has re-armed its waiter on the signal being changed. Gating
+                // on captured emits instead witnesses consumption, not re-subscription, so a set landing in the
+                // re-arm gap is dropped and the take never completes. The first re-subscription is clean (no ghost
+                // waiters yet): both refs arm to exactly 1.
+                _ <- assertEventually(Kyo.zip(refA.waiters, refB.waiters).map { case (a, b) => a == 1 && b == 1 })
+                _ <- refA.set(1)
+                // Each awaitAny cancels its losing branch without unregistering, leaving one ghost waiter on the
+                // signal that did not fire; the next re-subscription arms that signal to 2 (1 ghost + 1 live). >= 2
+                // proves the live re-arm landed rather than matching the stale ghost alone.
+                _  <- assertEventually(refB.waiters.map(_ >= 2))
                 _  <- refB.set(1)
-                _  <- assertEventually(captured.get.map(_.size >= 3))
+                _  <- assertEventually(refA.waiters.map(_ >= 2))
                 _  <- refA.set(2)
-                _  <- assertEventually(captured.get.map(_.size >= 4))
+                _  <- assertEventually(refB.waiters.map(_ >= 2))
                 _  <- refB.set(2)
                 vs <- f.get
             yield assert(vs == Chunk((0, 0), (1, 0), (1, 1), (2, 1), (2, 2)))
