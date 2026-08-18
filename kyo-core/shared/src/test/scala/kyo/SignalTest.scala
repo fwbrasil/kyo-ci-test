@@ -880,15 +880,22 @@ class SignalTest extends kyo.test.Test[Any]:
         }
 
         "does not re-emit on a same-value set" in {
+            // Causal fence instead of a settle window, using the same `waiters` side-channel as the
+            // streamChanges tests. Fence until the observer is parked (one waiter), do the same-value
+            // set(0), then fence again that it is still parked before the different-value set(1). The
+            // second fence orders any wakeup the same-value set could have caused strictly before set(1),
+            // so a spurious re-emission would have to land in `seen` ahead of the 1. The final sequence is
+            // exactly [0, 1] with no same-value emission between.
             for
-                ref    <- Signal.initRef(0)
-                seen   <- AtomicRef.init(Chunk.empty[Int])
-                fiber  <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
-                _      <- pollUntil(seen.get.map(_ == Chunk(0)))
-                _      <- ref.set(0) // same value: SignalRef does not notify
-                _      <- Async.sleep(30.millis)
-                _      <- ref.set(1)
-                _      <- pollUntil(seen.get.map(_.contains(1)))
+                ref   <- Signal.initRef(0)
+                seen  <- AtomicRef.init(Chunk.empty[Int])
+                fiber <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
+                _     <- pollUntil(seen.get.map(_ == Chunk(0)))
+                _     <- assertEventually(ref.waiters.map(_ == 1)) // observer parked for the next change
+                _ <- ref.set(0)                                // same value: SignalRef does not notify, so the parked observer is not woken
+                _ <- assertEventually(ref.waiters.map(_ == 1)) // still exactly one waiter: the same-value set injected no wakeup
+                _ <- ref.set(1)                                // a real change wakes the observer
+                _ <- pollUntil(seen.get.map(_.contains(1)))
                 result <- seen.get
                 _      <- fiber.interrupt
             yield assert(result == Chunk(0, 1))
