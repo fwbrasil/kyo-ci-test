@@ -481,25 +481,37 @@ class ContainerOrchestrationItTest extends BasePodTest:
         )
     }
 
-    "scope cleanup waits stopTimeout when stopSignal is Present" - runBackend {
-        // The container traps its stopSignal and delays past the stopTimeout, so the graceful-stop
-        // protocol (send the signal, waitForExit up to stopTimeout, then force-remove) must fall
-        // through to force-remove for cleanup to complete at all. Completion is the witness: a kill
-        // path that hung on waitForExit instead of force-removing after the stopTimeout would time out
-        // below and fail. Out of scope here: that the grace period lasted about stopTimeout. That wait
-        // runs inside the Scope finalizer against a real container and leaves no witness other than
-        // wall time, so a regression that skipped the wait but still completed is not observable here.
+    "scope cleanup delivers stopSignal before force-removing when stopSignal is Present" - runBackend {
+        // The container traps its stopSignal and writes a marker into a host bind mount before delaying
+        // past the stopTimeout. The graceful-stop protocol (send the signal, waitForExit up to
+        // stopTimeout, then force-remove) must deliver the signal for the trap to run at all, so the
+        // marker on the host filesystem is a deterministic, clock-free witness that the signal reached
+        // the container before the force-remove. A kill path that skipped the signal and force-removed
+        // immediately would leave no marker. The Async.timeout is the completion valve: a kill path that
+        // hung on waitForExit instead of force-removing after the stopTimeout would trip it.
+        val hostDir = Path("/tmp/" + uniqueName("kyo-stopsig"))
+        val marker  = hostDir / "sig"
         val config = Container.Config("alpine")
-            .command("sh", "-c", "trap 'sleep 3; exit 0' USR1; sleep infinity")
+            .command("sh", "-c", "trap 'touch /m/sig; sleep 3' USR1; sleep infinity & wait")
+            .bind(hostDir, Path("/m"))
             .stopSignal(Container.Signal.SIGUSR1)
             .stopTimeout(1.second)
             .autoRemove(false)
-        Abort.run[Timeout](Async.timeout(30.seconds)(Scope.run(Container.init(config).unit))).map {
-            case Result.Success(_) => succeed
+        for
+            _         <- hostDir.mkDir
+            outcome   <- Abort.run[Timeout](Async.timeout(30.seconds)(Scope.run(Container.init(config).unit)))
+            delivered <- marker.exists
+            _         <- Abort.run[FileFsException](hostDir.removeAll)
+        yield outcome match
+            case Result.Success(_) =>
+                assert(
+                    delivered,
+                    "scope cleanup completed but the stopSignal never reached the container; the trap left no marker on the host"
+                )
             case Result.Failure(_: Timeout) =>
                 fail("scope cleanup did not complete; the kill path is hanging instead of force-removing after stopTimeout")
             case Result.Panic(t) => fail(s"panic during scope cleanup: $t")
-        }
+        end for
     }
 
     "runOnce" - {
