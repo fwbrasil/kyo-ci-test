@@ -916,10 +916,11 @@ class BrowserSettlementTest extends BrowserTest:
         val html =
             """<!doctype html><html><body><h1>three-fetch</h1>
               |<script>
+              |  window.__done = 0;
               |  document.addEventListener('DOMContentLoaded', () => {
-              |    setTimeout(() => { fetch('/ping?n=1').catch(() => {}); }, 100);
-              |    setTimeout(() => { fetch('/ping?n=2').catch(() => {}); }, 200);
-              |    setTimeout(() => { fetch('/ping?n=3').catch(() => {}); }, 300);
+              |    setTimeout(() => { fetch('/ping?n=1').then(() => { window.__done++; }, () => { window.__done++; }); }, 100);
+              |    setTimeout(() => { fetch('/ping?n=2').then(() => { window.__done++; }, () => { window.__done++; }); }, 200);
+              |    setTimeout(() => { fetch('/ping?n=3').then(() => { window.__done++; }, () => { window.__done++; }); }, 300);
               |  });
               |</script></body></html>""".stripMargin
         val htmlBytes = Span.fromUnsafe(html.getBytes("UTF-8"))
@@ -934,15 +935,18 @@ class BrowserSettlementTest extends BrowserTest:
             withBrowser {
                 // Pin networkIdleWindow explicitly so the test fails visibly if the default is ever retuned.
                 Browser.withConfig(_.networkIdleWindow(500.millis)) {
-                    timed(Browser.goto(s"http://$host:$port/", Browser.Settle.NetworkIdle)).map { case (elapsedDur, _) =>
-                        val elapsedMs = elapsedDur.toMillis
-                        // Lower bound proves the call did not return on Load alone (Load would fire under ~200ms for this trivial doc).
-                        // Upper bound (default 500ms idle window + last fetch at 300ms + Chrome overhead + CI envelope) is generous.
+                    for
+                        _    <- Browser.goto(s"http://$host:$port/", Browser.Settle.NetworkIdle)
+                        done <- Browser.eval("String(window.__done)")
+                    yield
+                        // The claim is a state read, not a stopwatch: NetworkIdle must not return on Load alone, so all three deferred
+                        // fetches (100/200/300ms) must have COMPLETED by the time goto returns. On correct behaviour the completion
+                        // counter is a stable 3 at return (the fetches are done, nothing increments it further), so no clock is involved.
                         assert(
-                            elapsedMs >= 200L && elapsedMs <= 5000L,
-                            s"Settle.NetworkIdle must wait past the 3-fetch burst (>= 200ms) and within idle window envelope (<= 5000ms) but got ${elapsedMs}ms"
+                            done.trim == "3",
+                            s"Settle.NetworkIdle must wait for the 3-fetch burst to complete, but window.__done=$done at return"
                         )
-                    }
+                    end for
                 }
             }
         }
@@ -1018,15 +1022,18 @@ class BrowserSettlementTest extends BrowserTest:
         }
         withLocalhostServer(htmlHandler, slowImageHandler) { (host, port) =>
             withBrowser {
-                timed(Browser.goto(s"http://$host:$port/", Browser.Settle.Load)).map { case (elapsedDur, _) =>
-                    val elapsedMs = elapsedDur.toMillis
-                    // Lower bound proves the load gate waited for the 500ms image delay (allow some network-roundtrip slack below 500ms).
-                    // Upper bound is conservative for CI: cold Chrome + load wait + slack.
+                for
+                    _        <- Browser.goto(s"http://$host:$port/", Browser.Settle.Load)
+                    complete <- Browser.eval("String(document.images[0].complete && document.images[0].naturalWidth > 0)")
+                yield
+                    // The load event fires only after every subresource finishes, so at return the slow <img> must be fully decoded.
+                    // Read that as state (stable true once loaded, no clock): an early return on DOMContentLoaded would leave
+                    // complete === false, which is exactly the regression this test targets.
                     assert(
-                        elapsedMs >= 400L && elapsedMs <= 8000L,
-                        s"Settle.Load must wait for the slow <img> subresource (>= 400ms) but got ${elapsedMs}ms"
+                        complete.trim == "true",
+                        s"Settle.Load must wait for the slow <img> subresource to finish, but images[0].complete=$complete at return"
                     )
-                }
+                end for
             }
         }
     }
@@ -1119,8 +1126,8 @@ class BrowserSettlementTest extends BrowserTest:
         // BrowserAssertionTimedOutException on chatty pages). Combine a wide mutationQuiescenceWindow(500ms)
         // (so the observer never sees a quiet 500ms gap inside the 5ms-interval churn) with the custom
         // mutationSettlementTimeout(500ms). The default-timeout foil pins the same churn to the default 2s
-        // timeout. Pinning here to 500ms proves the per-call override actually shortens the timeout
-        // (elapsed in [400, 1500]ms vs the default-timeout envelope of [1500, 12000]ms).
+        // timeout. Pinning here to 500ms proves the per-call override actually applies: the raised timeout exception
+        // reports the 500ms deadline it exhausted, not the default 2s (asserted below as state, with no clock).
         withBrowser {
             onPage(
                 """<body>
@@ -1138,22 +1145,22 @@ class BrowserSettlementTest extends BrowserTest:
                     ">click</button>
                 </body>"""
             ) {
-                timed {
-                    Abort.run[BrowserElementException | BrowserAssertionException] {
-                        Browser.withConfig(_.mutationQuiescenceWindow(500.millis).mutationSettlementTimeout(500.millis)) {
-                            Browser.click(Browser.Selector.id("b"))
-                        }
+                Abort.run[BrowserElementException | BrowserAssertionException] {
+                    Browser.withConfig(_.mutationQuiescenceWindow(500.millis).mutationSettlementTimeout(500.millis)) {
+                        Browser.click(Browser.Selector.id("b"))
                     }
-                }.map { case (elapsedDur, result) =>
-                    val elapsedMs = elapsedDur.toMillis
+                }.map { result =>
                     result match
-                        case Result.Failure(_: BrowserAssertionTimedOutException) =>
+                        case Result.Failure(e: BrowserAssertionTimedOutException) =>
+                            // The never-quiesce page always times out; the CLAIM is that the 500ms override, not the default 2s, was
+                            // the deadline that fired. notQuiesced embeds the exhausted deadline (as nanos) in `actual`, so assert it
+                            // reports the override. This reads which config the code applied, with no dependence on measured elapsed.
                             assert(
-                                elapsedMs >= 400L && elapsedMs <= 1500L,
-                                s"mutationSettlementTimeout(500ms) should timeout in [400, 1500]ms (foil: default 2s) but got ${elapsedMs}ms"
+                                e.actual.contains(s"deadline ${500.millis.toNanos}"),
+                                s"mutationSettlementTimeout(500ms) override should be the exhausted deadline, but the exception reported: ${e.actual}"
                             )
                         case other =>
-                            fail(s"expected BrowserAssertionTimedOutException after 500ms timeout but got $other")
+                            fail(s"expected BrowserAssertionTimedOutException after the 500ms timeout but got $other")
                     end match
                 }
             }
