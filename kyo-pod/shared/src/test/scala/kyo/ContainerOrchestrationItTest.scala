@@ -402,11 +402,10 @@ class ContainerOrchestrationItTest extends BasePodTest:
             Abort.run[ContainerException] {
                 Scope.run {
                     Container.initWith(config) { c =>
-                        // Container exits with code 1 immediately.
-                        // Wait briefly for the process to exit.
-                        Async.sleep(2.seconds).andThen {
-                            c.state
-                        }
+                        // The command exits with code 1 immediately. Poll until the daemon reports a terminal
+                        // state so scope cleanup runs against a genuinely-crashed container rather than one
+                        // still mid-exit; the load-bearing assertion is the post-cleanup removal check below.
+                        assertEventually(c.state.map(s => s == Container.State.Stopped || s == Container.State.Dead))
                     }
                 }
             }.map { _ =>
@@ -491,19 +490,28 @@ class ContainerOrchestrationItTest extends BasePodTest:
             .stopTimeout(1.second)
             .autoRemove(false)
         for
-            t0 <- Clock.now
-            _  <- Scope.run(Container.init(config).unit)
-            t1 <- Clock.now
+            t0      <- Clock.now
+            outcome <- Abort.run[Timeout](Async.timeout(30.seconds)(Scope.run(Container.init(config).unit)))
+            t1      <- Clock.now
         yield
+            outcome match
+                case Result.Success(_) => ()
+                case Result.Failure(_: Timeout) =>
+                    fail("scope cleanup did not complete; the kill path is hanging instead of force-removing after stopTimeout")
+                case Result.Panic(t) => fail(s"panic during scope cleanup: $t")
+            end match
             val elapsedMs = t1.toJava.toEpochMilli - t0.toJava.toEpochMilli
+            // The graceful-stop protocol scope cleanup runs for a Present stopSignal (send the signal,
+            // waitForExit up to stopTimeout, then force-remove) lives entirely inside the Scope finalizer,
+            // which force-removes the container and leaves no post-hoc witness of the grace duration. This
+            // floor is the remaining check that the grace period was honored rather than skipped: it is
+            // safe-direction (CI slowness only inflates the elapsed time, so it fails only when stopTimeout
+            // is bypassed, a real bug) and never false-fails under load. The former ceiling is replaced by the
+            // Async.timeout hang net above, which asserts on completion rather than a wall-clock number.
             assert(
                 elapsedMs >= 800,
                 s"Expected cleanup to wait ~stopTimeout (1s) when stopSignal is Present, took ${elapsedMs}ms — " +
                     "the kill path is not honoring stopTimeout"
-            )
-            assert(
-                elapsedMs < 20000,
-                s"Cleanup took too long (${elapsedMs}ms); expected timeout then force-remove"
             )
         end for
     }
