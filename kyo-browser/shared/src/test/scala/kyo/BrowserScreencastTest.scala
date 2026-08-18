@@ -275,6 +275,9 @@ class BrowserScreencastTest extends BrowserTest:
                         // reached > limit is the definitional relationship: the duration cap fires precisely because the elapsed-at-cap
                         // passed the configured limit. It compares two values the exception itself carries (no wall-clock band) and rules
                         // out reached being a frame count, since only a handful of frames land within the 300ms limit and none exceed it.
+                        // Out of scope: a wrong-unit regression that reports reached in a larger unit (nanos, so 300000000 > 300 still
+                        // holds). Any guard against that would be a magnitude band, which is the flaky shape being removed; the unit is
+                        // pinned at the throw site instead, where reached and limit are both taken from the same millisecond clock.
                         assert(
                             ex.reached > ex.limit,
                             s"expected reached (elapsed ms) to exceed the configured limit (${ex.limit}) but got ${ex.reached}"

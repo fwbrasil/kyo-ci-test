@@ -1094,7 +1094,10 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             // Take the baseline right after a completed scan, so the count starts at a cycle
             // boundary rather than partway through one.
             awaitMonitorCycles(2)
-            val wakeCalls    = 1000
+            // A large call count keeps the coalescing margin wide: a false fail needs the
+            // burst loop to stall past wakeCalls times the 2ms scan floor of real time, which
+            // is 20s here, while the calls themselves run in well under a millisecond.
+            val wakeCalls    = 10000
             val cyclesBefore = scheduler.blockingMonitor.cycles
             var i            = 0
             while (i < wakeCalls) {
