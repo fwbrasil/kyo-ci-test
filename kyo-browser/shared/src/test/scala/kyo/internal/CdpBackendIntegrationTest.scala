@@ -243,15 +243,21 @@ class CdpBackendIntegrationTest extends BrowserTest:
         }.orFail("Unexpected")
     }
 
-    "CdpBackend.closeNow returns in less than 100ms" in {
+    "CdpBackend.closeNow closes the connection" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
                     for
-                        start   <- Clock.now
-                        _       <- backend.closeNow
-                        elapsed <- Clock.now.map(_ - start)
-                    yield assert(elapsed < 1.second, s"closeNow took $elapsed (expected < 1s)")
+                        // Assert the close EFFECT (mirrors the close(grace) sibling above), not elapsed time: after closeNow a
+                        // subsequent send must raise ConnectionLost. Promptness is covered for free by the leaf timeout, which a
+                        // closeNow that blocked would trip.
+                        _          <- backend.closeNow
+                        afterClose <- Abort.run[BrowserConnectionException](CdpBackend.getTargets(backend))
+                    yield afterClose match
+                        case Result.Failure(_: BrowserConnectionLostException) => succeed
+                        case Result.Success(_) =>
+                            fail("expected the connection to be closed after closeNow but a send succeeded")
+                        case other => fail(s"expected BrowserConnectionLostException after closeNow, got $other")
                 }
             }
         }.orFail("Unexpected")

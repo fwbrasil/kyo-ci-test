@@ -76,38 +76,49 @@ class BrowserVerifyReadTest extends BrowserTest:
     // settle reads its bound from configLocal, not a hardcoded literal.
     // Two runs use the same never-converging counter. Override A uses a tight 200ms retrySchedule;
     // override B uses a wider 600ms retrySchedule. Both must abort a BrowserReadException.
-    // The elapsed time under A must be strictly less than the elapsed time under B,
-    // proving the bound comes from configLocal rather than a hardcoded constant.
+    // The wider bound must perform strictly more probes than the tighter one (probe count is set by the
+    // schedule, not by wall time), proving the bound comes from configLocal rather than a hardcoded constant.
     "settle reads its bound from configLocal and not a hardcoded constant" in {
         withBrowser {
             onPage("""<body>
                 <script>
+                    window.__reads = 0;
                     window.__kyoFlicker2 = Date.now();
                     setInterval(() => { window.__kyoFlicker2 = Date.now(); }, 5);
                 </script>
             </body>""") {
+                // The flicker never stabilizes, so settle exhausts its retrySchedule and fails. The polled expression counts every
+                // probe in window.__reads. The number of probes a settle performs is set by the schedule (maxDuration / interval), a
+                // config-determined count, so the wider 600ms bound must probe strictly more than the narrower 200ms bound. That
+                // read-count comparison proves the bound came from configLocal, with no dependence on measured elapsed time (the two
+                // runs share a runner, so any load slows both proportionally and preserves the ordering).
                 val runSettle =
                     Abort.run[BrowserReadException] {
-                        SettleRead.settle("settle-config-bound", "String(window.__kyoFlicker2)") { raw =>
-                            raw
+                        SettleRead.settle(
+                            "settle-config-bound",
+                            "String((window.__reads = (window.__reads || 0) + 1, window.__kyoFlicker2))"
+                        ) {
+                            raw => raw
                         }
                     }
-                timed(Browser.withConfig(
-                    _.retrySchedule(Schedule.fixed(50.millis).maxDuration(200.millis))
-                        .assertionStabilityWindow(80.millis)
-                )(runSettle)).map { case (elapsedA, resultA) =>
-                    timed(Browser.withConfig(
-                        _.retrySchedule(Schedule.fixed(50.millis).maxDuration(600.millis))
-                            .assertionStabilityWindow(80.millis)
-                    )(runSettle)).map { case (elapsedB, resultB) =>
-                        assert(resultA.isFailure, s"expected Failure under override A but got $resultA")
-                        assert(resultB.isFailure, s"expected Failure under override B but got $resultB")
-                        assert(
-                            elapsedA < elapsedB,
-                            s"expected override A ($elapsedA) to finish before override B ($elapsedB)"
-                        )
-                    }
-                }
+                for
+                    _ <- Browser.eval("(window.__reads = 0, 'ok')")
+                    resultA <- Browser.withConfig(
+                        _.retrySchedule(Schedule.fixed(50.millis).maxDuration(200.millis)).assertionStabilityWindow(80.millis)
+                    )(runSettle)
+                    readsA <- Browser.eval("String(window.__reads)")
+                    _      <- Browser.eval("(window.__reads = 0, 'ok')")
+                    resultB <- Browser.withConfig(
+                        _.retrySchedule(Schedule.fixed(50.millis).maxDuration(600.millis)).assertionStabilityWindow(80.millis)
+                    )(runSettle)
+                    readsB <- Browser.eval("String(window.__reads)")
+                yield
+                    assert(resultA.isFailure, s"expected Failure under override A but got $resultA")
+                    assert(resultB.isFailure, s"expected Failure under override B but got $resultB")
+                    val a = readsA.trim.toInt
+                    val b = readsB.trim.toInt
+                    assert(a < b, s"expected the narrower 200ms bound to probe fewer times than the wider 600ms bound, but A=$a B=$b")
+                end for
             }
         }
     }
