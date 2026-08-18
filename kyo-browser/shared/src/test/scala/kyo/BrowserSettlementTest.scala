@@ -1054,32 +1054,28 @@ class BrowserSettlementTest extends BrowserTest:
             </script>
         </body>"""
 
-    /** Empirical property: with a tight `mutationQuiescenceWindow(10.millis)` and 30ms-spaced fixture mutations (gaps exceed the window),
-      * settlement resolves shortly after the FIRST mutation's window expires; subsequent mutations do not re-extend the wait. Asserts
-      * elapsed is bounded BELOW the "all 5 mutations + window" total (320 + 10 = 330ms minimum) so the test fails if the resolver started
-      * capturing later mutations under a tighter window.
+    /** Property: with a tight `mutationQuiescenceWindow(10.millis)` and 30ms-spaced fixture mutations (gaps exceed the window),
+      * settlement releases in the first inter-mutation gap and does NOT wait for the later mutations to quiesce. The claim is a DOM
+      * contrast, not a stopwatch: the synchronous `root.textContent='init'` is observed at the click instant, the first timed mutation
+      * ('a') lands 50ms later, and a 10ms window quiesces in that gap, so `#root` still shows an EARLY token (never the final 'e') when
+      * click returns. The 500ms-window foil below asserts the opposite ('e'); the two outcomes differing under the two windows is the
+      * whole claim. (The former [50,320]ms elapsed band flaked when actionability + CDP overhead alone exceeded the ceiling, e.g. 602ms
+      * on a loaded runner; that overhead is unrelated to the window behaviour under test.)
       */
     "mutationQuiescenceWindow(10ms) lets 30ms-spaced mutations resolve in the first window" in {
         val p = page(quiescenceMatrixHtml)
         withBrowser {
             for
-                _ <- Browser.goto(p)
-                timedResult <-
-                    timed(Browser.withConfig(_.mutationQuiescenceWindow(10.millis))(Browser.click(Browser.Selector.id("trigger"))))
-                (elapsedDur, _) = timedResult
-                elapsedMs       = elapsedDur.toMillis
+                _         <- Browser.goto(p)
+                _         <- Browser.withConfig(_.mutationQuiescenceWindow(10.millis))(Browser.click(Browser.Selector.id("trigger")))
+                finalText <- Browser.text(Browser.Selector.id("root"))
             yield
-                // Lower bound (50ms): actionability (~33ms of stability sleeps) plus click dispatch is the empirical floor on any
-                // platform; below this the elapsed time can't include a real settlement window. With document-body scope, the
-                // synchronous `root.textContent='init'` mutation inside onclick is observed at the click instant, so settlement
-                // quiesces after the 10ms window between the init mutation and the first setTimeout (t=50ms gap). Settlement
-                // itself completes near t=10-30ms; total elapsed is dominated by actionability + click setup.
-                // Upper bound (320ms): with 10ms window vs 30ms gaps, settlement should NOT wait for all 5 mutations (last at
-                // t=320ms + 10ms quiet = 330ms minimum if captured). Default 20ms pollInterval adds jitter; cap at 320ms to fail
-                // visibly if later mutations slipped into the window.
+                // A broken tight window would absorb the later mutations and wait for full quiescence, returning only after the last
+                // mutation 'e' had landed and stayed; the early-token read below fails visibly in that case. The foil at :1092 proves
+                // the wide-window 'e' outcome, so the contrast (early token here vs 'e' there) pins the window config with no clock.
                 assert(
-                    elapsedMs >= 50L && elapsedMs <= 320L,
-                    s"mutationQuiescenceWindow(10ms) should resolve after the first mutation's window expires (10ms vs 30ms gap), expected [50, 320]ms but got ${elapsedMs}ms"
+                    finalText != "e",
+                    s"mutationQuiescenceWindow(10ms) must release before the final mutation 'e' lands, but observed '$finalText'"
                 )
             end for
         }
