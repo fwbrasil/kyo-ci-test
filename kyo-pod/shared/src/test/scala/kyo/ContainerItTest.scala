@@ -2734,22 +2734,23 @@ class ContainerItTest extends BasePodTest:
     // =========================================================================
 
     "exec edge cases" - {
-        "exec on stopped container fails without unnecessary retries" - runBackends {
+        "exec on a stopped container surfaces a non-transient ContainerException" - runBackends {
             Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _ <- c.stop
                     r <- Abort.run[ContainerException](c.exec("echo", "hello"))
                 yield r match
-                    // exec re-attempts only the transient ContainerBackendUnavailableException (the SSH-bridge
-                    // multiplex hiccup retryOnTransientUnavailable targets). A stopped container is a
-                    // deterministic NotFound/AlreadyStopped failure, a class that retry path excludes, so it
-                    // surfaces on the first attempt with no re-execution. Witnessing the failure as a
-                    // ContainerException outside the retryable class proves the no-retry guarantee by outcome,
-                    // independent of the daemon round-trip latency a wall-clock ceiling would have measured.
+                    // The only class retryOnTransientUnavailable re-attempts is the transient
+                    // ContainerBackendUnavailableException (the SSH-bridge multiplex hiccup on macOS podman
+                    // machines). A stopped container is a deterministic NotFound/AlreadyStopped failure, a class
+                    // that retry path excludes. This leaf pins the classification: the failure is a
+                    // ContainerException and specifically not the transient-retryable class. It does not witness
+                    // the attempt count, because the meter wraps the whole retry rather than each attempt, so a
+                    // widened retry predicate would not change any signal the test surface can observe.
                     case Result.Failure(_: ContainerBackendUnavailableException) =>
                         fail(
                             "exec on a stopped container surfaced the transient-retryable failure class; a " +
-                                "deterministic stopped-container failure must not enter the retry path"
+                                "deterministic stopped-container failure must classify outside the retry path"
                         )
                     case Result.Failure(_: ContainerException) =>
                         succeed(
