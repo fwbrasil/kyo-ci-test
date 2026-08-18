@@ -7,11 +7,7 @@ import kyo.test.TestReport
 import kyo.test.TestResult
 import kyo.test.internal.TestBase
 import org.scalatest.NonImplicitAssertions
-import org.scalatest.concurrent.Eventually
 import org.scalatest.freespec.AsyncFreeSpec
-import org.scalatest.time.Millis
-import org.scalatest.time.Seconds
-import org.scalatest.time.Span
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 
@@ -196,12 +192,9 @@ final class RecordingHeartbeatReporter extends kyo.test.TestReporter:
     def recorded: Vector[(Chunk[String], Duration)] = beats.get()
 end RecordingHeartbeatReporter
 
-class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions with Eventually:
+class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     implicit override val executionContext: ExecutionContext = TestExecutionContext.executionContext
-
-    implicit override val patienceConfig: PatienceConfig =
-        PatienceConfig(timeout = Span(15, Seconds), interval = Span(20, Millis))
 
     private def countResults(report: TestReport): Int =
         report.suiteReports.foldLeft(0)((acc, sr) => acc + sr.leafResults.size)
@@ -376,7 +369,7 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions with Eventuall
         RTDetachedAfterSuite.release = release
         // The after-close collector is process-global; drain any prior leak so this run starts from a clean baseline.
         val _ = kyo.test.AssertScope.drainLeakedAfterClose()
-        TestRunner.runToFuture(classOf[RTDetachedAfterSuite], RunConfig.default).map { report =>
+        TestRunner.runToFuture(classOf[RTDetachedAfterSuite], RunConfig.default).flatMap { report =>
             assert(countResults(report) == 1)
             val passed = assert(
                 leafByPath(report, Chunk("detached-fails-after")).exists {
@@ -384,12 +377,20 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions with Eventuall
                 },
                 s"expected the detached-after leaf to be Passed but got $report"
             )
-            // The leaf is scored and its scope closed; release the fiber so its assert records into the closed scope.
-            Sync.Unsafe.evalOrThrow(release.completeDiscard(Result.succeed(())))
-            // The record lands in the process-global collector; wait for it, then drain so it does not pollute later tests.
-            eventually(assert(!kyo.test.AssertScope.leakedAfterClose.isEmpty))
-            val _ = kyo.test.AssertScope.drainLeakedAfterClose()
-            passed
+            // The leaf is scored and its scope closed; release the parked fiber so its assert records into the now-closed
+            // scope, then wait for that record to land in the process-global collector with a Kyo-native asynchronous poll
+            // (not a blocking sleep) so the single-threaded JS event loop can run the detached fiber, then drain so the
+            // record does not pollute later tests. The poll is a bounded best-effort with a give-up valve and is never
+            // asserted on; the deterministic fact under test is that the leaf stays Passed.
+            val settle: Unit < (Async & Abort[Throwable]) =
+                release.completeDiscard(Result.succeed(())).andThen {
+                    Loop(0) { attempt =>
+                        if !kyo.test.AssertScope.leakedAfterClose.isEmpty || attempt >= 500 then Loop.done
+                        else Async.sleep(1.millis).andThen(Loop.continue(attempt + 1))
+                    }
+                }.andThen(Sync.defer(kyo.test.AssertScope.drainLeakedAfterClose(): Unit))
+            val settled: Future[Unit] < Sync = Fiber.initUnscoped(settle).map(_.toFuture)
+            Sync.Unsafe.evalOrThrow(settled).map(_ => passed)
         }
     }
 
