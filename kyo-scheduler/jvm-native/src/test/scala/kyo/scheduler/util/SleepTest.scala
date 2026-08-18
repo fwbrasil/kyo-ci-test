@@ -16,8 +16,9 @@ import org.scalatest.time.Span
   * Out of scope here: that the Native implementation keeps using nanosleep rather than the
   * pipe-based Thread.sleep. That choice shows itself as timer jitter under thread contention and
   * as pipe descriptors held by every probe in flight, neither of which is a state a test can read
-  * back, and the descriptors are closed per call so a leak check at rest sees nothing either. The
-  * regulator's use of the real probe stays covered by ConcurrencyTest.
+  * back. The descriptors are opened and closed per call, so the integration fd-leak suites, which
+  * count descriptors at rest, do not cover it either. The regulator's use of the real probe stays
+  * covered by ConcurrencyTest.
   */
 class SleepTest extends AnyFreeSpec with NonImplicitAssertions {
 
