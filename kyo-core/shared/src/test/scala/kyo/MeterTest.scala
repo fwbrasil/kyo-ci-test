@@ -582,12 +582,23 @@ class MeterTest extends kyo.test.Test[Any]:
                 _     <- f2.interrupt(panic)
             yield assert(runs.size == 10 && extra.isEmpty)
         }
-        "replenish doesn't overflow" in {
-            for
-                meter     <- Meter.initRateLimiter(5, 5.millis)
-                _         <- Async.sleep(32.millis)
-                available <- meter.availablePermits
-            yield assert(available == 5)
+        "replenish doesn't overflow".notJs in {
+            // Consume every permit, then let the periodic replenish (driven under virtual time) run for
+            // several periods. `release()` is capped at `rate`, so no number of firings can push
+            // availablePermits past the cap: it refills to exactly `rate` and stays there. Advancing the
+            // controlled clock past the periods is a happens-before on the replenish firings, so the final
+            // count is exact rather than a wall-clock settle. Excluded on JS for the same reason as the
+            // sibling repeatAtInterval-under-time-control tests: driving a periodic loop under manual time
+            // needs multi-iteration interleaving the single-threaded runtime does not provide.
+            Clock.withTimeControl { control =>
+                for
+                    meter     <- Meter.initRateLimiter(5, 5.millis)
+                    _         <- Loop.repeat(5)(meter.run(()))
+                    drained   <- meter.availablePermits
+                    _         <- Loop.repeat(20)(control.advance(5.millis))
+                    available <- meter.availablePermits
+                yield assert(drained == 0 && available == 5)
+            }
         }
     }
 
