@@ -258,8 +258,11 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         // Tear the spinner down BEFORE asserting so a failed assertion never leaves it pegging a worker.
         stop.set(true)
         val _ = Sync.Unsafe.evalOrThrow(fiber.interrupt)
-        Thread.sleep(200)
-        val drained = minLoad(10)
+        // Poll until the interrupted spinner's load drains back to ambient rather than sleeping a
+        // fixed window and hoping the interrupt has propagated: this converges as soon as the worker
+        // goes idle and only fails through the bound if the load never returns, which is the leak
+        // itself. Mirrors the awaitTrue wait used above for the busy side.
+        val drainedToAmbient = awaitTrue(2000)(LeakCheck.loadAvg() <= ambient + 0.5)
 
         assert(observed, s"the spinner should be observed as busy load within 2s (ambient=$ambient)")
         verdict match
@@ -272,7 +275,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
                 // The allowlist is empty here, so nothing can account for the spinner: Accounted would mean the predicate excused a leak.
                 fail(s"expected Busy while a fiber was spinning, got Accounted($la) under an empty allowlist (ambient=$ambient)")
         end match
-        assert(drained <= ambient + 0.5, s"after cleanup the spinner's load should be gone (ambient=$ambient drained=$drained)")
+        assert(drainedToAmbient, s"after cleanup the spinner's load should drain back to ambient within 2s (ambient=$ambient)")
     }
 
     test("non-daemon thread probe detects a leaked thread, respects the allowlist, and clears after join") {
