@@ -1804,7 +1804,7 @@ class ContainerItTest extends BasePodTest:
             // ensure short-circuits on the locally-present image and contacts no registry; pull re-contacts
             // the registry even when the image is already present, so it surfaces progress events (per-layer
             // "Already exists", the digest, an "up to date" status). Their presence is the registry contact
-            // observed directly, replacing the load-sensitive "pull is slower than ensure" timing proxy.
+            // observed directly, independent of how long a pull takes relative to an ensure.
             ContainerImage.ensure(img).andThen {
                 Scope.run {
                     Abort.run[ContainerException](ContainerImage.pullWithProgress(img).run).map {
