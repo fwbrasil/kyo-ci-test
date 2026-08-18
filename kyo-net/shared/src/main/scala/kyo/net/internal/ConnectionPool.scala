@@ -118,7 +118,10 @@ final private[kyo] class ConnectionPool[K, C](
         reaper =
             Present(
                 Sync.Unsafe.evalOrThrow(
-                    Clock.repeatWithDelay(interval, interval)(Sync.Unsafe.defer(sweepExpiredHosts()))
+                    // Bind the live clock: idle expiry is a real-time concern, and this pool may be initialized under a
+                    // controlled clock (the process-lifetime default client is built lazily inside whatever computation
+                    // first touches it), which would otherwise leave the reaper parked forever and stall reaping.
+                    Clock.let(Clock.live)(Clock.repeatWithDelay(interval, interval)(Sync.Unsafe.defer(sweepExpiredHosts())))
                 ).unsafe
             )
     end startReaper
