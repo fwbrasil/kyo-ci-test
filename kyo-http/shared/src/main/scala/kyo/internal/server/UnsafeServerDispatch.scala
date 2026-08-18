@@ -230,9 +230,10 @@ private[kyo] object UnsafeServerDispatch:
                     val cl  = request.contentLength
                     val max = config.maxContentLength
 
-                    // Content-Length enforcement: reject before routing if body exceeds limit.
-                    // Per RFC 9110 section 8.6, when both Content-Length and Transfer-Encoding
-                    // are present, Transfer-Encoding wins and Content-Length is ignored.
+                    // Content-Length enforcement: reject before routing if the declared body exceeds the limit. A request carrying both
+                    // Content-Length and Transfer-Encoding is refused as unframeable by the parser (answered 400 before this point per RFC
+                    // 9112 section 9.5), so Content-Length stands alone here; the `!request.isChunked` guard skips enforcement for a chunked
+                    // body, whose length is not declared by a header.
                     if cl > max && !request.isChunked then
                         // The over-limit body is never consumed (417 withholds it, 413 declined it), so the connection
                         // cannot be reused: answerAndContinue closes it (RFC 9112 section 9.3). The 417-vs-413
