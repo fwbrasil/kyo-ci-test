@@ -58,20 +58,27 @@ class RaceZipTest extends CompatTest:
         }
     }
     "zip runs in parallel (peak-concurrency canary)" in run {
-        // Parallelism is an overlap, not a duration: each leg marks itself active, holds briefly,
-        // then leaves; a peak of 2 means both legs were active at once. A sequential zip would
-        // peak at 1. (The former elapsed < 5s bound could not even distinguish the two - a
-        // sequential run of two 100ms legs is ~200ms, far under 5s.)
+        // Parallelism is an overlap, not a duration: each leg marks itself active, samples the
+        // peak, and waits at the barrier, so the second leg to arrive always samples 2 and
+        // neither leg can leave before both have arrived. A sequential zip never opens the
+        // barrier and fails through CompatTest's testTimeout. The barrier replaces a fixed hold,
+        // which left the sample racing the schedule: a leg stalled past the other's hold read a
+        // peak of 1 from a correct binding. (The former elapsed < 5s bound could not even
+        // distinguish parallel from sequential - two 100ms legs run back to back are ~200ms.)
         val active = new AtomicInteger(0)
         val peak   = new AtomicInteger(0)
-        def leg(v: Int): CIO[Int] =
+        def leg(v: Int, barrier: CLatch): CIO[Int] =
             CIO.defer {
                 val cur = active.incrementAndGet()
                 peak.updateAndGet(_ max cur)
                 ()
-            }.flatMap(_ => CIO.delay(100.millis)(CIO.defer { active.decrementAndGet(); v }))
-        CIO.zip(leg(1), leg(2)).map { tup =>
-            assert(tup == ((1, 2)) && peak.get() == 2, s"tup=$tup peak=${peak.get()}")
+            }.flatMap(_ => barrier.release)
+                .flatMap(_ => barrier.await)
+                .flatMap(_ => CIO.defer { active.decrementAndGet(); v })
+        CLatch.init(2).flatMap { barrier =>
+            CIO.zip(leg(1, barrier), leg(2, barrier)).map { tup =>
+                assert(tup == ((1, 2)) && peak.get() == 2, s"tup=$tup peak=${peak.get()}")
+            }
         }
     }
     "zip arity 4 returns 4-tuple" in run {

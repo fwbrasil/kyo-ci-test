@@ -76,24 +76,31 @@ class MeterTest extends CompatTest:
         // Meter(2) + 4 runs: the permit limit shows up as concurrency, not elapsed. Each run
         // marks itself active while holding the permit; the peak active count must be exactly 2 -
         // never 3+ (the limit holds) and reaching 2 (the limit is actually engaged, not serialised
-        // to 1). The former `elapsed < 5s` bound verified neither and could not tell 2 from 4.
+        // to 1). The two-way barrier makes the second half race-free: the first two holders cannot
+        // leave until both hold a permit, so the peak reaches 2 whatever the host's schedule does,
+        // where a fixed hold left that to timing. Later runs find the barrier open and pass
+        // through, and the limit is what keeps the peak from going past 2. The former
+        // `elapsed < 5s` bound verified neither and could not tell 2 from 4.
         val ctr    = new AtomicInteger(0)
         val active = new AtomicInteger(0)
         val peak   = new AtomicInteger(0)
-        def one: CIO[Int] =
+        def one(barrier: CLatch): CIO[Int] =
             CIO.defer {
                 val cur = active.incrementAndGet()
                 peak.updateAndGet(_ max cur)
                 ()
-            }.flatMap(_ => CIO.sleep(100.millis))
+            }.flatMap(_ => barrier.release)
+                .flatMap(_ => barrier.await)
                 .flatMap(_ => CIO.defer { active.decrementAndGet(); ctr.incrementAndGet() })
         val c =
-            CMeter.init(2).flatMap { m =>
-                val r1: CIO[Int] = m.run(one)
-                val r2: CIO[Int] = m.run(one)
-                val r3: CIO[Int] = m.run(one)
-                val r4: CIO[Int] = m.run(one)
-                CIO.zip(r1, r2, r3, r4)
+            CLatch.init(2).flatMap { barrier =>
+                CMeter.init(2).flatMap { m =>
+                    val r1: CIO[Int] = m.run(one(barrier))
+                    val r2: CIO[Int] = m.run(one(barrier))
+                    val r3: CIO[Int] = m.run(one(barrier))
+                    val r4: CIO[Int] = m.run(one(barrier))
+                    CIO.zip(r1, r2, r3, r4)
+                }
             }
         c.map { case (a, b, d, e) =>
             assert(

@@ -204,32 +204,27 @@ class TimeTest extends CompatTest:
 
     "concurrent sleeps overlap (peak-concurrency canary)" in run {
         // Parallelism is an overlap, not a duration. Each leg marks itself active, samples the
-        // peak, announces itself, and only sleeps once the other leg has announced too, so the
-        // second leg to arrive always samples 2 and no leg can leave before both have arrived.
-        // The rendezvous is what makes the sample race-free: without it a host that stalled the
-        // second leg past the first leg's sleep would read a peak of 1 on a correct binding,
-        // which is the same fragility the former `total < 250ms` bound had. A zip that ran the
-        // legs one after the other never releases either and fails through CompatTest's
-        // testTimeout instead of reporting a peak.
+        // peak, and only sleeps once the other leg has reached the barrier, so the second leg to
+        // arrive always samples 2 and neither leg can leave before both have arrived. The barrier
+        // is what makes the sample race-free: without it a host that stalled the second leg past
+        // the first leg's sleep would read a peak of 1 on a correct binding, which is the same
+        // fragility the former `total < 250ms` bound had. A zip that ran the legs one after the
+        // other never opens the barrier and fails through CompatTest's testTimeout instead of
+        // reporting a peak.
         val active = new AtomicInteger(0)
         val peak   = new AtomicInteger(0)
-        def leg(d: FiniteDuration, mine: CPromise[Unit], theirs: CPromise[Unit]): CIO[Unit] =
+        def leg(d: FiniteDuration, barrier: CLatch): CIO[Unit] =
             CIO.defer {
                 val cur = active.incrementAndGet()
                 peak.updateAndGet(_ max cur)
                 ()
-            }.flatMap(_ => mine.succeed(()))
-                .flatMap(_ => theirs.get)
+            }.flatMap(_ => barrier.release)
+                .flatMap(_ => barrier.await)
                 .flatMap(_ => CIO.sleep(d))
                 .flatMap(_ => CIO.defer { active.decrementAndGet(); () })
-        CPromise.init[Unit].flatMap { arrivedFirst =>
-            CPromise.init[Unit].flatMap { arrivedSecond =>
-                CIO.zip(
-                    leg(50.millis, arrivedFirst, arrivedSecond),
-                    leg(100.millis, arrivedSecond, arrivedFirst)
-                ).map { _ =>
-                    assert(peak.get() == 2, s"expected both sleeps in flight at once, peak=${peak.get()}")
-                }
+        CLatch.init(2).flatMap { barrier =>
+            CIO.zip(leg(50.millis, barrier), leg(100.millis, barrier)).map { _ =>
+                assert(peak.get() == 2, s"expected both sleeps in flight at once, peak=${peak.get()}")
             }
         }
     }

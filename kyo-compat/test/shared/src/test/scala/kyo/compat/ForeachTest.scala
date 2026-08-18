@@ -2,7 +2,6 @@ package kyo.compat
 
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.compat.*
-import scala.concurrent.duration.*
 
 class ForeachTest extends CompatTest:
 
@@ -15,20 +14,26 @@ class ForeachTest extends CompatTest:
     }
 
     "foreach runs concurrently (peak-concurrency canary)" in run {
-        // Concurrency shows up as overlap, not wall-clock: each task marks itself active, holds
-        // briefly, then leaves; a peak of 5 means all 5 were active at once (parallel), whereas a
-        // sequential run would peak at 1. Asserting the overlap is robust to a slow machine in a
-        // way `elapsed < 500ms` is not. (Same shape as the bounded-concurrency canary below.)
+        // Concurrency shows up as overlap, not wall-clock: each task marks itself active, samples
+        // the peak, and waits at a five-way barrier, so the last task to arrive samples 5 and no
+        // task can leave before all 5 have arrived. A sequential run never opens the barrier and
+        // fails through CompatTest's testTimeout. The barrier replaces a fixed hold, which left
+        // the sample racing the schedule: a task stalled past another's hold read a peak below 5
+        // from a correct binding. (Same shape as the bounded-concurrency canary below.)
         val active = new AtomicInteger(0)
         val peak   = new AtomicInteger(0)
-        CIO.foreach(1 to 5) { _ =>
-            CIO.defer {
-                val cur = active.incrementAndGet()
-                peak.updateAndGet(_ max cur)
-                ()
-            }.flatMap(_ => CIO.delay(100.millis)(CIO.defer { active.decrementAndGet(); 7 }))
-        }.map { out =>
-            assert(out.size == 5 && peak.get() == 5, s"out.size=${out.size} peak=${peak.get()}")
+        CLatch.init(5).flatMap { barrier =>
+            CIO.foreach(1 to 5) { _ =>
+                CIO.defer {
+                    val cur = active.incrementAndGet()
+                    peak.updateAndGet(_ max cur)
+                    ()
+                }.flatMap(_ => barrier.release)
+                    .flatMap(_ => barrier.await)
+                    .flatMap(_ => CIO.defer { active.decrementAndGet(); 7 })
+            }.map { out =>
+                assert(out.size == 5 && peak.get() == 5, s"out.size=${out.size} peak=${peak.get()}")
+            }
         }
     }
 
@@ -180,20 +185,27 @@ class ForeachTest extends CompatTest:
     "foreach with concurrency=2 on 6 items observes exactly 2 concurrent items" in run {
         // Bounded path canary: peak concurrent invocations must be exactly 2 - never more (the
         // bound holds) and never fewer (the bound is actually engaged, i.e. it did not run
-        // sequentially). peak == 2 captures both, so the former elapsed >= 150ms batching floor
-        // is redundant.
+        // sequentially). The two-way barrier makes the "never fewer" half race-free: the first
+        // two items to run cannot leave until both have arrived, so the peak reaches 2 whatever
+        // the host's schedule does, where a fixed hold left that outcome to timing. The later
+        // items find the barrier open and pass straight through, and the bound is what keeps
+        // them from pushing the peak past 2.
         val active = new AtomicInteger(0)
         val peak   = new AtomicInteger(0)
-        val c = CIO.foreach(1 to 6, 2) { _ =>
-            CIO.defer {
-                val cur = active.incrementAndGet()
-                peak.updateAndGet(_ max cur)
-                ()
-            }.flatMap { _ =>
-                CIO.delay(50.millis)(CIO.defer {
-                    active.decrementAndGet()
+        val c = CLatch.init(2).flatMap { barrier =>
+            CIO.foreach(1 to 6, 2) { _ =>
+                CIO.defer {
+                    val cur = active.incrementAndGet()
+                    peak.updateAndGet(_ max cur)
                     ()
-                })
+                }.flatMap(_ => barrier.release)
+                    .flatMap(_ => barrier.await)
+                    .flatMap(_ =>
+                        CIO.defer {
+                            active.decrementAndGet()
+                            ()
+                        }
+                    )
             }
         }
         c.map { _ =>
@@ -203,19 +215,25 @@ class ForeachTest extends CompatTest:
 
     "foreach unbounded (default concurrency) runs all 5 concurrently" in run {
         // Unbounded path explicit canary: the default (Int.MaxValue) branch must run all 5 tasks
-        // in parallel, so all 5 are active at once (peak == 5). Asserting the overlap effect is
-        // robust to a slow machine where an `elapsed < 500ms` ceiling would flake.
+        // in parallel, so the five-way barrier can only open if all 5 are active at once and the
+        // last arrival samples a peak of 5. A branch that admitted fewer than 5 at a time never
+        // opens it and fails through CompatTest's testTimeout, where a fixed hold would have left
+        // the peak to the host's schedule.
         val active = new AtomicInteger(0)
         val peak   = new AtomicInteger(0)
-        CIO.foreach(1 to 5, Int.MaxValue) { _ =>
-            CIO.defer {
-                val cur = active.incrementAndGet()
-                peak.updateAndGet(_ max cur)
-                ()
-            }.flatMap(_ => CIO.delay(100.millis)(CIO.defer { active.decrementAndGet(); 7 }))
-        }.map { out =>
-            assert(out.size == 5, s"expected 5 results, got ${out.size}")
-            assert(peak.get() == 5, s"unbounded must run all 5 concurrently, peak=${peak.get()}")
+        CLatch.init(5).flatMap { barrier =>
+            CIO.foreach(1 to 5, Int.MaxValue) { _ =>
+                CIO.defer {
+                    val cur = active.incrementAndGet()
+                    peak.updateAndGet(_ max cur)
+                    ()
+                }.flatMap(_ => barrier.release)
+                    .flatMap(_ => barrier.await)
+                    .flatMap(_ => CIO.defer { active.decrementAndGet(); 7 })
+            }.map { out =>
+                assert(out.size == 5, s"expected 5 results, got ${out.size}")
+                assert(peak.get() == 5, s"unbounded must run all 5 concurrently, peak=${peak.get()}")
+            }
         }
     }
 
