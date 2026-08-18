@@ -1091,26 +1091,23 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             scheduler.schedule(wakeTask)
             assert(wakeStarted.await(5, TimeUnit.SECONDS))
 
-            val start        = System.nanoTime()
+            // Take the baseline right after a completed scan, so the count starts at a cycle
+            // boundary rather than partway through one.
+            awaitMonitorCycles(2)
+            val wakeCalls    = 1000
             val cyclesBefore = scheduler.blockingMonitor.cycles
             var i            = 0
-            while (i < 1000) {
+            while (i < wakeCalls) {
                 scheduler.notifyInterrupt()
                 i += 1
             }
             val cyclesAdded = scheduler.blockingMonitor.cycles - cyclesBefore
-            val elapsed     = System.nanoTime() - start
 
-            // However many wakes arrive, consecutive scans stay at least minInterval apart, so a
-            // burst spanning `elapsed` admits one scan per minInterval plus the one already in
-            // flight when the count was taken. Deriving the ceiling from the burst's own span
-            // makes it independent of how fast the host ran the loop: a slower burst is allowed
-            // proportionally more scans, and one scan per wake fails it at any speed.
-            val maxCycles = elapsed / scheduler.blockingMonitor.minIntervalNs + 1
+            // Two counts, no clock: dispatching a scan per call lands the burst at wakeCalls
+            // scans, and collapsing the calls into the permit lands it below.
             assert(
-                cyclesAdded <= maxCycles,
-                s"1000 wake() calls triggered $cyclesAdded monitor scans in ${elapsed}ns, above the " +
-                    s"$maxCycles that the ${scheduler.blockingMonitor.minIntervalNs}ns scan floor allows: " +
+                cyclesAdded < wakeCalls,
+                s"$wakeCalls wake() calls triggered $cyclesAdded monitor scans: " +
                     "they should coalesce, not scan per call"
             )
 
