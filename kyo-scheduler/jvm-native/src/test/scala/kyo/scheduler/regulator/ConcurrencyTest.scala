@@ -68,7 +68,7 @@ class ConcurrencyTest extends AnyFreeSpec with NonImplicitAssertions {
         // tasks on this thread, so every host runs the same number of real Sleep probes and
         // reaches exactly one regulation decision, and only the measurement comes from the real
         // clock. Wall time cannot drive this: a host slow enough to stretch the wait into an
-        // extra regulation cycle changed the decision budget the outcome was judged against.
+        // extra regulation cycle moves the decision budget the outcome is judged against.
         timer.advanceAndRun(config.regulateInterval)
         concurrency.stop()
 

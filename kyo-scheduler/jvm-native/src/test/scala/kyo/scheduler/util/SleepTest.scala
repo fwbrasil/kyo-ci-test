@@ -111,8 +111,8 @@ class SleepTest extends AnyFreeSpec with NonImplicitAssertions {
         val threshold  = Concurrency.defaultConfig.jitterUpperThreshold * multiplier
         // A single measurement window can be inflated by one host-level stall that has nothing
         // to do with Sleep, so the verdict is the median window: a Sleep that competes for the
-        // fd table raises jitter in every window, while one stalled window no longer decides
-        // the run. The threshold itself is unchanged.
+        // fd table raises jitter in every window, while one stalled window does not decide the
+        // run on its own.
         val median = stddevs.sorted.apply(windows / 2)
         assert(
             median < threshold,

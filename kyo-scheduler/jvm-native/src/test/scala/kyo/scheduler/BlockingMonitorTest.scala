@@ -988,7 +988,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
 
             // The second task should NOT have received any spurious interrupts, and the guarantee
             // is per scan: counting the monitor's cycles makes the race window actually get
-            // exercised, where a fixed wait buys as many scans as the host felt like giving.
+            // exercised, where a fixed wait buys only as many scans as the host had room for.
             acrossMonitorCycles(100) {
                 assert(
                     !spuriousInterrupt.get(),
