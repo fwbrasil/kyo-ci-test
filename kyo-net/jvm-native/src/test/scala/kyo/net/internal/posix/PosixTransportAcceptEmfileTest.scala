@@ -23,56 +23,65 @@ import kyo.net.Test
   * The mechanism: a delegating [[SocketBindings]] decorator injects `EMFILE` for `acceptNow` on the listen fd while a bounded budget is unspent,
   * counting every call. One real client connects, so the listen fd is genuinely read-ready with one backlog entry. The driver's poll loop fires
   * the accept, the transport drains via `acceptNow`, and the EMFILE return drives the loop. If the accept loop spins, the injected `acceptNow`
-  * count climbs without bound for ONE pending connection; a loop that handles EMFILE as a backoff re-arm (rather than an immediate one) keeps the
-  * count small (~1 per backoff interval). The decorator stops injecting once the spin threshold is crossed so a regressed (spinning) build still
+  * count climbs without bound for ONE pending connection; a loop that handles EMFILE as a backoff re-arm (rather than an immediate one) issues
+  * one `acceptNow` per re-arm. The decorator stops injecting once the spin threshold is crossed so a regressed (spinning) build still
   * tears down cleanly (the real accept then succeeds).
   *
-  * Completion + anti-flakiness: no `Thread.sleep`, no busy-spin. A bounded settle window (`Async.sleep(settleWindow)`, a fiber suspension that
-  * yields the carrier) is the spin ceiling, not a timing assertion: with the spin the carrier issues hundreds of `acceptNow(EMFILE)` calls inside
-  * the window (far past `bound`); with the backoff re-arm only ~`settleWindow / acceptResourceBackoff` calls issue (well under `bound`).
-  * The window is sized so the two regimes are separated by more than an order of magnitude, and the assertion reads the count once the window
-  * elapses. The spy stops injecting `EMFILE` past `spinThreshold` so a regressed (spinning) build still drains the backlog and tears down cleanly.
+  * Completion: nothing here reads a clock. The transport reports every resource-exhaustion re-arm through its `onAcceptResourceBackoff` hook,
+  * and the leaf settles on whichever event lands first, each of them a count of accept-loop events rather than a duration:
+  *
+  *   - the `backoffTarget`-th re-arm, which samples the `acceptNow` count at that exact instant (about one call per re-arm), or
+  *   - the spy's spin cap, `spinThreshold` `acceptNow` calls for ONE pending connection, which only a spinning loop ever reaches.
+  *
+  * Both settle the same promise with the call count, and the assertion reads that count, so a slow or loaded machine changes how long the leaf
+  * runs and nothing else. `Async.timeout` is only the deadlock ceiling for an accept loop that does neither (a wedged listener), never the pass
+  * condition.
   */
 class PosixTransportAcceptEmfileTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.NetConfig.default
-
     // EMFILE = 24 on both Linux and macOS/BSD (stable POSIX errno). Not defined in PosixConstants (part of the defect: the accept loop has no
     // branch for it), so it is spelled out here.
     private val EMFILE = 24
 
-    // The accept loop should call acceptNow a small bounded number of times for one pending connection (one readiness -> one or a few drains).
-    // A spin drives it far past this.
-    private val bound = 8
+    // How many resource-exhaustion re-arms the accept loop must perform before the call count is read. Each one is a whole backoff cycle: the
+    // poller re-fires the still-ready listen fd, `acceptAll` issues exactly one `acceptNow`, EMFILE comes back, and the loop backs off again.
+    // Requiring several proves the cadence repeats rather than the loop having stalled once.
+    private val backoffTarget = 3
 
-    // The spin-detection threshold: if acceptNow is invoked this many times for ONE pending connection, the loop is provably spinning. The spy
-    // stops injecting EMFILE past it so a regressed (spinning) build's real accept proceeds and the test tears down cleanly instead of looping
-    // forever; it is the injection cap, not the test's completion signal (the settle window below is).
+    // The accept loop issues one acceptNow per backoff re-arm for one pending connection, so the count sampled at the target re-arm is that
+    // many. The slack of one absorbs an extra drain (a spurious readiness on the listen fd) without admitting a spin, which issues hundreds.
+    private val bound = backoffTarget + 1
+
+    // Spin cap. A spinning loop never backs off, so nothing else would ever settle this leaf: at this many acceptNow calls for ONE pending
+    // connection the loop is provably spinning, and the spy settles the leaf with the spun count. Past it the spy stops injecting EMFILE so a
+    // regressed build's real accept drains the backlog and the test tears down cleanly.
     private val spinThreshold = 200
 
-    // Bounded settle window: the spin ceiling, not a timing assertion. With the spin the poll-loop carrier issues hundreds of acceptNow(EMFILE)
-    // calls inside this window (far past `bound`); with the backoff re-arm (acceptResourceBackoff = 50ms) only ~5-6 issue, well under
-    // `bound`. The assertion reads the count once the window elapses, so the two regimes are separated by more than an order of magnitude.
-    private val settleWindow = 250.millis
+    // Deadlock ceiling, not a pass condition: the two settling events above are counts, and no assertion reads elapsed time. This turns an
+    // accept loop that neither backs off nor spins (a listener wedged with no re-arm at all) into a failed test instead of a hang.
+    private val settleCeiling = 15.seconds
 
     private def assumePollerReady(): Unit =
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
             cancel("PosixTransport accept-loop tests need epoll (Linux) or kqueue (macOS/BSD)")
 
-    /** A delegating [[SocketBindings]] that injects `EMFILE` on `acceptNow` while a bounded budget is unspent, counting every call. Past the spin
-      * threshold it stops injecting and delegates to the real `acceptNow` so a regressed (spinning) build still drains the backlog and tears down
-      * cleanly. Every other method delegates to the real bindings (the single controlled injection pattern: one syscall's result is overridden,
-      * the rest are real).
+    /** A delegating [[SocketBindings]] that injects `EMFILE` on `acceptNow` while a bounded budget is unspent, counting every call. At the spin
+      * threshold it settles `settled` with the call count (the only way a spinning loop, which never reaches a backoff re-arm, terminates this
+      * test) and stops injecting, delegating to the real `acceptNow` so the backlog drains and teardown is clean. Every other method delegates to
+      * the real bindings (the single controlled injection pattern: one syscall's result is overridden, the rest are real).
       */
-    final private class EmfileAcceptSockets(real: SocketBindings) extends SocketBindings:
+    final private class EmfileAcceptSockets(real: SocketBindings, settled: Promise.Unsafe[Int, Any]) extends SocketBindings:
         val acceptNowCalls: AtomicInteger = new AtomicInteger(0)
 
         def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
             val n = acceptNowCalls.incrementAndGet()
             if n >= spinThreshold then
-                // Spin cap: a regressed build that spins past the threshold gets the real accept so the backlog drains and teardown is clean.
+                // Settle from the spin side: a spinning loop never reaches a backoff re-arm, so this is the only event that ends the leaf for
+                // it. The promise's own gate makes this idempotent, so whichever of the spin cap and the backoff target lands first owns the
+                // outcome, and the real accept below drains the backlog so teardown is clean.
+                discard(settled.complete(Result.succeed(n)))
                 real.acceptNow(fd, addr, addrlen)
             else
                 // The pending connection stays in the backlog (EMFILE does not dequeue it); the listen fd remains read-ready.
@@ -124,9 +133,19 @@ class PosixTransportAcceptEmfileTest extends Test:
 
         "does not spin on acceptNow EMFILE while a connection is pending (bounded retry)" in {
             assumePollerReady()
-            val spy       = new EmfileAcceptSockets(Ffi.load[SocketBindings])
-            val driver    = PollerIoDriver.init()
-            val transport = TestTransports.forTesting(driver, spy, backendIsEpoll = false)
+            val settled  = Promise.Unsafe.init[Int, Any]()
+            val spy      = new EmfileAcceptSockets(Ffi.load[SocketBindings], settled)
+            val backoffs = new AtomicInteger(0)
+            val driver   = PollerIoDriver.init()
+            val transport = TestTransports.forTesting(
+                driver,
+                spy,
+                backendIsEpoll = false,
+                // Sampling the acceptNow count inside the hook, on the carrier that is about to park the loop for the backoff, pins the reading
+                // to the target re-arm rather than to whatever the loop had reached at some later instant.
+                onAcceptResourceBackoff = () =>
+                    if backoffs.incrementAndGet() == backoffTarget then discard(settled.complete(Result.succeed(spy.acceptNowCalls.get())))
+            )
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 for
@@ -148,18 +167,23 @@ class PosixTransportAcceptEmfileTest extends Test:
                                 fd
                             }
                         }
-                    // Let the accept loop run against the injected EMFILE for the settle window: the spin ceiling, not a timing assertion (a
-                    // spinning loop floods acceptNow far past `bound` inside it; the backoff re-arm issues only a handful). This is
-                    // an Async suspension (the fiber yields its carrier), so no thread blocks while the poll loop drives the accept path.
-                    _ <- Async.sleep(settleWindow)
-                yield
-                    val count = spy.acceptNowCalls.get()
-                    assert(
-                        count <= bound,
-                        s"accept loop spun: $count acceptNow(EMFILE) calls for ONE pending connection in the settle window (bound $bound). " +
-                            "EMFILE leaves the connection in the backlog so the listen fd stays read-ready; an immediate re-arm re-fires it at " +
-                            "once and the loop livelocks. A bounded-backoff re-arm keeps the count small."
-                    )
+                    // Settles on the target backoff re-arm or on the spin cap, whichever the accept loop reaches first.
+                    outcome <- Abort.run[Timeout](Async.timeout(settleCeiling)(settled.safe.get))
+                yield outcome match
+                    case Result.Success(count) =>
+                        assert(
+                            count <= bound,
+                            s"accept loop spun: $count acceptNow(EMFILE) calls for ONE pending connection without reaching $backoffTarget " +
+                                s"resource-backoff re-arms (bound $bound). EMFILE leaves the connection in the backlog so the listen fd stays " +
+                                "read-ready; an immediate re-arm re-fires it at once and the loop livelocks. A bounded-backoff re-arm issues " +
+                                "one acceptNow per re-arm."
+                        )
+                    case Result.Failure(_: Timeout) =>
+                        fail(
+                            "the accept loop neither backed off nor spun: it never re-armed under EMFILE, so the listener is wedged and the " +
+                                "pending connection is never accepted"
+                        )
+                    case other => fail(s"unexpected accept-loop outcome: $other")
                 end for
             }
         }
