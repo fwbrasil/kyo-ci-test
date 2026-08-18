@@ -2,6 +2,7 @@ package kyo.scheduler
 
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import kyo.scheduler.util.Threads
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AnyFreeSpec
@@ -30,28 +31,26 @@ class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
-    "currentMillis" in withClock { clock =>
-        // A published tick is a System.currentTimeMillis reading, so system readings taken around
-        // the window it was sampled in bracket it. That pins the reported time to real time
-        // without depending on how long anything took: the assertions hold whether a tick lands
-        // in a microsecond or after a scheduling stall.
-        //
-        // The bracket is asserted on the second tick because the update thread samples the system
-        // clock and publishes it as two steps, and can be descheduled in between. Observing the
-        // first tick only proves its publish came after `previous` was read, not its sample, so
-        // it can carry a value taken before the watch started. The second tick's sample follows
-        // the first tick's publish in the update thread's own program order, so it is provably
-        // taken after `systemBefore`.
-        for (_ <- 0 until 5) {
-            val systemBefore = System.currentTimeMillis()
-            val previous     = clock.currentMillis()
-            val first        = awaitTick(clock, previous)
-            val second       = awaitTick(clock, first)
-            val systemAfter  = System.currentTimeMillis()
-            assert(first > previous, s"clock went backwards, from $previous to $first")
-            assert(second > first, s"clock went backwards, from $first to $second")
-            assert(second >= systemBefore, s"clock reported $second, sampled before the watch started at $systemBefore")
-            assert(second <= systemAfter, s"clock reported $second, ahead of the system clock's $systemAfter")
+    "currentMillis" in {
+        // The clock publishes whatever its time source returns, so a source the test controls pins
+        // the reported value exactly, with no reference to real time. `source` is an AtomicLong the
+        // test moves; `currentMillis()` must catch up to each value it is set to, which also proves
+        // the update loop keeps resampling rather than latching the first reading. Moving the source
+        // forward and seeing the report follow is the monotonic property stated as an exact target
+        // rather than a bracket against the system clock.
+        val source   = new AtomicLong(1_000L)
+        val executor = Executors.newSingleThreadExecutor(Threads("test-internal-clock"))
+        val clock    = new InternalClock(executor, () => source.get())
+        try {
+            assert(awaitValue(clock, 1_000L) == 1_000L, "the clock did not publish its source's initial value")
+            source.set(2_000L)
+            val advanced = awaitValue(clock, 2_000L)
+            assert(advanced == 2_000L, "the clock did not resample its source after it moved")
+            assert(advanced > 1_000L, s"the report did not move forward with the source, $advanced")
+        } finally {
+            clock.stop()
+            executor.shutdownNow()
+            ()
         }
     }
 
@@ -71,9 +70,19 @@ class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions {
         current
     }
 
-    private def withClock[A](testCode: InternalClock => A): A = {
-        val clock = new InternalClock(TestExecutors.cached)
-        try testCode(clock)
-        finally clock.stop()
+    /** Reads the clock until it publishes exactly `target`.
+      *
+      * The deadline is a give-up valve for an update thread that never reaches the value, not a
+      * bound anything is asserted against.
+      */
+    private def awaitValue(clock: InternalClock, target: Long): Long = {
+        val deadline = System.nanoTime() + 30L * 1000 * 1000 * 1000
+        var current  = clock.currentMillis()
+        while (current != target) {
+            assert(System.nanoTime() < deadline, s"the clock never published $target, last saw $current")
+            Thread.`yield`()
+            current = clock.currentMillis()
+        }
+        current
     }
 }
