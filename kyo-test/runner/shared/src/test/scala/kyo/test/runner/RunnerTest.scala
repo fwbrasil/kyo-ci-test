@@ -7,7 +7,11 @@ import kyo.test.TestReport
 import kyo.test.TestResult
 import kyo.test.internal.TestBase
 import org.scalatest.NonImplicitAssertions
+import org.scalatest.concurrent.Eventually
 import org.scalatest.freespec.AsyncFreeSpec
+import org.scalatest.time.Millis
+import org.scalatest.time.Seconds
+import org.scalatest.time.Span
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 
@@ -152,18 +156,24 @@ end RTJoinedFailSuite
 /** A detached fiber asserts AFTER the body returns: the leaf stays Passed and the assert records into the now-CLOSED
   * scope, which emits the "a fiber outlived its test" stderr warning instead of failing the leaf.
   *
-  * The body returns immediately; the detached fiber sleeps briefly, then asserts false. By the time the assert fires the
-  * runner has already joined the body, scored the leaf, and closed the scope, so `record` takes the closed branch (the
-  * stderr warning) rather than the sink. Full determinism through the runner is not achievable here (the close happens
-  * on the runner timeline, not the leaf's), so the sleep makes the after-body ordering as reliable as possible; the
-  * closed->log branch itself is unit-covered in the api `AssertScopeTest`.
+  * The body returns immediately; the detached fiber parks on a release latch. The test completes that latch only after
+  * the runner has joined the body, scored the leaf, and closed the scope, so when the fiber then asserts false `record`
+  * takes the closed branch (the stderr warning plus the process-global collector) rather than the sink. The latch makes
+  * the after-body ordering exact: the assert lands strictly after the scope is closed. The closed->log branch itself is
+  * unit-covered in the api `AssertScopeTest`.
   */
 class RTDetachedAfterSuite extends TestBase[Any]:
     "detached-fails-after" in Sync.defer {
         Fiber.initUnscoped {
-            Async.sleep(500.millis).andThen(Abort.run[Throwable](assert(false, "detached fiber asserted after the leaf")))
+            RTDetachedAfterSuite.release.get.andThen(Abort.run[Throwable](assert(false, "detached fiber asserted after the leaf")))
         }
     }.andThen(succeed)
+end RTDetachedAfterSuite
+
+object RTDetachedAfterSuite:
+    // Set by the test before the suite runs. The detached fiber parks on it and asserts only once the test releases it,
+    // which the test does after the runner has scored the leaf and closed the scope.
+    @volatile var release: kyo.Promise[Unit, Any] = null.asInstanceOf[kyo.Promise[Unit, Any]]
 end RTDetachedAfterSuite
 
 /** A single leaf slower than a short heartbeat interval, used to prove `onLeafHeartbeat` fires while a leaf is still running. */
@@ -186,9 +196,12 @@ final class RecordingHeartbeatReporter extends kyo.test.TestReporter:
     def recorded: Vector[(Chunk[String], Duration)] = beats.get()
 end RecordingHeartbeatReporter
 
-class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
+class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions with Eventually:
 
     implicit override val executionContext: ExecutionContext = TestExecutionContext.executionContext
+
+    implicit override val patienceConfig: PatienceConfig =
+        PatienceConfig(timeout = Span(15, Seconds), interval = Span(20, Millis))
 
     private def countResults(report: TestReport): Int =
         report.suiteReports.foldLeft(0)((acc, sr) => acc + sr.leafResults.size)
@@ -352,19 +365,31 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     "AssertScope: a detached fiber that fails AFTER the body leaves the leaf Passed" in {
-        // The body returns immediately; the detached fiber sleeps, then asserts false after the runner has already
-        // scored and closed the scope, so `record` takes the closed branch (a stderr "a fiber outlived its test"
-        // warning) rather than failing the leaf. We assert only the deterministic integration fact: the leaf stays
-        // Passed. The closed->log warning itself is deterministically covered by the api AssertScopeTest (close()
-        // then record() emits the warning); asserting it here would race the detached fiber's wakeup.
+        // The body returns immediately; the detached fiber parks on a release latch. The test completes the latch only
+        // AFTER the runner has scored the leaf and closed the scope, so the fiber's assert takes the closed branch (a
+        // stderr "a fiber outlived its test" warning plus an enqueue into the process-global collector) rather than
+        // failing the leaf. The deterministic integration fact is that the leaf stays Passed; the closed->log warning
+        // itself is covered by the api AssertScopeTest (close() then record() emits the warning). The latch makes the
+        // after-body ordering exact rather than a timed guess.
+        import kyo.AllowUnsafe.embrace.danger
+        val release = Sync.Unsafe.evalOrThrow(Promise.init[Unit, Any])
+        RTDetachedAfterSuite.release = release
+        // The after-close collector is process-global; drain any prior leak so this run starts from a clean baseline.
+        val _ = kyo.test.AssertScope.drainLeakedAfterClose()
         TestRunner.runToFuture(classOf[RTDetachedAfterSuite], RunConfig.default).map { report =>
             assert(countResults(report) == 1)
-            assert(
+            val passed = assert(
                 leafByPath(report, Chunk("detached-fails-after")).exists {
                     case _: TestResult.Passed => true; case _ => false
                 },
                 s"expected the detached-after leaf to be Passed but got $report"
             )
+            // The leaf is scored and its scope closed; release the fiber so its assert records into the closed scope.
+            Sync.Unsafe.evalOrThrow(release.completeDiscard(Result.succeed(())))
+            // The record lands in the process-global collector; wait for it, then drain so it does not pollute later tests.
+            eventually(assert(!kyo.test.AssertScope.leakedAfterClose.isEmpty))
+            val _ = kyo.test.AssertScope.drainLeakedAfterClose()
+            passed
         }
     }
 
