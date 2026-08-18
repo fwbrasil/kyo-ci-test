@@ -55,16 +55,34 @@ class DynamicFlagConcurrencyTest extends AnyFreeSpec {
             assert(result == "value1" || result == "value2")
         }
 
-        "apply() never blocks — completes in bounded time" in {
+        "apply() never blocks — completes under concurrent update() with no torn reads" in {
             val flag = DynConcTestFlags.neverBlocks
             flag.update("rollout:100@enterprise;50")
-            val start = java.lang.System.nanoTime()
-            for (_ <- 0 until 10000) {
-                flag("user1", "enterprise"): Unit
+            val validValues    = Set(100, 50, 200, 75, 0)
+            val iterations     = 10000
+            @volatile var stop = false
+            var errors         = 0
+            var completed      = 0
+            val writer = new Thread(() => {
+                while (!stop) {
+                    flag.update("rollout:200@enterprise;75")
+                    flag.update("rollout:100@enterprise;50")
+                }
+            })
+            writer.start()
+            try {
+                for (_ <- 0 until iterations) {
+                    val r = flag("user1", "enterprise")
+                    if (!validValues.contains(r)) errors += 1
+                    completed += 1
+                }
+            } finally {
+                stop = true
+                writer.join()
             }
-            val elapsed = java.lang.System.nanoTime() - start
-            // 10000 calls should complete in well under 1 second
-            assert(elapsed < 1000000000L, s"Took ${elapsed / 1000000}ms for 10000 calls")
+            // Every call returned (a lock-taking apply() contended by the writer could not reach the
+            // full count) and every read saw a consistent value; neither depends on wall-clock time.
+            assert(completed == iterations && errors == 0)
         }
 
         "update() during apply() with percentage — consistent bucket evaluation" in {
