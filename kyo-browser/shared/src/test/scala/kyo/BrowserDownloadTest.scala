@@ -454,17 +454,16 @@ class BrowserDownloadTest extends BrowserTest:
         }
     }
 
-    // ── recordDownloads captures multi-download Chunk in arrival order ──
-    // Trigger three downloads in sequence (`a.txt`, `b.txt`, `c.txt`); assert the returned chunk carries
-    // three WillBegin events whose suggestedFilename sequence equals Chunk(fileA, fileB, fileC).
+    // ── download-event capture records every WillBegin in click order ──
     //
-    // recordDownloads captures events into an internal chunk that is not exposed until the body returns,
-    // and onDownload registers a single per-session dispatcher (a nested onDownload would REPLACE
-    // recordDownloads' capture handler, not compose with it), so there is no in-body event to await for
-    // "all three WillBegin drained". The bounded settle is an honest wait for that internal async drain,
-    // not a proxy for a different pipeline (do not gate on file existence: file writes are a separate
-    // pipeline from event drain and can race it).
-    "recordDownloads captures every DownloadEvent emitted during the body in arrival order" in {
+    // The capture path is a single per-session dispatcher draining one channel through one fiber into an
+    // append-only chunk, so events are recorded in arrival order. `recordDownloads` is the thin wrapper over
+    // this exact path (an AtomicRef plus an `onDownload` append handler), so its capture behaviour is
+    // exercised here directly through `onDownload` with an owned handler. The handler signals a Promise once
+    // the third distinct WillBegin guid has arrived, so the body returns exactly when all three have been
+    // captured, gated on the events themselves rather than a wall-clock wait. One drainer fiber serialises the
+    // appends, so the three suggestedFilenames appear in click order.
+    "download-event capture records every WillBegin in click order" in {
         withBrowser {
             for
                 tempPath <- Path.tempDir("kyo-dl-record-")
@@ -479,28 +478,34 @@ class BrowserDownloadTest extends BrowserTest:
                        |<a id='b' href='$dataUrl' download='$fileB'>b</a>
                        |<a id='c' href='$dataUrl' download='$fileC'>c</a>""".stripMargin
                 )
-                _ <- Browser.allowDownloads(tempDir)
-                pair <- Browser.recordDownloads[Unit, Any] {
+                _      <- Browser.allowDownloads(tempDir)
+                events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
+                seen   <- AtomicRef.init(Set.empty[String])
+                done   <- Promise.init[Unit, Any]
+                capture = (ev: Browser.DownloadEvent) =>
+                    events.updateAndGet(_ :+ ev).andThen {
+                        ev match
+                            case Browser.DownloadEvent.WillBegin(guid, _, _) =>
+                                seen.updateAndGet(_ + guid).map(s =>
+                                    if s.size >= 3 then done.complete(Result.succeed(())).unit else Kyo.unit
+                                )
+                            case _ => Kyo.unit
+                    }
+                _ <- Browser.onDownload(capture) {
                     Browser.goto(html).andThen(
                         Browser.click(Browser.Selector.id("a")).andThen(
                             Browser.click(Browser.Selector.id("b")).andThen(
-                                Browser.click(Browser.Selector.id("c")).andThen(
-                                    // Bounded settle for the internal event drain (see the note above the
-                                    // test: recordDownloads exposes no in-body completion event).
-                                    Async.sleep(2.seconds)
-                                )
+                                Browser.click(Browser.Selector.id("c")).andThen(done.get)
                             )
                         )
                     )
                 }
-                (events, _) = pair
+                captured <- events.get
             yield
-                val willBegins = events.collect { case wb: Browser.DownloadEvent.WillBegin => wb }
-                val names      = willBegins.map(_.suggestedFilename)
-                val expected   = Chunk(fileA, fileB, fileC)
+                val names = captured.collect { case wb: Browser.DownloadEvent.WillBegin => wb }.map(_.suggestedFilename)
                 assert(
-                    names.containsSlice(expected) || names.toSet == expected.toSet,
-                    s"expected arrival order ${expected.mkString("(", ", ", ")")} in $names"
+                    names == Chunk(fileA, fileB, fileC),
+                    s"expected WillBegin arrival order (fileA, fileB, fileC) but got $names"
                 )
             end for
         }

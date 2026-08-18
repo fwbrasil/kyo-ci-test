@@ -272,13 +272,14 @@ class BrowserScreencastTest extends BrowserTest:
                         assert(ex.operation == "screenshotFrames", s"unexpected operation ${ex.operation}")
                         // The duration cap reports BOTH numbers in milliseconds: limit == maxDurationMs, reached == elapsed ms.
                         assert(ex.limit == 300, s"expected limit 300 (duration cap ms) but got ${ex.limit}")
-                        // reached is the elapsed ms at the cap, so it must exceed the 300ms limit (that is why the cap fired). A frame
-                        // count (only a handful of frames land in 300ms) could never exceed 300, so reached > limit both proves the
-                        // unit is milliseconds and that the duration cap (not the frame cap) fired. The former `reached < 10000` upper
-                        // bound was a wall-clock ceiling that also contradicted its own 800ms-window comment; dropped.
+                        // Both numbers are milliseconds. limit is the exact configured cap; reached is the elapsed-at-cap. Two unit
+                        // checks, not a wall-clock timing band: reached > limit rules out reached being a frame count (only a handful
+                        // of frames land in 300ms, never > 300), and reached < limit*100 rules out the wrong unit (nanos would be
+                        // ~300,000,000). Realistic reached is ~300-900ms, so the 100x-limit ceiling never flakes on a slow runner; it
+                        // fails only on a unit regression.
                         assert(
-                            ex.reached > ex.limit,
-                            s"expected reached (elapsed ms) to exceed the 300ms limit but got ${ex.reached}"
+                            ex.reached > ex.limit && ex.reached < ex.limit * 100,
+                            s"expected reached to be milliseconds like limit (in (${ex.limit}, ${ex.limit * 100})) but got ${ex.reached}"
                         )
                     case other =>
                         fail(s"expected BrowserCaptureLimitExceededException on the duration cap but got $other")
