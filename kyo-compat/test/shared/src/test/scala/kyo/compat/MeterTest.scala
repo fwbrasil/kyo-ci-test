@@ -1,5 +1,6 @@
 package kyo.compat
 
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.compat.*
 import scala.concurrent.duration.*
@@ -115,37 +116,50 @@ class MeterTest extends CompatTest:
         }
     }
     "second acquire blocks until first holder releases" in run {
-        val holdMs = 150L
+        // Blocking is a happens-before, not a duration, and two markers pin it from both sides:
+        // the holder reads `waiterEntered` while it still owns the only permit, so a false there
+        // means the waiter's acquire had not completed; the waiter reads `releasing`, flipped as
+        // the holder's last act inside the critical section, so a true there means its acquire
+        // completed after the holder was done. The former `waitMs >= holdMs - 30` read the same
+        // fact off the clock and traded on 30ms of hand-picked slack.
+        val waiterEntered = new AtomicBoolean(false)
+        val releasing     = new AtomicBoolean(false)
         val c =
             CMeter.init(1).flatMap { m =>
                 CPromise.init[Unit].flatMap { acquired =>
-                    val holder: CIO[Long] =
-                        m.run {
-                            CIO.nowMonotonic.map(_.toMillis).flatMap { t0 =>
+                    CPromise.init[Unit].flatMap { attempting =>
+                        val holder: CIO[Boolean] =
+                            m.run {
                                 acquired.succeed(()).flatMap { _ =>
-                                    CIO.sleep(holdMs.millis).flatMap { _ =>
-                                        CIO.nowMonotonic.map(_.toMillis).flatMap { t1 =>
-                                            CIO.defer(t1 - t0)
+                                    attempting.get.flatMap { _ =>
+                                        // Scheduling nudge so the waiter reaches its blocked acquire before the
+                                        // permit goes back; the assertions hold whatever it does in that window.
+                                        CIO.sleep(50.millis).flatMap { _ =>
+                                            CIO.defer {
+                                                val enteredWhileHeld = waiterEntered.get()
+                                                releasing.set(true)
+                                                enteredWhileHeld
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
-                    val waiter: CIO[Long] =
-                        acquired.get.flatMap { _ =>
-                            CIO.nowMonotonic.map(_.toMillis).flatMap { before =>
-                                m.run {
-                                    CIO.nowMonotonic.map(_.toMillis).flatMap { after =>
-                                        CIO.defer(after - before)
-                                    }
+                        val waiter: CIO[Boolean] =
+                            acquired.get.flatMap { _ =>
+                                attempting.succeed(()).flatMap { _ =>
+                                    m.run(CIO.defer {
+                                        waiterEntered.set(true)
+                                        releasing.get()
+                                    })
                                 }
                             }
-                        }
-                    CIO.zip(holder, waiter)
+                        CIO.zip(holder, waiter)
+                    }
                 }
             }
-        c.map { case (_, waitMs) =>
-            assert(waitMs >= holdMs - 30L, s"waiter did not block long enough: waitMs=$waitMs")
+        c.map { case (enteredWhileHeld, observedRelease) =>
+            assert(!enteredWhileHeld, "waiter held the permit at the same time as the holder")
+            assert(observedRelease, "waiter acquired the permit before the holder released it")
         }
     }
 
