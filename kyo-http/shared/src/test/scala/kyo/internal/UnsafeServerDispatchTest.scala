@@ -52,18 +52,6 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
     private def sendRequest(inbound: Channel.Unsafe[Span[Byte]], request: String): Unit =
         discard(inbound.offer(Span.fromUnsafe(request.getBytes(StandardCharsets.US_ASCII))))
 
-    /** Polls until `condition` holds, or gives up after a bound that only exists so a broken server fails instead of
-      * spinning forever. The interval sleeps on the live clock rather than through `Async.sleep`, so the poll also works
-      * inside `Clock.withTimeControl`, where virtual time only moves when the test advances it. The interval is not a
-      * timing assumption: a slower machine polls more times, and the caller asserts on state that has settled.
-      */
-    private def pollUntil(condition: => Boolean, maxPolls: Int = 10000)(using Frame): Boolean < Async =
-        Loop.indexed { i =>
-            if condition then Loop.done(true)
-            else if i >= maxPolls then Loop.done(false)
-            else Clock.live.sleep(1.milli).map(_.get).andThen(Loop.continue)
-        }
-
     /** Waits until the keep-alive idle timer for the next idle period is armed.
       *
       * `restartParserKeepAlive` arms the timer and only then restarts the parser, which registers a take on inbound

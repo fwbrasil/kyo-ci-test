@@ -1,5 +1,6 @@
 package kyo
 
+import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import scala.language.implicitConversions
 
@@ -1294,36 +1295,64 @@ class HttpClientTest extends BaseHttpTest:
         }
 
         "exponential backoff" in {
-            var attempts   = 0
-            var timestamps = List.empty[Long]
-            val route      = HttpRoute.getRaw("slow").response(_.bodyText)
+            val base     = 500.millis
+            val attempts = new AtomicInteger(0)
+            val route    = HttpRoute.getRaw("slow").response(_.bodyText)
             val ep = route.handler { _ =>
-                attempts += 1
-                timestamps = timestamps :+ java.lang.System.currentTimeMillis()
-                if attempts < 3 then HttpResponse.serverError.addField("body", "wait")
+                if attempts.incrementAndGet() < 3 then HttpResponse.serverError.addField("body", "wait")
                 else HttpResponse.ok("done")
             }
             withServer(ep) { url =>
-                var called = false
-                // The base must dominate per-retry overhead noise. The delays are measured as wall-clock gaps
-                // between server hits, which include request overhead: the first retry pays connection setup and
-                // JIT warmup while later retries reuse a warm path, so that overhead is non-uniform across retries.
-                // A small base (tens of ms) is smaller than that noise and can invert the comparison; a 500ms base
-                // makes the exponential increment the dominant term so the gap growth reflects the backoff, not jitter.
-                HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.exponential(500.millis, 2.0).take(5)))) {
-                    withClient { client =>
-                        val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow", Absent))
-                        client.sendWith(route, request) { resp =>
-                            called = true
-                            assert(resp.status == HttpStatus.OK)
-                            assert(attempts == 3)
-                            assert(timestamps.size >= 3)
-                            val delay1 = timestamps(1) - timestamps(0)
-                            val delay2 = timestamps(2) - timestamps(1)
-                            assert(delay2 >= delay1, s"Expected increasing delays: $delay1, $delay2")
+                // The backoff is read off the client's own clock instead of the wall-clock gaps between server hits.
+                // With time frozen, a retry reaches the server only because the test advanced past the delay the
+                // schedule computed, so connection setup, JIT warmup and runner load cannot stand in for the backoff,
+                // and each delay is pinned to its own value rather than only to being no shorter than the previous one.
+                Clock.withTimeControl { tc =>
+                    HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.exponential(base, 2.0).take(5)))) {
+                        withClient { client =>
+                            val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow", Absent))
+                            // Advances a full delay at a time until the next attempt lands. The check precedes each
+                            // advance, so once an attempt is seen no further time is added, and the delay the client
+                            // then arms is measured from where this stopped.
+                            def releaseInto(n: Int) =
+                                Loop.indexed { i =>
+                                    if attempts.get() >= n then Loop.done(true)
+                                    else if i >= 50 then Loop.done(false)
+                                    else tc.advance(base).map(_ => Loop.continue)
+                                }
+                            Fiber.initUnscoped(client.sendWith(route, request)(_.status)).map { call =>
+                                pollUntil(attempts.get() >= 1).map { started =>
+                                    assert(started, "the client must make the first attempt")
+                                    tc.advance(base - 1.milli).andThen {
+                                        assert(
+                                            attempts.get() == 1,
+                                            s"a retry fired before the first ${base.show} delay elapsed: ${attempts.get()}"
+                                        )
+                                        releaseInto(2).map { retried =>
+                                            assert(retried, "the first retry must fire once its delay elapses")
+                                            tc.advance(base * 2.0 - 1.milli).andThen {
+                                                assert(
+                                                    attempts.get() == 2,
+                                                    s"the second retry fired before its ${(base * 2.0).show} delay elapsed: ${attempts.get()}"
+                                                )
+                                                releaseInto(3).map { retriedAgain =>
+                                                    assert(retriedAgain, "the second retry must fire once its longer delay elapses")
+                                                    call.get.map { status =>
+                                                        assert(status == HttpStatus.OK)
+                                                        assert(
+                                                            attempts.get() == 3,
+                                                            s"Expected exactly three attempts, got: ${attempts.get()}"
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
-                }.andThen(assert(called))
+                }
             }
         }
 
