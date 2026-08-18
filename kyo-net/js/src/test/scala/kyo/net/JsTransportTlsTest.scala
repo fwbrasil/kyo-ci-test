@@ -254,11 +254,18 @@ class JsTransportTlsTest extends Test:
         privateKeyPath = Present(localhostKeyPath)
     )
 
-    /** Open a raw Node TCP socket to `port` (completing the TCP accept) and then send NOTHING, so the TLS handshake never starts. Returns a
-      * `Promise[Boolean]` completed `true` when the socket is closed by the far end (the server's handshake-deadline reap destroying it) and a
-      * thunk that destroys the client socket for teardown. The close event is the deterministic latch: no sleep is used to detect the reap.
+    /** The finite deadline the Infinity leaf's pacer listener carries. It bounds what that leaf can catch: a deadline wrongly armed for an
+      * Infinity config is caught when it would have fired within this duration of the subject's accept, and the subject is accepted before the
+      * pacer, so the reach is a little wider than the value itself.
       */
-    private def stalledRawClient(port: Int)(using Frame): (Boolean < Async, () => Unit) =
+    private val pacerDeadline = 400.millis
+
+    /** Open a raw Node TCP socket to `port` (completing the TCP accept) and then send NOTHING, so the TLS handshake never starts. Returns the
+      * `Promise[Boolean]` completed `true` when the socket is closed by the far end (the server's handshake-deadline reap destroying it) and a
+      * thunk that destroys the client socket for teardown. The close event is the deterministic latch: no sleep is used to detect the reap. The
+      * promise itself is handed back, not just its `get`, so a caller can also read whether the reap has happened without waiting for one.
+      */
+    private def stalledRawClient(port: Int)(using Frame): (Promise[Boolean, Any], () => Unit) =
         import AllowUnsafe.embrace.danger
         val net    = sjs.Dynamic.global.require("net")
         val closed = Sync.Unsafe.evalOrThrow(Promise.init[Boolean, Any])
@@ -267,7 +274,7 @@ class JsTransportTlsTest extends Test:
         // The server reaping the stalled handshake destroys the accepted socket; the client observes that as "close".
         discard(socket.on("close", { (_: sjs.Any) => closed.unsafe.completeDiscard(Result.succeed(true)) }: sjs.Function1[sjs.Any, Unit]))
         discard(socket.on("error", { (_: sjs.Any) => () }: sjs.Function1[sjs.Any, Unit]))
-        (closed.get, () => discard(socket.destroy()))
+        (closed, () => discard(socket.destroy()))
     end stalledRawClient
 
     "a stalled server TLS handshake is reaped after the deadline (socket destroyed)" in {
@@ -282,7 +289,7 @@ class JsTransportTlsTest extends Test:
             listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 150.millis)) { _ => () }.safe.get
             port                    = listener.port
             (reaped, destroyClient) = stalledRawClient(port)
-            wasReaped <- reaped
+            wasReaped <- reaped.get
         yield
             destroyClient()
             listener.close()
@@ -320,8 +327,11 @@ class JsTransportTlsTest extends Test:
     }
 
     "a stalled server TLS handshake is not reaped when handshakeTimeout is Infinity" in {
-        // With handshakeTimeout = Infinity the server arms no deadline timer: a stalled handshake parks forever and is not reaped. A bounded
-        // observation window (an Async suspension, not a thread block) is the no-reap ceiling; with Infinity the client's "close" must not fire.
+        // With handshakeTimeout = Infinity the server arms no deadline timer at all, so a stalled handshake parks forever. Proving that
+        // non-event takes a point known to be past any deadline the subject could have been given: a second, identically stalled client on a
+        // listener of the SAME transport whose deadline IS finite. It is accepted after the subject, so a subject timer of at most the pacer's
+        // duration would have destroyed the subject's socket before the pacer's own reap lands. The pacer's reap is therefore the event this
+        // leaf settles on, and it also proves the reap machinery is alive: a window in which nothing happens proves nothing on its own.
         import AllowUnsafe.embrace.danger
         val transport =
             JsTransport.init(poolSize = 1)
@@ -329,14 +339,25 @@ class JsTransportTlsTest extends Test:
             listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = Duration.Infinity)) { _ =>
                 ()
             }.safe.get
-            port                    = listener.port
-            (reaped, destroyClient) = stalledRawClient(port)
-            // Race the reap signal against a bounded window: if the window wins, the stall was NOT reaped (the expected Infinity behavior).
-            outcome <- Async.race(reaped.map(_ => true), Async.sleep(400.millis).andThen(false))
+            (subjectClosed, destroySubject) = stalledRawClient(listener.port)
+            pacerListener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = pacerDeadline)) { _ =>
+                ()
+            }.safe.get
+            (pacerClosed, destroyPacer) = stalledRawClient(pacerListener.port)
+            pacer <- Abort.run[Timeout](Async.timeout(10.seconds)(pacerClosed.get))
         yield
-            destroyClient()
+            // Read before the teardown below, which closes the subject's socket itself and would complete its promise for a reason of our own.
+            val subjectReaped = subjectClosed.unsafe.done()
+            destroySubject()
+            destroyPacer()
             listener.close()
-            assert(!outcome, "a stalled handshake must not be reaped when handshakeTimeout is Infinity")
+            pacerListener.close()
+            assert(
+                pacer.isSuccess,
+                s"the pacer's finite deadline never reaped its stalled handshake, so nothing here proves a deadline armed for the subject " +
+                    s"would have fired by now: $pacer"
+            )
+            assert(!subjectReaped, "a stalled handshake must not be reaped when handshakeTimeout is Infinity")
         end for
     }
 
