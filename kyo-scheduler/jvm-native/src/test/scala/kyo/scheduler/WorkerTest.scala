@@ -950,6 +950,67 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         assert(!flagAfterTask.get(), "interrupt flag should be cleared between tasks")
     }
 
+    "run clears a stale interrupt left on the reused thread" in {
+        // A thread can come back to the worker still carrying an interrupt set by unrelated work,
+        // and Worker.run clears it on mount so the task it mounts never observes it. The executor
+        // here hands its single thread back with the flag intact and takes work without blocking:
+        // java.util.concurrent pools clear the flag before every dispatch, which hides the
+        // hand-back this guards against, and a single thread makes the reuse exact rather than
+        // something the test hopes for.
+        val pending = new ConcurrentLinkedQueue[Runnable]()
+        val stopped = new AtomicBoolean(false)
+        val pool: Executor = r => {
+            pending.add(r)
+            ()
+        }
+        val poolThread = new Thread(() => {
+            while (!stopped.get()) {
+                val r = pending.poll()
+                if (r ne null) r.run()
+                else Thread.`yield`()
+            }
+        })
+        poolThread.setDaemon(true)
+        poolThread.start()
+
+        val clock = InternalClock(TestExecutors.cached)
+        try {
+            val stained       = new CountDownLatch(1)
+            val stainedThread = new AtomicReference[Thread](null)
+            pool.execute(() => {
+                stainedThread.set(Thread.currentThread())
+                Thread.currentThread().interrupt()
+                stained.countDown()
+            })
+            assert(stained.await(5, TimeUnit.SECONDS))
+
+            val testStop = globalStop
+            val worker = new Worker(0, pool, (_, _) => ???, _ => null, clock, 5) {
+                def currentInterruptEpoch(): Long = 0L
+                def shouldStop()                  = testStop.get()
+            }
+
+            val flagOnEntry = new AtomicBoolean(false)
+            val ranOn       = new AtomicReference[Thread](null)
+            val done        = new CountDownLatch(1)
+            val task = TestTask(_run = () => {
+                ranOn.set(Thread.currentThread())
+                flagOnEntry.set(Thread.interrupted())
+                done.countDown()
+                Task.Done
+            })
+            worker.enqueue(task)
+
+            assert(done.await(5, TimeUnit.SECONDS))
+            assert(ranOn.get() eq stainedThread.get(), "the task should mount the thread that carries the stale flag")
+            assert(!flagOnEntry.get(), "run() should clear the stale interrupt before mounting a task")
+        } finally {
+            stopped.set(true)
+            clock.stop()
+            poolThread.join(5000)
+        }
+    }
+
     "needsInterrupt" in {
         val task = TestTask()
         assert(!task.needsInterrupt())
@@ -966,17 +1027,25 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         // subsequent enqueued tasks sit in the dead queue.
         val worker = createWorker(executor = executor)
 
-        val fatalTask = TestTask(_run = () => throw new LinkageError("simulated NoClassDefFoundError"))
+        val mountThread = new AtomicReference[Thread](null)
+        val fatalTask = TestTask(_run = () => {
+            mountThread.set(Thread.currentThread())
+            throw new LinkageError("simulated NoClassDefFoundError")
+        })
         worker.enqueue(fatalTask)
 
         // Worker thread picks it up and dies executing it.
         eventually {
             assert(fatalTask.executions == 1, "fatal task should have been executed once before the thread died")
         }
-        // Ordering settle (no clean event to await): the worker must finish tearing down the
-        // dead thread before task2 is enqueued, otherwise the enqueue races the death window and
-        // task2 is lost. Kept as an honest settle.
-        Thread.sleep(200)
+        // The fatal Throwable unwinds run()'s finally, which republishes the worker as Idle, and
+        // then kills the pool thread. Waiting for that thread to die is the teardown signal: an
+        // enqueue that lands inside the death window is lost outright rather than delayed, so
+        // the eventually below could never recover it.
+        eventually {
+            val thread = mountThread.get()
+            assert((thread ne null) && !thread.isAlive(), "the worker's thread should have died from the fatal Throwable")
+        }
 
         // Now enqueue a trivial second task. A healthy Worker re-arms via wakeup() ->
         // exec.execute(this) and runs it. A wedged Worker has state stuck at Running,
