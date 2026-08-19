@@ -306,7 +306,7 @@ else rm -f "'"$SELFDIR"'/qk"; echo "Tests: succeeded 99, failed 0"; exit 0; fi'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 30 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 33 ]
     exit $?
 fi
 
