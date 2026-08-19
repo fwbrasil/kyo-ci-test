@@ -278,6 +278,25 @@ echo "[warn] Process /x/kyo-schema-yaml-test finished with non-zero value 11 (0x
     nat "Native exit 116 (contains 11 but is not SIGSEGV) is not retried as a crash" 0 'echo "Tests: succeeded 75, failed 0"
 echo "[warn] Process /x/kyo-schema-yaml-test finished with non-zero value 116 (0x74)"; exit 116'
 
+    # scala-native #4992 module-init null: a concurrent first-touch reader reads a null module instance,
+    # surfacing as "null cannot be cast to <type>". Intermittent, so retried like the signal crash above;
+    # a persistent occurrence still fails after MAX_RETRIES.
+    rm -f "$SELFDIR/nullcast"
+    nat "Native module-init null (null cannot be cast) after a passing suite is retried then passes" 0 'if [ ! -f "'"$SELFDIR"'/nullcast" ]; then touch "'"$SELFDIR"'/nullcast"
+echo "Tests: succeeded 74, failed 1"
+echo "  - reads scalar primitives directly from event values *** FAILED ***"
+echo "java.lang.ClassCastException: null cannot be cast to scala.math.BigInt"; exit 1
+else rm -f "'"$SELFDIR"'/nullcast"; echo "Tests: succeeded 75, failed 0"; exit 0; fi'
+    rm -f "$SELFDIR/nullcast"
+    nat "Native persistent module-init null fails after retries" 1 'echo "Tests: succeeded 74, failed 1"
+echo "java.lang.ClassCastException: null cannot be cast to scala.math.BigInt"; exit 1'
+
+    # Narrowness guard: a genuine type mismatch reads "<Type> cannot be cast to <Other>" (never "null"), so
+    # it must NOT be pulled into the module-init-null retry; it stays a hard failure.
+    nat "Native real ClassCastException (not null) stays a failure" 1 'echo "Tests: succeeded 74, failed 1"
+echo "  - t *** FAILED ***"
+echo "java.lang.ClassCastException: class kyo.Foo cannot be cast to class kyo.Bar"; exit 1'
+
     # A native crash-retry re-runs through testKyo --quick: attempt 1 is the full run, the retry appends
     # --quick so only the tests sbt did not record as passed (the crashed suites) re-run.
     rm -f "$SELFDIR/qk"
@@ -306,7 +325,7 @@ else rm -f "'"$SELFDIR"'/qk"; echo "Tests: succeeded 99, failed 0"; exit 0; fi'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 33 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 36 ]
     exit $?
 fi
 
@@ -436,6 +455,17 @@ check_log() {
     if crashed_native_runner; then
         log "native test runner crashed mid-RPC (errno 104): retrying"
         return 2
+    fi
+    # scala-native #4992 (module-init publish race): a concurrent first-touch reader can observe a module's
+    # instance field before it is written and read null; when that null reaches a typed slot the native cast
+    # check reports "null cannot be cast to <type>". It is an intermittent upstream race, not a kyo defect,
+    # so re-run the failed tests (via --quick) exactly like the signal crash below. Narrow and
+    # self-validating: only a NULL cast matches (a genuine type mismatch reads "<Type> cannot be cast to
+    # <Other>", never "null", and the JVM never cast-checks null against a reference type, so the string is
+    # scala-native-only), and a deterministic occurrence still fails after MAX_RETRIES. Checked before the
+    # FAILED returns because the null surfaces as an ordinary test failure, not a process crash.
+    if grep -qE "null cannot be cast to" "$LOG"; then
+        log "native module-init null observed (scala-native #4992): retrying"; return 2
     fi
     if grep -qE "Tests:.*failed [1-9]" "$LOG"; then
         log "tests FAILED (real test failures detected)"; return 1
