@@ -62,6 +62,7 @@ class SqlConnectionCancelTest extends kyo.Test:
     private case class Script(
         cancelHangs: Boolean = false,
         drainHangs: Boolean = false,
+        drainUntilSocketClosed: Boolean = false,
         drainGate: Maybe[Latch] = Absent,
         drainReusable: Boolean = true,
         openHangsOnce: Boolean = false
@@ -140,11 +141,22 @@ class SqlConnectionCancelTest extends kyo.Test:
                 case true =>
                     emit("drain").andThen {
                         if script.drainHangs then Async.never
+                        else if script.drainUntilSocketClosed then drainUntilClosed
                         else
                             script.drainGate match
                                 case Present(gate) => gate.await.andThen(settled)
                                 case Absent        => settled
                     }
+            }
+
+        /** Models a real drain read: it does not return on its own, it ends when the socket is closed under it and
+          * fails the way a torn-down read does. This makes `closeAll`'s force-close the only thing that can end the
+          * reclaim within a short grace, which is what the quarantine-sweep regression pins.
+          */
+        private def drainUntilClosed(using Frame): Boolean < (Async & Abort[SqlException]) =
+            Sync.Unsafe.defer(socketOpen.get()).flatMap {
+                case true  => Async.sleep(5.millis).andThen(drainUntilClosed)
+                case false => Abort.fail[SqlException](SqlConnectionClosedException("read"))
             }
 
         /** Lowers the in-flight flag the way a real drain does, then answers what the script says. */
@@ -690,6 +702,72 @@ class SqlConnectionCancelTest extends kyo.Test:
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "closeAll force-closes a connection whose reclaim never completes on its own" in {
+        // The reclaim parks in a drain that only ends when the socket is closed under it, and the grace is zero so
+        // the close does not wait for it. The connection's only owner is the detached reclaim carrier, which is not
+        // in the idle ring `pool.close` extracts, so the ONLY thing that can free this socket is closeAll's sweep of
+        // the quarantined connections. Before that sweep existed the connection leaked here: the exact CI failure
+        // (an interrupted statement's pooled socket outliving the client that owned it).
+        val config = baseConfig("closeall-quarantine")
+        withProbePool("closeall-quarantine", Script(drainUntilSocketClosed = true), config) { (pool, events) =>
+            Fiber.initUnscoped(Abort.run[SqlException](lease(pool, config)(_.simpleQuery(Sql.hang)))).flatMap { fiber =>
+                report(events, 1).flatMap { first =>
+                    assert(first == Chunk("statement"), s"expected the statement to reach the wire, saw $first")
+                    fiber.interrupt.flatMap { interrupted =>
+                        assert(interrupted, "interrupting the fiber running a statement must stop it")
+                        report(events, 2).flatMap { seen =>
+                            assert(seen == Chunk("cancel", "drain"), s"expected the reclaim to reach the drain, saw $seen")
+                            pool.closeAll(Duration.Zero).andThen {
+                                untilCancelsSettled(pool).andThen {
+                                    drained(events).map { tail =>
+                                        assert(
+                                            tail.contains("closed"),
+                                            s"closeAll must force-close the quarantined connection whose reclaim never returns, saw $tail"
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "an interrupt landing after the pool has closed destroys the connection inline" in {
+        // The add-after-sweep window: closeAll's grace-expiry sweep runs exactly once, so a decideExit whose
+        // quarantine registration lands after it would register an entry nothing sweeps, and if that reclaim then
+        // hangs (drainUntilSocketClosed here, which without a close never ends) the socket leaks with the same
+        // signature. Here the pool closes with zero grace while a statement is still in flight, so its sweep runs
+        // over an empty registry; interrupting the statement now must still close the connection, via decideExit's
+        // put-then-recheck (it sees the pool closed and destroys inline) rather than a carrier nothing collects.
+        val config = baseConfig("closed-then-interrupt")
+        withProbePool("closed-then-interrupt", Script(drainUntilSocketClosed = true), config) { (pool, events) =>
+            Fiber.initUnscoped(Abort.run[SqlException](lease(pool, config)(_.simpleQuery(Sql.hang)))).flatMap { fiber =>
+                report(events, 1).flatMap { first =>
+                    assert(first == Chunk("statement"), s"expected the statement to reach the wire, saw $first")
+                    pool.closeAll(Duration.Zero).andThen {
+                        fiber.interrupt.flatMap { interrupted =>
+                            assert(interrupted, "interrupting the fiber running a statement must stop it")
+                            // Wait for the resolution event rather than draining what is already queued. The
+                            // put-then-recheck destroy runs on the interrupted fiber's exit, which on a single event
+                            // loop has not necessarily run when interrupt returns, and its inline path leaves
+                            // cancelsInFlight net-zero so untilCancelsSettled would return before it runs. The first
+                            // event it emits is "closed"; a regression that spawned a reclaim would emit "cancel"
+                            // here, failing the assert rather than draining nothing.
+                            report(events, 1).map { after =>
+                                assert(
+                                    after == Chunk("closed"),
+                                    s"an interrupt after the pool closed must destroy the connection inline, saw $after"
+                                )
                             }
                         }
                     }

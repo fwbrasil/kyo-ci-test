@@ -65,6 +65,13 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
     val metrics: SqlClient.Metrics
 ):
 
+    // Connections quarantined by an interrupt reclaim in [[decideExit]]. The reclaim runs on a detached,
+    // unreferenced carrier that becomes the connection's only owner, so [[closeAll]] cannot reach it through the
+    // idle ring [[pool.close]] extracts. Held here from quarantine until resolved and claimed by exactly one
+    // resolver via `remove` (the reclaim's own release/destroy, its carrier's unresolved-exit finalizer, or
+    // closeAll's grace-expiry sweep), so no interrupted-statement connection outlives the client that owned it.
+    private val quarantined = ConcurrentHashMap.newKeySet[C]()
+
     // --- Leases ---
 
     /** Runs `op` on a pooled connection under the statement policy: retry, per-statement timeout, and the query instruments.
@@ -188,23 +195,33 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         // Unsafe: pool.close() is a lock-free drain and requires AllowUnsafe.
         // The pool is marked closed first so tryReserve stops handing out slots and no new connection opens.
         // The slot channels stay open through the grace period so in-flight callers can hand their slots back.
-        Sync.Unsafe.defer(pool.close()).flatMap { idleConns =>
-            // The force-close runs as a Sync.ensure finalizer, not a plain andThen, so a fiber interrupt during
-            // the grace poll still closes the idle connections pool.close() already extracted. Without it the
-            // interrupt abandons the continuation and leaks them, and the pool is already closed so no retry
-            // reclaims them. Sync.ensure covers the interrupt and panic edges; drain carries no typed abort (it
-            // swallows its own Timeout), so those are the only edges. The force-close stays one Sync.Unsafe.defer,
-            // so it is atomic once reached.
-            Sync.ensure {
-                // Unsafe: channel.close and the final connection closes require AllowUnsafe.
-                Sync.Unsafe.defer {
-                    slotChans.forEach { (_, ch) =>
-                        discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](ch.close)))
+        Log.use { logger =>
+            Sync.Unsafe.defer(pool.close()).flatMap { idleConns =>
+                // The force-close runs as a Sync.ensure finalizer, not a plain andThen, so a fiber interrupt during
+                // the grace poll still closes the idle connections pool.close() already extracted. Without it the
+                // interrupt abandons the continuation and leaks them, and the pool is already closed so no retry
+                // reclaims them. Sync.ensure covers the interrupt and panic edges; drain carries no typed abort (it
+                // swallows its own Timeout), so those are the only edges. The force-close stays one Sync.Unsafe.defer,
+                // so it is atomic once reached.
+                Sync.ensure {
+                    // Unsafe: channel.close and the final connection closes require AllowUnsafe.
+                    Sync.Unsafe.defer {
+                        slotChans.forEach { (_, ch) =>
+                            discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](ch.close)))
+                        }
+                        slotChans.clear()
+                        idleConns.foreach(_.closeNow)
+                        // Any connection a reclaim left quarantined and unresolved at grace expiry is destroyed here:
+                        // its detached carrier is the only other owner, and destroying it both frees the socket (the
+                        // carrier's in-flight read then fails and the reclaim ends) and counts the discard the reclaim
+                        // would have. `remove` is the atomic claim, so a reclaim resolving in the same instant sees
+                        // Absent and does not double-close or re-pool a dead session.
+                        quarantined.forEach { conn =>
+                            if quarantined.remove(conn) then destroyAndFreeSlot(conn, logger)
+                        }
                     }
-                    slotChans.clear()
-                    idleConns.foreach(_.closeNow)
-                }
-            }(drain(gracePeriod))
+                }(drain(gracePeriod))
+            }
         }
 
     /** How many reclaim chains are running right now. Zero once every interrupted lease has been resolved. */
@@ -731,18 +748,40 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             error match
                 case Present(_) if reclaimable && (conn.inFlight || conn.inOpenTransaction) =>
                     // Quarantine. The connection is in neither the idle ring nor closed until the chain spawned
-                    // below decides which, and cancelsInFlight is what makes that visible to closeAll.
+                    // below decides which, and cancelsInFlight is what makes that visible to closeAll. Registering
+                    // it in `quarantined` gives closeAll a handle on it: the reclaim carrier is detached and
+                    // unreferenced, so without this the connection has no owner closeAll can reach at grace expiry.
                     discard(cancelsInFlight.incrementAndGet())
+                    discard(quarantined.add(conn))
                     discard(Sync.Unsafe.evalOrThrow(metrics.recordCancelFired))
                     logger.unsafe.debug(s"kyo.sql: cancelling connection id=${conn.id}")
-                    val supervised: Unit < Async =
-                        Sync.ensure(_ => Sync.Unsafe.defer(discard(cancelsInFlight.decrementAndGet())))(
-                            cancelAndReclaim(netKey, conn, config, logger)
-                        )
-                    // Unsafe: the reclaim has to outlive the fiber that is already unwinding, so it goes to a fresh
-                    // unsupervised carrier. Handing it to the interrupted fiber would make the interrupt wait on
-                    // cancel wire work, which is the thing the interrupt asked to stop.
-                    discard(Fiber.Unsafe.init(supervised))
+                    // Put-then-recheck against closeAll's one-shot grace-expiry sweep (the same idiom the driver's
+                    // closeHandle uses for pendingCloses). pool.close() sets isClosed BEFORE that sweep runs, so if the
+                    // pool is already closing this `add` may have landed after the sweep passed, leaving an entry
+                    // nothing would ever sweep. Whichever of this recheck and the sweep wins the remove resolves the
+                    // connection; the loser sees Absent. Resolving inline here also spares a closing pool a reclaim it
+                    // would only destroy anyway (releaseToPool destroys once isClosed) and that could otherwise hang
+                    // holding the socket. If the pool is not closing, the sweep is not in play and the reclaim runs.
+                    if pool.isClosed && quarantined.remove(conn) then
+                        destroyAndFreeSlot(conn, logger)
+                        discard(cancelsInFlight.decrementAndGet())
+                    else
+                        val supervised: Unit < Async =
+                            // Claim the connection on EVERY exit edge. A reclaim that ran to a decision has already
+                            // removed and resolved it (release or destroy), so this remove returns false and only the
+                            // decrement runs; a carrier interrupted or abandoned before that decision still holds the
+                            // entry, so this claim wins and destroys the socket here rather than leaving it open.
+                            Sync.ensure { _ =>
+                                Sync.Unsafe.defer {
+                                    if quarantined.remove(conn) then destroyAndFreeSlot(conn, logger)
+                                    discard(cancelsInFlight.decrementAndGet())
+                                }
+                            }(cancelAndReclaim(netKey, conn, config, logger))
+                        // Unsafe: the reclaim has to outlive the fiber that is already unwinding, so it goes to a fresh
+                        // unsupervised carrier. Handing it to the interrupted fiber would make the interrupt wait on
+                        // cancel wire work, which is the thing the interrupt asked to stop.
+                        discard(Fiber.Unsafe.init(supervised))
+                    end if
                 case _ =>
                     // `reclaimable` (the socket is still open) gates the release as well as the reclaim: a COPY
                     // cleanup that overruns its budget closes the socket as it marks the channel corrupted, and
@@ -784,17 +823,22 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                 // Unsafe: the pool operations below require AllowUnsafe, and this runs on a carrier of its own
                 // rather than inside any caller's fiber.
                 Sync.Unsafe.defer {
+                    // The timeout metric records that the cancel budget was exceeded, which is true whether this
+                    // reclaim or closeAll's sweep ends up closing the connection, so it is recorded before the claim
+                    // rather than inside the branch only the winning resolver takes.
                     outcome match
-                        case Result.Success(true) =>
-                            releaseToPool(netKey, conn, logger)
-                        case other =>
-                            other match
-                                case Result.Failure(_: SqlConnectionCancelTimeoutException) =>
-                                    discard(Sync.Unsafe.evalOrThrow(metrics.recordCancelTimedOut))
-                                case _ => ()
-                            end match
-                            destroyAndFreeSlot(conn, logger)
+                        case Result.Failure(_: SqlConnectionCancelTimeoutException) =>
+                            discard(Sync.Unsafe.evalOrThrow(metrics.recordCancelTimedOut))
+                        case _ => ()
                     end match
+                    // Claim the connection before resolving it. If closeAll's grace-expiry sweep already removed and
+                    // closed it, this remove returns false and the reclaim must not re-pool or re-destroy a socket the
+                    // closing pool has already reclaimed; the carrier's exit finalizer then also no-ops.
+                    if quarantined.remove(conn) then
+                        outcome match
+                            case Result.Success(true) => releaseToPool(netKey, conn, logger)
+                            case _                    => destroyAndFreeSlot(conn, logger)
+                    end if
                 }
             }
     end cancelAndReclaim
