@@ -3,8 +3,8 @@ package kyo
 import kyo.internal.TestClasspaths
 import kyo.internal.TestClasspaths2
 
-/** Characteristics of the live JVM standard classpath: given-instance count baseline, cacheDir write-collision handling, cold-init wall
-  * time on a real 80k-symbol corpus, and JPMS module count via jrt:/.
+/** Characteristics of the live JVM standard classpath: a version-pinned given-instance count baseline, cacheDir write-collision handling,
+  * cold-init wall time on a real 80k-symbol corpus, and JPMS module count via jrt:/.
   */
 class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
 
@@ -19,12 +19,18 @@ class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
     // jrt:/ cold loads can still be slow on a contended runner; keep a generous per-leaf budget.
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(3))
 
-    "allSymbols.count(isGiven) ~= 576 on standard classpath" in {
-        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+    // Given-enumeration fidelity is pinned to scala-library, the one classpath root with a fixed external version (scala 3.8.4). The full
+    // `standard` classpath also carries kyo-tasty, kyo-data, and the fixtures, whose given count shifts with every unrelated kyo change, so
+    // a baseline measured there needs re-tuning constantly; measured against scala-library alone it is deterministic and only moves on a
+    // deliberate scala-library bump, where re-pinning it re-validates the decoder against the new stdlib. The leaves below still exercise
+    // the full corpus for symbol count, cold-init timing, and JPMS modules.
+    "given-instance count on scala-library is exactly 409 (scala 3.8.4)" in {
+        TestClasspaths.withClasspath(TestClasspaths.scalaLibrary)(Tasty.classpath).map { classpath =>
             val count = classpath.symbols.count(_.isGiven)
             assert(
-                count >= 561 && count <= 591,
-                s"Expected ~576 given instances on standard classpath; found $count"
+                count == 409,
+                s"Expected exactly 409 given instances in scala-library 3.8.4; found $count. If scala-library was bumped, re-pin this " +
+                    "count; otherwise the decoder's given enumeration regressed."
             )
             succeed
         }
