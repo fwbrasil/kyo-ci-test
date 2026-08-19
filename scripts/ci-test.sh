@@ -261,6 +261,23 @@ else rm -f "'"$SELFDIR"'/abrt"; echo "Tests: succeeded 99, failed 0"; exit 0; fi
     nat "Native persistent teardown SIGABRT fails after retries" 1 'echo "Tests: succeeded 99, failed 0"
 echo "[warn] Process /x/kyo-jsonrpc-test finished with non-zero value 134 (0x86)"; exit 134'
 
+    # scala-native reports the same crash in raw-signal form too (SIGSEGV 11, not shell-encoded 139): the
+    # concurrent-unwind crash is retried when intermittent and still fails after MAX_RETRIES when persistent.
+    rm -f "$SELFDIR/segv"
+    nat "Native SIGSEGV (raw signal 11) after a passing suite is retried then passes" 0 'if [ ! -f "'"$SELFDIR"'/segv" ]; then touch "'"$SELFDIR"'/segv"
+echo "Tests: succeeded 75, failed 0"
+echo "[warn] Process /x/kyo-schema-yaml-test finished with non-zero value 11 (0xb)"; exit 11
+else rm -f "'"$SELFDIR"'/segv"; echo "Tests: succeeded 75, failed 0"; exit 0; fi'
+    rm -f "$SELFDIR/segv"
+    nat "Native persistent SIGSEGV (raw signal 11) fails after retries" 1 'echo "Tests: succeeded 75, failed 0"
+echo "[warn] Process /x/kyo-schema-yaml-test finished with non-zero value 11 (0xb)"; exit 11'
+
+    # Anchor guard: a longer value that merely contains a signal digit (116 contains 11) must NOT be read
+    # as SIGSEGV and pulled into the retry path. With the anchor it falls through to the post-suite
+    # tolerance branch (exit 0); without the anchor it would be retried and, being persistent, fail as 1.
+    nat "Native exit 116 (contains 11 but is not SIGSEGV) is not retried as a crash" 0 'echo "Tests: succeeded 75, failed 0"
+echo "[warn] Process /x/kyo-schema-yaml-test finished with non-zero value 116 (0x74)"; exit 116'
+
     # A native crash-retry re-runs through testKyo --quick: attempt 1 is the full run, the retry appends
     # --quick so only the tests sbt did not record as passed (the crashed suites) re-run.
     rm -f "$SELFDIR/qk"
@@ -426,13 +443,16 @@ check_log() {
     if grep -qE "\*\*\* FAILED \*\*\*" "$LOG"; then
         log "tests FAILED (individual test failures detected)"; return 1
     fi
-    # A native test binary that exits on a crash SIGNAL (SIGABRT 134, SIGBUS 135, SIGSEGV 139), not an
-    # OOM kill (SIGKILL 137), with no test failures above, is an intermittent teardown crash: the known
-    # kyo-core finalizer-on-interrupt issue tears the process down uncleanly after the suite already
-    # passed. Retry it, the same as the errno-104 RPC crash. A deterministic crash still fails after
-    # MAX_RETRIES; an OOM (137) is left to the mid-run scan below so it stays a hard failure.
-    if grep -qE "finished with non-zero value (134|135|139)" "$LOG"; then
-        log "native test binary crashed on teardown (signal, not OOM): retrying"; return 2
+    # A native test binary that exits on a crash SIGNAL, with no test failures above, is an intermittent
+    # crash to retry (scala-native's DWARF unwinder null-derefs during a concurrent stack walk under kyo's
+    # scheduler; also the kyo-core finalizer-on-interrupt teardown). scala-native reports the signal in two
+    # forms depending on the path: the raw number (SIGABRT 6, SIGBUS 7, SIGSEGV 11) or the shell-encoded
+    # 128+signal (134, 135, 139); match both. The trailing anchor keeps a longer value (e.g. 116, 1394)
+    # from partial-matching one of the alternatives. An OOM kill (SIGKILL, 9 or 137) is deliberately NOT
+    # matched: it is a resource failure, left to the mid-run scan below so it stays a hard failure. A
+    # deterministic crash still fails after MAX_RETRIES.
+    if grep -qE "finished with non-zero value (6|7|11|134|135|139)([^0-9]|$)" "$LOG"; then
+        log "native test binary crashed on a signal (not OOM): retrying"; return 2
     fi
     if grep -qE "Tests:" "$LOG"; then
         # At least one suite passed and none failed, yet the process still died (nonzero exit or a
