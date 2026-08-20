@@ -822,6 +822,8 @@ Similarly for data types like `Maybe`:
 
 ## Testing
 
+> **Tests must be deterministic: never depend on the real clock.** No wall-clock elapsed assertions, no `Thread.sleep`-then-assert, no real-time delay/timeout as a pass condition. Use `Clock.withTimeControl` for virtual time and barriers (`Latch`/`Channel`/`Fiber.get`) to coordinate; report any unavoidable real-clock use. See [DETERMINISTIC_TESTS.md](DETERMINISTIC_TESTS.md).
+
 ### Framework
 
 Test suites extend `kyo.test.Test[Any]` (or a module-derived base that extends it). The type parameter is an additive extra effect row; `Any` is the common case (baseline `Async & Abort[Any] & Scope` only). There are no per-module `Test.scala` shim files. Test files are named `FooTest.scala` and mirror the main source structure.
