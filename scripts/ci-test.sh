@@ -86,7 +86,7 @@ if [ "${1:-}" = "--self-test" ]; then
         local platform="$1" action="$2" body="$3"
         : > "$CALLS"; : > "$HEAP"
         make_fake_sbt "$body"
-        PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
+        PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 RESOLVE_BACKOFF=0 \
             "$SELF" "$platform" "$action" >/dev/null 2>&1
         CT_EXIT=$?
     }
@@ -297,6 +297,41 @@ echo "java.lang.ClassCastException: null cannot be cast to scala.math.BigInt"; e
 echo "  - t *** FAILED ***"
 echo "java.lang.ClassCastException: class kyo.Foo cannot be cast to class kyo.Bar"; exit 1'
 
+    # A transient dependency-repository error (Maven Central 403/5xx) during resolution fails a compile
+    # phase before any build output; sbt_resolve_retry retries with backoff and it passes on the retry.
+    # Exercised on the JVM phase-split path; the same wrapper guards every platform's compile phases.
+    rm -f "$SELFDIR/resolv"
+    run_runner JVM test 'case "$*" in *"--phase compile-main"*)
+if [ ! -f "'"$SELFDIR"'/resolv" ]; then touch "'"$SELFDIR"'/resolv"
+echo "[error] Error downloading org.scala-native:nativelib_native0.5_2.13:0.5.12"
+echo "[error]   forbidden: https://repo1.maven.org/maven2/org/scala-native/nativelib.pom"; exit 1; fi ;;
+esac
+echo "Tests: succeeded 100, failed 0"; exit 0'
+    rm -f "$SELFDIR/resolv"
+    if exit_is 0 && [ "$(grep -c -- '--phase compile-main' "$CALLS")" = 2 ]
+    then record ok "transient resolution 403 on compile-main is retried then passes"
+    else record no "transient resolution 403 on compile-main is retried then passes"; fi
+
+    # Persistent resolution failure still fails after the retries (MAX_RETRIES=2 in the self-test).
+    run_runner JVM test 'case "$*" in *"--phase compile-main"*)
+echo "[error] Error downloading org.scala-native:nativelib_native0.5_2.13:0.5.12"
+echo "[error]   forbidden: https://repo1.maven.org/maven2/org/scala-native/nativelib.pom"; exit 1 ;;
+esac
+echo "Tests: succeeded 100, failed 0"; exit 0'
+    if exit_is 1 && [ "$(grep -c -- '--phase compile-main' "$CALLS")" = 2 ]
+    then record ok "persistent resolution failure fails after retries"
+    else record no "persistent resolution failure fails after retries"; fi
+
+    # Narrowness guard: a real compile error carries no resolution signature, so it is NOT retried and
+    # fails fast on the first attempt.
+    run_runner JVM test 'case "$*" in *"--phase compile-main"*)
+echo "[error] ./kyo/Foo.scala:10:5: type mismatch; found Int required String"; exit 1 ;;
+esac
+echo "Tests: succeeded 100, failed 0"; exit 0'
+    if exit_is 1 && [ "$(grep -c -- '--phase compile-main' "$CALLS")" = 1 ]
+    then record ok "a real compile error is not retried (no resolution signature)"
+    else record no "a real compile error is not retried (no resolution signature)"; fi
+
     # A native crash-retry re-runs through testKyo --quick: attempt 1 is the full run, the retry appends
     # --quick so only the tests sbt did not record as passed (the crashed suites) re-run.
     rm -f "$SELFDIR/qk"
@@ -325,7 +360,7 @@ else rm -f "'"$SELFDIR"'/qk"; echo "Tests: succeeded 99, failed 0"; exit 0; fi'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 36 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 39 ]
     exit $?
 fi
 
@@ -345,6 +380,9 @@ fi
 MAX_RETRIES=${MAX_RETRIES:-3}
 STALE_TIMEOUT=${STALE_TIMEOUT:-600}
 POLL_INTERVAL=${POLL_INTERVAL:-10}
+# Backoff base in seconds between dependency-resolution retries, scaled by attempt number. The self-test
+# overrides it to 0 so the retry path runs instantly.
+RESOLVE_BACKOFF=${RESOLVE_BACKOFF:-20}
 
 # Space-separated module names (e.g. "kyo-schema-tests", which links every serialization format
 # into one binary) whose whole-program native-link optimize peak needs an isolated, full-heap sbt
@@ -365,16 +403,42 @@ NATIVE_LINK_CPUS="${NATIVE_LINK_CPUS:-}"
 
 log() { echo "=== [ci-test] $(date '+%H:%M:%S') $* ==="; }
 
+# A transient dependency-repository error (Maven Central 403/429/5xx during resolution) fails an sbt
+# invocation before any build output, with only download/resolution errors and no compiled sources: an
+# infra hiccup, not a build error. Retry the phase with backoff when the log carries that signature. A
+# genuine failure (a real compile error, an unresolvable version) carries no resolution marker, or
+# reproduces on every attempt, and still fails. Output streams live through tee so the console, CI log,
+# and native watchdog see it unchanged. Only the compile and link phases route through this; the run
+# phase already retries a no-Tests failure in check_log.
+sbt_resolve_retry() {
+    local attempt=1 rc tmp
+    tmp="$(mktemp)"
+    while :; do
+        sbt "$@" 2>&1 | tee "$tmp"
+        rc=${PIPESTATUS[0]}
+        if [ "$rc" -eq 0 ]; then rm -f "$tmp"; return 0; fi
+        if [ "$attempt" -lt "$MAX_RETRIES" ] &&
+            grep -qE 'Error downloading|[Ff]orbidden: https?://|Server returned HTTP response code: (403|429|50[0-9])|download error' "$tmp"; then
+            log "transient dependency-resolution failure (attempt $attempt/$MAX_RETRIES): retrying in $((attempt * RESOLVE_BACKOFF))s"
+            sleep "$((attempt * RESOLVE_BACKOFF))"
+            attempt=$((attempt + 1))
+            continue
+        fi
+        rm -f "$tmp"; return "$rc"
+    done
+}
+
 # sbt for a standalone native link invocation (the link action's pre-links and aggregate link):
 # applies the NATIVE_LINK_CPUS cap when set. The flag is added via the invocation's environment;
 # .jvmopts only overrides flags it duplicates, so a flag that appears only here always reaches the JVM.
+# Routes through sbt_resolve_retry so a transient resolution failure at link time is retried too.
 link_sbt() {
     if [ -n "$NATIVE_LINK_CPUS" ]; then
         JAVA_OPTS="${JAVA_OPTS:-} -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS" \
         JVM_OPTS="${JVM_OPTS:-} -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS" \
-            sbt "$@"
+            sbt_resolve_retry "$@"
     else
-        sbt "$@"
+        sbt_resolve_retry "$@"
     fi
 }
 
@@ -408,8 +472,8 @@ run_phase_split() {
     local arg; arg=$(run_arg)
     case "$ACTION" in
         compile)
-            sbt "testKyo --phase compile-main $arg $PLATFORM" || return $?
-            sbt "testKyo --phase compile-test $arg $PLATFORM" || return $?
+            sbt_resolve_retry "testKyo --phase compile-main $arg $PLATFORM" || return $?
+            sbt_resolve_retry "testKyo --phase compile-test $arg $PLATFORM" || return $?
             return 0
             ;;
         link)
@@ -417,8 +481,8 @@ run_phase_split() {
             return 0
             ;;
         *)
-            sbt "testKyo --phase compile-main $arg $PLATFORM" || return $?
-            sbt "testKyo --phase compile-test $arg $PLATFORM" || return $?
+            sbt_resolve_retry "testKyo --phase compile-main $arg $PLATFORM" || return $?
+            sbt_resolve_retry "testKyo --phase compile-test $arg $PLATFORM" || return $?
             sbt $(run_phase_heap) "testKyo $arg $PLATFORM" || return $?
             return 0
             ;;
@@ -575,8 +639,8 @@ run_native() {
 
     # compile: compile main and test only, no link, no run.
     if [ "$ACTION" = "compile" ]; then
-        sbt "testKyo --phase compile-main $arg Native" || return $?
-        sbt "testKyo --phase compile-test $arg Native" || return $?
+        sbt_resolve_retry "testKyo --phase compile-main $arg Native" || return $?
+        sbt_resolve_retry "testKyo --phase compile-test $arg Native" || return $?
         return 0
     fi
 
@@ -596,8 +660,8 @@ run_native() {
     # test / testDiff: single-link. Compile upfront (no link) so a compile error fails fast, then run
     # the heavy modules isolated and the rest in the aggregate. Each module links exactly once, inside
     # its test session (see the file header on scala-native #2514 / #1822).
-    sbt "testKyo --phase compile-main $arg Native" || return $?
-    sbt "testKyo --phase compile-test $arg Native" || return $?
+    sbt_resolve_retry "testKyo --phase compile-main $arg Native" || return $?
+    sbt_resolve_retry "testKyo --phase compile-test $arg Native" || return $?
 
     # Comma-separated base names for the --only / --exclude split (NATIVE_HEAVY is space-separated).
     local heavy_csv; heavy_csv=$(printf '%s' "$NATIVE_HEAVY" | tr -s ' ' ',' | sed 's/^,//; s/,$//')
