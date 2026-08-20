@@ -17,6 +17,26 @@ Coordinate with **barriers**, not time. Control durations with **virtual time**.
 cannot avoid the real clock, that is a **deviation**: it must be justified in a comment and reported to
 the maintainer, never left silently.
 
+## Thresholds are a defect too, not only time
+
+A magnitude comparison as the pass condition is a flake source *whatever it measures*: elapsed time, the
+skew between two clock reads, a latency, memory, an iteration count under load. A number that passes on
+your machine can fail on a slow, emulated, or contended one. **Widening the number does not fix this**, it
+only lowers the flip rate; a wider threshold is still a threshold. Do not tune thresholds.
+
+Replace the magnitude with an **ordering, bracketing, or state** property, which a fast or slow runner
+cannot flip:
+
+- **Bracketing.** To check a reading matches a reference, sample the reference on *both* sides and assert
+  the value falls inside: `before = ref(); v = read(); after = ref(); assert(before <= v && v <= after)`.
+  A slower host only widens `[before, after]`; a wrong value falls outside. No tolerance appears. (This is
+  how to check a clock/epoch binding without a skew tolerance.)
+- **Ordering / monotonicity.** `assert(b >= a)` across successive reads; `assert(entries arrived in order)`.
+- **State / count.** `assert(consumed + remaining == total)`; `assert(peerClosedFlag)`.
+
+A magnitude bound survives only as a **catastrophic-only** last resort (see Deviations), chosen when no
+ordering/bracketing/state proxy exists, and labeled. It is never the first reach.
+
 ## Virtual time: `Clock.withTimeControl`
 
 Under `Clock.withTimeControl`, the clock advances only when the test tells it to, so sleeps, delays,
@@ -95,8 +115,15 @@ uses a clock:
 - **A timeout is legitimate only as a hang-canary ceiling**: a genuine defect hangs and trips the suite
   timeout. It is never the pass condition. `awaitCondition(5.seconds)(state)` then `assert(state)` is fine;
   `assert(elapsed < 5.seconds)` is not.
-- If you truly need a magnitude bound (a real perf/skew check with no state proxy), make it
-  **catastrophic-only** (so wide only a genuine defect trips it) and **label + report** it as a deviation.
+- Before any magnitude bound, prove no ordering/bracketing/state proxy exists (a clock/epoch check
+  brackets; a skew check brackets; a "returned fast" check asserts the terminal state). Only when none
+  applies does a **catastrophic-only** bound survive (so wide only a genuine defect trips it), and then it
+  is **labeled + reported** as a deviation. Widening an existing threshold to dodge a flake is not this;
+  it is the banned move.
+
+(Passing a real timeout to the API under test and then asserting on **state**, e.g. `connect(host, port,
+deadline)` with `assert(nothing timed out)`, is using the API, not a pass-condition threshold; the
+assertion must still be the state, never the measured elapsed.)
 
 So a deviation is: (1) **validated**, a real reason virtual time cannot cover it, written at the site as
 `// deviation: <reason>`; (2) **reported** to the maintainer; (3) asserting state/structure, or at worst a
