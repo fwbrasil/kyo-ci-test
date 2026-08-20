@@ -13,11 +13,9 @@ class TimeTest extends CompatTest:
         CIO.sleep(20.millis).map(r => assert(r == ((): Unit)))
     }
     "now returns without error" in run {
-        // Type is java.time.Instant on all backends. Out of scope here: that the value sits on the
-        // wall-clock epoch. Each backend delegates now to java.time.Instant.now or its effect
-        // system's real-time clock, none of which the harness can drive to a known instant, so the
-        // only clock-free check is that a read returns. Pinning the value to real time would take a
-        // wall-clock reading, which these suites do not make.
+        // Type is java.time.Instant on all backends. The only clock-free check is that a read returns:
+        // each backend delegates to java.time.Instant.now or its real-time clock, none of which the
+        // harness can drive to a known instant, so pinning the value to wall-clock time is out of scope.
         CIO.now.unit.map(_ => succeed)
     }
     "nowMonotonic is non-decreasing across two reads" in run {
@@ -54,13 +52,11 @@ class TimeTest extends CompatTest:
         val c = CIO.delay(20.millis)(CIO.defer { 42 })
         c.map(r => assert(r == 42))
     }
-    // The three tests below pin `sleep` and `delay` from both sides without measuring anything.
-    // Below: a suspension far longer than the deadline cannot resolve inside it, so the timeout
-    // yields None where a no-op would yield Some. Above: the requested suspension wins a race
-    // against a far longer one, so a binding that read the unit as seconds instead of millis
-    // loses the race. Every timer involved is queued on the same engine at effectively the same
-    // instant and fires in due order, so a stalled machine delays both sides together and cannot
-    // invert either outcome, and neither assertion compares a duration to a number.
+    // The three tests below pin `sleep` and `delay` from both sides without measuring time. A
+    // suspension far longer than the deadline cannot resolve inside it (timeout yields None where a
+    // no-op yields Some); the requested suspension still wins a race against a far longer one (a
+    // binding reading the unit as seconds loses). Every timer is queued on the same engine and fires
+    // in order, so a stalled machine delays both sides together and cannot invert either outcome.
     "sleep suspends and resolves ahead of a far longer sleep" in run {
         CIO.timeout(50.millis)(CIO.sleep(5.seconds)).flatMap { timedOut =>
             CIO.race(
@@ -177,11 +173,11 @@ class TimeTest extends CompatTest:
         }
     }
     "sleep(0) completes and leaves the monotonic clock non-decreasing" in run {
-        // The property is completion: a zero sleep that never resumes fails through
-        // CompatTest's testTimeout. The two clock reads bracket the suspension and only
-        // assert time did not run backwards across it, the same shape as the nowMonotonic
-        // test above. The former `< 500ms` ceiling measured scheduler latency, not the
-        // contract, and a stalled runner could exceed it while the binding was correct.
+        // The property is completion: a zero sleep that never resumes fails through CompatTest's
+        // testTimeout. The two clock reads bracket the suspension and only assert time did not run
+        // backwards across it, the same shape as the nowMonotonic test above. A wall-clock ceiling
+        // would measure scheduler latency, not the contract, and a stalled runner could exceed it
+        // while the binding stayed correct.
         val c =
             CIO.nowMonotonic.map(_.toMillis).flatMap { t1 =>
                 CIO.sleep(0.millis).flatMap { _ =>
@@ -196,14 +192,12 @@ class TimeTest extends CompatTest:
     }
 
     "concurrent sleeps overlap (peak-concurrency canary)" in run {
-        // Parallelism is an overlap, not a duration. Each leg marks itself active, samples the
-        // peak, and only sleeps once the other leg has reached the barrier, so the second leg to
-        // arrive always samples 2 and neither leg can leave before both have arrived. The barrier
-        // is what makes the sample race-free: without it a host that stalled the second leg past
-        // the first leg's sleep would read a peak of 1 on a correct binding, which is the same
-        // fragility the former `total < 250ms` bound had. A zip that ran the legs one after the
-        // other never opens the barrier and fails through CompatTest's testTimeout instead of
-        // reporting a peak.
+        // Parallelism is an overlap, not a duration. Each leg marks itself active, samples the peak,
+        // and only sleeps once the other leg reaches the barrier, so the second leg to arrive samples
+        // 2 and neither leg can leave before both have arrived. The barrier makes the sample race-free:
+        // without it a host that stalled the second leg past the first leg's sleep would read a peak of
+        // 1 on a correct binding. A zip that ran the legs one after the other never opens the barrier
+        // and fails through CompatTest's testTimeout instead of reporting a peak.
         val active = new AtomicInteger(0)
         val peak   = new AtomicInteger(0)
         def leg(d: FiniteDuration, barrier: CLatch): CIO[Unit] =

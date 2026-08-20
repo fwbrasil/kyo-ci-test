@@ -188,11 +188,10 @@ class FiberTest extends CompatTest:
     }
 
     "CFiber.get on an already-completed fiber replays the outcome without re-running the body" in run {
-        // "Already completed" is a state, not a latency. The body increments a counter, so a
-        // second get that resolves from the fiber's recorded outcome leaves the counter at 1,
-        // while one that re-ran the body leaves it at 2. The former `< 100ms` ceiling could not
-        // tell those apart, and the failure it did cover (a get that never resumes because the
-        // completion callback is registered too late) surfaces through CompatTest's testTimeout.
+        // "Already completed" is a state, not a latency. The body increments a counter, so a second
+        // get that resolves from the fiber's recorded outcome leaves the counter at 1, while one that
+        // re-ran the body leaves it at 2. A get that never resumes (completion callback registered too
+        // late) surfaces through CompatTest's testTimeout.
         val runs = new AtomicInteger(0)
         val c = CFiber.init(CIO.defer { runs.incrementAndGet() }).flatMap { fiber =>
             fiber.get.flatMap { first =>

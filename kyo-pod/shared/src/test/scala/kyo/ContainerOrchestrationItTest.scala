@@ -486,9 +486,8 @@ class ContainerOrchestrationItTest extends BasePodTest:
         // past the stopTimeout. The graceful-stop protocol (send the signal, waitForExit up to
         // stopTimeout, then force-remove) must deliver the signal for the trap to run at all, so the
         // marker on the host filesystem is a deterministic, clock-free witness that the signal reached
-        // the container before the force-remove. A kill path that skipped the signal and force-removed
-        // immediately would leave no marker. The Async.timeout is the completion valve: a kill path that
-        // hung on waitForExit instead of force-removing after the stopTimeout would trip it.
+        // the container before the force-remove. The Async.timeout is the completion valve: a kill path
+        // that hung on waitForExit instead of force-removing after the stopTimeout would trip it.
         val hostDir = Path("/tmp/" + uniqueName("kyo-stopsig"))
         val marker  = hostDir / "sig"
         val config = Container.Config("alpine")

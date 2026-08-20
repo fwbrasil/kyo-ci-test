@@ -48,8 +48,7 @@ private[kyo] trait ContainerRuntimeBase:
         // The windows-latest CI runner ships a Docker daemon in Windows-container mode, which cannot
         // pull or run Linux images (alpine, postgres, redis, nginx), so `docker` CLI existence reports
         // available while every container operation fails at `docker pull`. These are Linux-container
-        // integration tests; skip them on Windows (matching the POSIX-on-Windows gates in kyo-net)
-        // rather than let them fail. Non-Windows behavior is unchanged.
+        // integration tests; skip them on Windows (matching the POSIX-on-Windows gates in kyo-net).
         if kyo.internal.Platform.isWindows then Seq.empty
         else
             val all = Seq("podman" -> hasPodman, "docker" -> hasDocker).collect { case (name, true) => name }

@@ -73,14 +73,12 @@ class MeterTest extends CompatTest:
         }
     }
     "concurrent runs respect the permit limit" in run {
-        // Meter(2) + 4 runs: the permit limit shows up as concurrency, not elapsed. Each run
-        // marks itself active while holding the permit; the peak active count must be exactly 2 -
-        // never 3+ (the limit holds) and reaching 2 (the limit is actually engaged, not serialised
-        // to 1). The two-way barrier makes the second half race-free: the first two holders cannot
-        // leave until both hold a permit, so the peak reaches 2 whatever the host's schedule does,
-        // where a fixed hold left that to timing. Later runs find the barrier open and pass
-        // through, and the limit is what keeps the peak from going past 2. The former
-        // `elapsed < 5s` bound verified neither and could not tell 2 from 4.
+        // Meter(2) + 4 runs: the permit limit shows up as concurrency, not elapsed. Each run marks
+        // itself active while holding the permit; the peak active count must be exactly 2, never 3+ (the
+        // limit holds) and reaching 2 (the limit is engaged, not serialised to 1). The two-way barrier
+        // makes the second half race-free: the first two holders cannot leave until both hold a permit,
+        // so the peak reaches 2 whatever the host's schedule does. Later runs find the barrier open and
+        // pass through, and the limit keeps the peak from going past 2.
         val ctr    = new AtomicInteger(0)
         val active = new AtomicInteger(0)
         val peak   = new AtomicInteger(0)
@@ -123,12 +121,11 @@ class MeterTest extends CompatTest:
         }
     }
     "second acquire blocks until first holder releases" in run {
-        // Blocking is a happens-before, not a duration, and two markers pin it from both sides:
-        // the holder reads `waiterEntered` while it still owns the only permit, so a false there
-        // means the waiter's acquire had not completed; the waiter reads `releasing`, flipped as
-        // the holder's last act inside the critical section, so a true there means its acquire
-        // completed after the holder was done. The former `waitMs >= holdMs - 30` read the same
-        // fact off the clock and traded on 30ms of hand-picked slack.
+        // Blocking is a happens-before, not a duration, and two markers pin it from both sides: the
+        // holder reads `waiterEntered` while it still owns the only permit, so a false there means the
+        // waiter's acquire had not completed; the waiter reads `releasing`, flipped as the holder's last
+        // act inside the critical section, so a true there means its acquire completed after the holder
+        // was done.
         val waiterEntered = new AtomicBoolean(false)
         val releasing     = new AtomicBoolean(false)
         val c =

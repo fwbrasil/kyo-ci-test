@@ -145,7 +145,7 @@ final private[kyo] class ShellBackend(
         case Config.RestartPolicy.OnFailure(retries) => s"${rp.cliName}:$retries"
         case _                                       => rp.cliName
 
-    /** Builds behavior-related flags: `-i`, `-t`, `--rm`, `--init`, `--restart`, `--stop-signal`. Pure — no effects. */
+    /** Builds behavior-related flags: `-i`, `-t`, `--rm`, `--init`, `--restart`, `--stop-signal`. Pure: no effects. */
     private def behaviorArgs(config: Config, restartStr: String): Chunk[String] =
         (if config.interactive then Chunk("-i") else Chunk.empty) ++
             (if config.allocateTty then Chunk("-t") else Chunk.empty) ++

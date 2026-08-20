@@ -207,10 +207,9 @@ abstract private class PublisherToSubscriberTest extends kyo.test.Test[Any]:
                 _ <- publisherFiber.interrupt.unit
                 // Interrupting the publisher fiber closes its scope, which must propagate
                 // cancellation to every subscriber; their run fibers then complete on their own.
-                // Awaiting each fiber's completion is the real end-of-propagation event, and it
-                // is what this test is actually about, so there is no settle sleep and no
-                // self-defeating manual interrupt of the subscribers (which would end them
-                // regardless of whether propagation worked).
+                // Awaiting each fiber's completion is the real end-of-propagation event. Interrupting
+                // the subscribers directly would be self-defeating: it would end them regardless of
+                // whether propagation worked.
                 _ <- fiber1.getResult
                 _ <- fiber2.getResult
                 _ <- fiber3.getResult

@@ -67,12 +67,12 @@ class AsyncPlatformSpecificTest extends kyo.test.Test[Any]:
                 // Wait until the fiber has suspended on `cf` and registered its cancel dependent, so the interrupt
                 // observes it (interrupting before registration would leave `cf` uncancelled). getNumberOfDependents
                 // is a JDK monitoring ESTIMATE (not a synchronization primitive), but a coarse `> 0` inside
-                // assertEventually tolerates that, and the real assertion below is cf.isCancelled - so a mis-estimate
+                // assertEventually tolerates that, and the real assertion below is cf.isCancelled, so a mis-estimate
                 // could only delay the interrupt by a poll, never produce a false green.
                 _ <- assertEventually(Sync.defer(cf.getNumberOfDependents() > 0))
                 _ <- fiber.interrupt
                 // Cancellation propagates asynchronously after interrupt, so poll the real observable rather than
-                // a fixed sleep loop (this replaces the original Loop that used Async.sleep as its poll interval).
+                // a fixed sleep loop.
                 _ <- assertEventually(Sync.defer(cf.isCancelled))
             yield assert(cf.isCancelled, "interrupting the fiber should cancel the underlying CompletableFuture")
             end for

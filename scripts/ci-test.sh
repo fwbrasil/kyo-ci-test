@@ -297,9 +297,8 @@ echo "java.lang.ClassCastException: null cannot be cast to scala.math.BigInt"; e
 echo "  - t *** FAILED ***"
 echo "java.lang.ClassCastException: class kyo.Foo cannot be cast to class kyo.Bar"; exit 1'
 
-    # A transient dependency-repository error (Maven Central 403/5xx) during resolution fails a compile
-    # phase before any build output; sbt_resolve_retry retries with backoff and it passes on the retry.
-    # Exercised on the JVM phase-split path; the same wrapper guards every platform's compile phases.
+    # Transient resolution error (Central 403/5xx) on a compile phase is retried with backoff and passes on
+    # the retry. Exercised via the JVM phase-split; the same wrapper guards every platform.
     rm -f "$SELFDIR/resolv"
     run_runner JVM test 'case "$*" in *"--phase compile-main"*)
 if [ ! -f "'"$SELFDIR"'/resolv" ]; then touch "'"$SELFDIR"'/resolv"
@@ -403,13 +402,11 @@ NATIVE_LINK_CPUS="${NATIVE_LINK_CPUS:-}"
 
 log() { echo "=== [ci-test] $(date '+%H:%M:%S') $* ==="; }
 
-# A transient dependency-repository error (Maven Central 403/429/5xx during resolution) fails an sbt
-# invocation before any build output, with only download/resolution errors and no compiled sources: an
-# infra hiccup, not a build error. Retry the phase with backoff when the log carries that signature. A
-# genuine failure (a real compile error, an unresolvable version) carries no resolution marker, or
-# reproduces on every attempt, and still fails. Output streams live through tee so the console, CI log,
-# and native watchdog see it unchanged. Only the compile and link phases route through this; the run
-# phase already retries a no-Tests failure in check_log.
+# A transient Maven Central error (403/429/5xx) during resolution fails an sbt phase before any build
+# output. Retry with backoff on that signature; a real compile error or unresolvable version carries no
+# such marker (or reproduces every attempt) and still fails. tee keeps output streaming for the console
+# and native watchdog. Compile and link route through here; the run phase retries a no-Tests failure in
+# check_log.
 sbt_resolve_retry() {
     local attempt=1 rc tmp
     tmp="$(mktemp)"
@@ -451,16 +448,12 @@ run_arg() {
     esac
 }
 
-# Run-phase driver heap cap for the out-of-JVM targets. JS and Wasm run their tests in Node and Native
-# runs the linked binary, so the run-phase sbt driver holds no test heap; yet .jvmopts pins -Xmx12G for
-# the compile phases (where it is needed). On the 16GB runner a 12GB run-phase driver (measured at
-# 9-11GB RSS) leaves under 1GB for the Node/Wasm runtime plus podman and its containers, so the kyo-pod
-# container suites hit memory pressure: in-container `sh: Cannot fork` (EAGAIN) and OOM-killed
-# containers. Cap the run-phase driver for those targets so the containers keep their headroom; JVM
-# keeps the full heap because its tests run inside the driver, and the compile phases and the isolated
-# heavy-module link+test session keep it because they are the heap-heavy ones. `-J-Xmx` is appended
-# after .jvmopts on the java command
-# line, so it wins. Overridable via RUN_HEAP_CAP.
+# Run-phase driver heap cap for the out-of-JVM targets. JS/Wasm run in Node and Native runs the linked
+# binary, so the run-phase driver holds no test heap, yet .jvmopts pins -Xmx12G for the compile phases. On
+# a 16GB runner a 12GB run-phase driver (measured 9-11GB RSS) leaves under 1GB for the Node/Wasm runtime
+# plus podman, so kyo-pod container suites hit `sh: Cannot fork` (EAGAIN) and OOM kills. Cap it for those
+# targets; JVM and the compile/heavy-link phases keep the full heap (they are the heap-heavy ones).
+# `-J-Xmx` is appended after .jvmopts so it wins. Overridable via RUN_HEAP_CAP.
 RUN_HEAP_CAP="${RUN_HEAP_CAP:-6G}"
 run_phase_heap() {
     [ "$PLATFORM" = JVM ] && return 0
@@ -520,14 +513,11 @@ check_log() {
         log "native test runner crashed mid-RPC (errno 104): retrying"
         return 2
     fi
-    # scala-native #4992 (module-init publish race): a concurrent first-touch reader can observe a module's
-    # instance field before it is written and read null; when that null reaches a typed slot the native cast
-    # check reports "null cannot be cast to <type>". It is an intermittent upstream race, not a kyo defect,
-    # so re-run the failed tests (via --quick) exactly like the signal crash below. Narrow and
-    # self-validating: only a NULL cast matches (a genuine type mismatch reads "<Type> cannot be cast to
-    # <Other>", never "null", and the JVM never cast-checks null against a reference type, so the string is
-    # scala-native-only), and a deterministic occurrence still fails after MAX_RETRIES. Checked before the
-    # FAILED returns because the null surfaces as an ordinary test failure, not a process crash.
+    # scala-native #4992: a concurrent first-touch reader can read a module's instance field before it is
+    # written (null), surfacing as "null cannot be cast to <type>". Retry like a signal crash: intermittent
+    # upstream race, not a kyo defect. Narrow so a real mismatch ("<Type> cannot be cast to <Other>", never
+    # "null") is never masked; a deterministic hit still fails after MAX_RETRIES. Checked before the FAILED
+    # returns because the null arrives as an ordinary test failure, not a crash.
     if grep -qE "null cannot be cast to" "$LOG"; then
         log "native module-init null observed (scala-native #4992): retrying"; return 2
     fi
@@ -537,14 +527,12 @@ check_log() {
     if grep -qE "\*\*\* FAILED \*\*\*" "$LOG"; then
         log "tests FAILED (individual test failures detected)"; return 1
     fi
-    # A native test binary that exits on a crash SIGNAL, with no test failures above, is an intermittent
-    # crash to retry (scala-native's DWARF unwinder null-derefs during a concurrent stack walk under kyo's
-    # scheduler; also the kyo-core finalizer-on-interrupt teardown). scala-native reports the signal in two
-    # forms depending on the path: the raw number (SIGABRT 6, SIGBUS 7, SIGSEGV 11) or the shell-encoded
-    # 128+signal (134, 135, 139); match both. The trailing anchor keeps a longer value (e.g. 116, 1394)
-    # from partial-matching one of the alternatives. An OOM kill (SIGKILL, 9 or 137) is deliberately NOT
-    # matched: it is a resource failure, left to the mid-run scan below so it stays a hard failure. A
-    # deterministic crash still fails after MAX_RETRIES.
+    # A native binary that exits on a crash SIGNAL with no test failures above is an intermittent crash to
+    # retry (scala-native's DWARF unwinder null-derefs during a concurrent stack walk). scala-native reports
+    # the signal two ways: raw (SIGABRT 6, SIGBUS 7, SIGSEGV 11) or shell-encoded 128+signal (134, 135, 139);
+    # match both. The trailing anchor stops a longer value (116, 1394) partial-matching an alternative. OOM
+    # (SIGKILL 9/137) is excluded so it stays a hard failure via the mid-run scan below. A deterministic
+    # crash still fails after MAX_RETRIES.
     if grep -qE "finished with non-zero value (6|7|11|134|135|139)([^0-9]|$)" "$LOG"; then
         log "native test binary crashed on a signal (not OOM): retrying"; return 2
     fi

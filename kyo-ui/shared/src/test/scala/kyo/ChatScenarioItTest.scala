@@ -27,9 +27,8 @@ class ChatScenarioItTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("inp"), "hello")
                 // The controlled input's `value` signal can briefly lag the JS fill, so a single Enter may submit
-                // before the signal reflects "hello" and add nothing. Retry (press Enter, then a short count check):
-                // a successful submit clears the input, so once count is 1 the retry stops and no extra message is
-                // ever added.
+                // before the signal reflects "hello" and add nothing. Retry Enter then a short count check; a
+                // successful submit clears the input, so once count is 1 the retry stops and no duplicate is added.
                 _ <- Retry[BrowserReadException](Schedule.fixed(300.millis).take(5)) {
                     Browser.press(Selector.id("inp"), Key.Enter).andThen(
                         Browser.assertText(Selector.id("count"), "count:1", Present(Schedule.fixed(100.millis).take(2)))

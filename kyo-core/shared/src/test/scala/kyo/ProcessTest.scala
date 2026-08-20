@@ -383,7 +383,7 @@ class ProcessTest extends kyo.test.Test[Any]:
                 yield ()
             }
             pid <- pidHolder.get
-            // Poll until the scope-destroyed process has been reaped (kill -0 fails), instead of a fixed sleep.
+            // Poll until the scope-destroyed process has been reaped (kill -0 fails).
             _ <- assertEventually {
                 Abort.run[Throwable](Command("kill", "-0", pid.toString).waitFor).map {
                     case Result.Success(code) => !code.isSuccess
@@ -451,7 +451,7 @@ class ProcessTest extends kyo.test.Test[Any]:
                 yield ()
             }
             pid <- pidHolder.get
-            // Poll until the scope-destroyed process has been reaped (kill -0 fails), instead of a fixed sleep.
+            // Poll until the scope-destroyed process has been reaped (kill -0 fails).
             _ <- assertEventually {
                 Abort.run[Throwable](Command("kill", "-0", pid.toString).waitFor).map {
                     case Result.Success(code) => !code.isSuccess
@@ -483,7 +483,7 @@ class ProcessTest extends kyo.test.Test[Any]:
                 yield ()
             }
             pid <- pidRef.get
-            // Poll until the scope-destroyed process has been reaped (kill -0 fails), instead of a fixed sleep.
+            // Poll until the scope-destroyed process has been reaped (kill -0 fails).
             _ <- assertEventually {
                 Abort.run[Throwable](Command("kill", "-0", pid.toString).waitFor).map {
                     case Result.Success(code) => !code.isSuccess
@@ -514,7 +514,7 @@ class ProcessTest extends kyo.test.Test[Any]:
                 }
             }
             pid <- pidRef.get
-            // Poll until the scope-destroyed process has been reaped (kill -0 fails), instead of a fixed sleep.
+            // Poll until the scope-destroyed process has been reaped (kill -0 fails).
             _ <- assertEventually {
                 Abort.run[Throwable](Command("kill", "-0", pid.toString).waitFor).map {
                     case Result.Success(code) => !code.isSuccess

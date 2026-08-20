@@ -820,10 +820,10 @@ class AeronTransportTest extends Test:
     // that path re-derived the guard as a per-handle gate whose drain could miss a publication registered
     // concurrently, so an offer wrote into a term buffer the close had already unmapped.
     // 100 full Topic.run lifecycles (add + fork pub/sub + close) is intrinsically heavy and, on the
-    // slow single-threaded windows JS runner, runs right at the 120s default leaf budget (it timed out
-    // there once at exactly 2m while passing everywhere else). The iteration count is the regression
-    // sensitivity (the pre-fix UAF reproduced ~once per run at 100), so give the leaf explicit headroom
-    // rather than reduce it; fast platforms still finish in seconds since this is a ceiling, not a wait.
+    // slow single-threaded windows JS runner, runs right at the 120s default leaf budget. The iteration
+    // count is the regression sensitivity (the pre-fix UAF reproduced ~once per run at 100), so give the
+    // leaf explicit headroom rather than reduce it; fast platforms still finish in seconds since this is
+    // a ceiling, not a wait.
     "UAF-loop: a high-iteration forked-then-close loop does not use-after-free".timeout(5.minutes) in {
         val iterations = 100
         val messages   = Seq(1, 2, 3)
@@ -850,8 +850,8 @@ class AeronTransportTest extends Test:
     // roughly once per run. Saturating the window instead (20k messages of ~1KB) keeps the publish fiber
     // continuously inside offer's claim-and-copy when the close lands, which segfaulted the carrier on
     // every run before the OpsGate existed.
-    // Same heavy profile as UAF-loop (50 iterations, each publishing 20k ~1KB messages); it was STUCK
-    // near 1m on the windows runner too, so give it the same explicit headroom above the 120s default.
+    // Same heavy profile as UAF-loop (50 iterations, each publishing 20k ~1KB messages), so give it the
+    // same explicit headroom above the 120s default.
     "UAF-saturated: a close landing inside a running offer/poll loop does not use-after-free".timeout(5.minutes) in {
         val iterations = 50
         val payload    = "x" * 1024

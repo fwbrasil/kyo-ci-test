@@ -62,7 +62,7 @@ class BrowserConfigTest extends BrowserTest:
                 // The outer config is effectively-infinite: if the inner fastSchedule failed to
                 // apply, assertExists would fall back to it and retry forever (hang -> leaf
                 // timeout). A BrowserElementNotFoundException means the fast budget exhausted and
-                // aborted, which is the property - no wall-clock ceiling to distinguish it.
+                // aborted (the property), with no wall-clock ceiling to distinguish it.
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour))) {
                     Browser.withConfig(_.retrySchedule(fastSchedule)) {
                         Abort.run[BrowserElementException] {
@@ -87,7 +87,7 @@ class BrowserConfigTest extends BrowserTest:
                 // Outer config is effectively-infinite: if the inner fastSchedule's maxDuration
                 // were not honored, assertExists would fall back to it and retry forever (hang ->
                 // leaf timeout). BrowserElementNotFoundException means the 200ms budget fired and
-                // bounded the retry - the property, without a wall-clock ceiling.
+                // bounded the retry (the property), with no wall-clock ceiling.
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour))) {
                     Browser.withConfig(_.retrySchedule(fastSchedule)) {
                         Abort.run[BrowserElementException] {

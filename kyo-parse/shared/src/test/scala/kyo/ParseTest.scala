@@ -1503,8 +1503,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         // path per token. Pushing the counter off the hot path onto `remaining` observes nothing for
         // those two paths, and a truly zero-overhead seam would mean reshaping the public `ParseInput`
         // type purely for test instrumentation. With no threshold assertion, a quadratic regression
-        // surfaces as the suite timing out: minutes on the O(n^2) path against well under a second on
-        // the linear one.
+        // surfaces as the suite timing out.
         val largeLen = 500000
 
         "repeat(any) over a large input" in {

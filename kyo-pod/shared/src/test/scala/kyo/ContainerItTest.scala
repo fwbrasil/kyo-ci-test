@@ -149,9 +149,7 @@ class ContainerItTest extends BasePodTest:
                 // Decorate the permits=2 semaphore so every body the backend admits through meter.run bumps a
                 // shared in-flight counter and records the peak. The backend routes each exec through this
                 // meter, so the peak concurrency it admits is observable directly: exactly 2 proves the limit
-                // is enforced and saturated. A peak of 0 would mean the backend never routed exec through the
-                // meter; a peak above 2 would mean it ignored the permit count. This reads the concurrency
-                // bound off the semaphore rather than inferring it from how long six sleeps happened to take.
+                // is enforced and saturated.
                 Meter.initSemaphore(2).map { base =>
                     val inFlight = new java.util.concurrent.atomic.AtomicInteger(0)
                     val peak     = new java.util.concurrent.atomic.AtomicInteger(0)
@@ -1803,8 +1801,7 @@ class ContainerItTest extends BasePodTest:
             val img = ContainerImage("alpine", "latest")
             // ensure short-circuits on the locally-present image and contacts no registry; pull re-contacts
             // the registry even when the image is already present, so it surfaces progress events (per-layer
-            // "Already exists", the digest, an "up to date" status). Their presence is the registry contact
-            // observed directly, independent of how long a pull takes relative to an ensure.
+            // "Already exists", the digest, an "up to date" status). Their presence witnesses the registry contact.
             ContainerImage.ensure(img).andThen {
                 Scope.run {
                     Abort.run[ContainerException](ContainerImage.pullWithProgress(img).run).map {
@@ -2058,8 +2055,7 @@ class ContainerItTest extends BasePodTest:
                 // lands early while the last lands near completion; a buffered build collects everything and
                 // emits it in one burst after finishing, so the first and last events arrive together. The
                 // first event landing before the midpoint of the [start, last-event] delivery window is the
-                // streaming witness: the events' own arrival times are compared to each other, never to a
-                // fixed wall-clock bound.
+                // streaming witness.
                 assert(
                     firstMs * 2 < lastMs,
                     s"Build progress events were not spread across the build (first=${firstMs}ms, last=${lastMs}ms); " +
@@ -2740,13 +2736,11 @@ class ContainerItTest extends BasePodTest:
                     _ <- c.stop
                     r <- Abort.run[ContainerException](c.exec("echo", "hello"))
                 yield r match
-                    // The only class retryOnTransientUnavailable re-attempts is the transient
-                    // ContainerBackendUnavailableException (the SSH-bridge multiplex hiccup on macOS podman
-                    // machines). A stopped container is a deterministic NotFound/AlreadyStopped failure, a class
-                    // that retry path excludes. This leaf pins the classification: the failure is a
-                    // ContainerException and specifically not the transient-retryable class. It does not witness
-                    // the attempt count, because the meter wraps the whole retry rather than each attempt, so a
-                    // widened retry predicate would not change any signal the test surface can observe.
+                    // retryOnTransientUnavailable re-attempts only the transient ContainerBackendUnavailableException
+                    // (the SSH-bridge multiplex hiccup on macOS podman machines). A stopped container is a
+                    // deterministic NotFound/AlreadyStopped failure, a class that path excludes; this pins that
+                    // classification. The attempt count is not witnessed: the meter wraps the whole retry rather than
+                    // each attempt, so a widened predicate would change no signal the test surface can observe.
                     case Result.Failure(_: ContainerBackendUnavailableException) =>
                         fail(
                             "exec on a stopped container surfaced the transient-retryable failure class; a " +

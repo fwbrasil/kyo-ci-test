@@ -353,8 +353,7 @@ class HubTest extends kyo.test.Test[Any]:
                 result <- slowConsumer.get
                 _      <- producerFiber.get
             // result == (1 to 10) is the property: every item reached the deliberately-throttled
-            // consumer, in order, with no loss. The former elapsed >= 8.millis floor only
-            // confirmed the test's own per-item sleeps ran, which the delivery already implies.
+            // consumer, in order, with no loss.
             yield assert(result == (1 to 10))
         }
 

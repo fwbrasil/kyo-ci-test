@@ -362,8 +362,8 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
         // AFTER the runner has scored the leaf and closed the scope, so the fiber's assert takes the closed branch (a
         // stderr "a fiber outlived its test" warning plus an enqueue into the process-global collector) rather than
         // failing the leaf. The deterministic integration fact is that the leaf stays Passed; the closed->log warning
-        // itself is covered by the api AssertScopeTest (close() then record() emits the warning). The latch makes the
-        // after-body ordering exact rather than a timed guess.
+        // itself is covered by the api AssertScopeTest (close() then record() emits the warning). The latch lands the
+        // assert strictly after the scope closes.
         import kyo.AllowUnsafe.embrace.danger
         val release = Sync.Unsafe.evalOrThrow(Promise.init[Unit, Any])
         RTDetachedAfterSuite.release = release
@@ -380,8 +380,7 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
             // The leaf is scored and its scope closed; release the parked fiber so its assert records into the now-closed
             // scope, then wait for that record to land in the process-global collector with a Kyo-native asynchronous poll
             // (not a blocking sleep) so the single-threaded JS event loop can run the detached fiber, then drain so the
-            // record does not pollute later tests. The poll is a bounded best-effort with a give-up valve and is never
-            // asserted on; the deterministic fact under test is that the leaf stays Passed.
+            // record does not pollute later tests. The poll is bounded best-effort and never asserted on.
             val settle: Unit < (Async & Abort[Throwable]) =
                 release.completeDiscard(Result.succeed(())).andThen {
                     Loop(0) { attempt =>

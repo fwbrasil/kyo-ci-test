@@ -657,7 +657,7 @@ class BrowserPerCallScheduleTest extends BrowserTest:
                 onPage("<html><body><h1>no match</h1></body></html>") {
                     // withTimeout budget (2h) strictly exceeds neverSchedule's 1h step, so the
                     // wrong path (cfg capped by withTimeout) would wait ~1h and trip the suite
-                    // timeout - unambiguously a hang, not an instant maxDuration exhaustion.
+                    // timeout: unambiguously a hang, not an instant maxDuration exhaustion.
                     Browser.withTimeout(2.hours) {
                         Abort.run[BrowserReadException] {
                             Browser.assertExists(

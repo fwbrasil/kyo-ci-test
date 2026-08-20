@@ -54,10 +54,10 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
     /** Waits until the keep-alive idle timer for the next idle period is armed.
       *
-      * `restartParserKeepAlive` arms the timer and only then restarts the parser, which registers a take on inbound
-      * because no next request has arrived yet. That take is therefore observable proof that the timer already exists,
-      * which is the ordering a test needs before advancing virtual time against the timer's deadline: the response the
-      * test collected was written earlier, while the handler fiber was still running, so it says nothing about the arm.
+      * `restartParserKeepAlive` arms the timer, then restarts the parser, whose take on inbound (no next request has
+      * arrived) is observable proof the timer exists. A test needs that before advancing virtual time against the
+      * deadline: the response it already collected was written while the handler fiber ran, so it says nothing about
+      * the arm.
       */
     private def awaitIdleTimerArmed(inbound: Channel.Unsafe[Span[Byte]])(using Frame): Boolean < Async =
         pollUntil(inbound.pendingTakes().contains(1))
@@ -746,11 +746,10 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "Content-Length together with Transfer-Encoding is refused, not framed" in {
-            // A request carrying both Content-Length and Transfer-Encoding has two candidate framings, which is the
-            // CL.TE request smuggling shape (RFC 9112 section 6.1). The parser refuses it instead of picking one, so
-            // the dispatch answers 400 with Connection: close and tears the connection down: the body is never
-            // dechunked, never routed, and never handed to the handler, and the 413 the over-limit Content-Length
-            // would otherwise trigger is never reached either.
+            // A request carrying both Content-Length and Transfer-Encoding has two candidate framings, the CL.TE
+            // request-smuggling shape (RFC 9112 section 6.1). The parser refuses it instead of picking one, so the
+            // dispatch answers 400 with Connection: close and tears the connection down: the body is never dechunked,
+            // routed, or handed to the handler, and the 413 the over-limit Content-Length would trigger is never reached.
             val route  = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val served = new AtomicBoolean(false)
             val handler = route.handler { req =>
@@ -1579,7 +1578,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 Clock.use { clock =>
                     UnsafeServerDispatch.serve(router, inbound, outbound, config, clock = clock)
 
-                    // Both requests should succeed (pipelining — no idle gap)
+                    // Both requests should succeed (pipelining, no idle gap)
                     collectResponse(outbound).map { response1 =>
                         assert(response1.contains("HTTP/1.1 200 OK"), s"First response expected 200, got: $response1")
                         collectResponse(outbound).map { response2 =>

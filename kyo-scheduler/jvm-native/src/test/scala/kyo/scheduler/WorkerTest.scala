@@ -1051,7 +1051,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         // exec.execute(this) and runs it. A wedged Worker has state stuck at Running,
         // so the CAS Idle->Running in wakeup() fails and the task never runs. `eventually`
         // is the barrier: a recovered worker runs task2 and it passes; a wedged worker never
-        // runs it and this fails at eventually's own timeout - no fixed sleep-then-assert-once.
+        // runs it and this fails at eventually's own timeout.
         val task2 = TestTask()
         worker.enqueue(task2)
 

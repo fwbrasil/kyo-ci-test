@@ -27,15 +27,10 @@ import kyo.net.Test
   * one `acceptNow` per re-arm. The decorator stops injecting once the spin threshold is crossed so a regressed (spinning) build still
   * tears down cleanly (the real accept then succeeds).
   *
-  * Completion: nothing here reads a clock. The transport reports every resource-exhaustion re-arm through its `onAcceptResourceBackoff` hook,
-  * and the leaf settles on whichever event lands first, each of them a count of accept-loop events rather than a duration:
-  *
-  *   - the `backoffTarget`-th re-arm, which samples the `acceptNow` count at that exact instant (about one call per re-arm), or
-  *   - the spy's spin cap, `spinThreshold` `acceptNow` calls for ONE pending connection, which only a spinning loop ever reaches.
-  *
-  * Both settle the same promise with the call count, and the assertion reads that count, so a slow or loaded machine changes how long the leaf
-  * runs and nothing else. `Async.timeout` is only the deadlock ceiling for an accept loop that does neither (a wedged listener), never the pass
-  * condition.
+  * Completion: nothing here reads a clock. The accept loop settles the leaf with whichever event lands first, and the assertion reads which:
+  * a resource-backoff re-arm (reported through the `onAcceptResourceBackoff` hook), or the spy's spin cap of `spinThreshold` `acceptNow` calls
+  * for ONE pending connection, which only a spinning loop reaches. A slow or loaded machine changes how long the leaf runs, nothing else.
+  * `Async.timeout` is only the deadlock ceiling for an accept loop that does neither (a wedged listener), never the pass condition.
   */
 class PosixTransportAcceptEmfileTest extends Test:
 
@@ -66,7 +61,7 @@ class PosixTransportAcceptEmfileTest extends Test:
             cancel("PosixTransport accept-loop tests need epoll (Linux) or kqueue (macOS/BSD)")
 
     /** A delegating [[SocketBindings]] that injects `EMFILE` on `acceptNow` while a bounded budget is unspent, counting every call. At the spin
-      * threshold it settles `settled` with the call count (the only way a spinning loop, which never reaches a backoff re-arm, terminates this
+      * threshold it settles `settled` with `Spun` (the only way a spinning loop, which never reaches a backoff re-arm, terminates this
       * test) and stops injecting, delegating to the real `acceptNow` so the backlog drains and teardown is clean. Every other method delegates to
       * the real bindings (the single controlled injection pattern: one syscall's result is overridden, the rest are real).
       */

@@ -547,9 +547,9 @@ class BrowserSettlementTest extends BrowserTest:
                     }.map { result =>
                         result match
                             case Result.Failure(_: BrowserAssertionTimedOutException) =>
-                                // Behavior contract: the failure shape is the deterministic contract; the inner 50ms config produced
-                                // the timeout. If the inner were ignored, the outer effectively-infinite schedule would hang into the
-                                // leaf timeout.
+                                // The failure shape is the deterministic contract: the inner 50ms config produced the
+                                // timeout. If the inner were ignored, the outer effectively-infinite schedule would hang
+                                // into the leaf timeout.
                                 succeed
                             case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                         end match
@@ -656,7 +656,7 @@ class BrowserSettlementTest extends BrowserTest:
                     // Effectively-infinite maxDuration (not an infinite POLL interval): the 50ms poll is
                     // unchanged, so the sibling still matches #slow at 700ms and its positive assertion is
                     // intact; the 1-hour cap only matters to a fiber that never matches. That makes this a
-                    // clean detectable-hang discriminator for the tight fiber below - no wall-clock ceiling.
+                    // clean detectable-hang discriminator for the tight fiber below, with no wall-clock ceiling.
                     Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).maxDuration(1.hour))) {
                         Browser.goto(slowPage).andThen {
                             Browser.waitForText(Browser.Selector.css("#slow"), _ == "arrived").map { result =>
@@ -669,7 +669,7 @@ class BrowserSettlementTest extends BrowserTest:
                     // If withConfig leaked the sibling's config across the Async.zip boundary, this fiber would
                     // inherit maxDuration(1.hour) on a never-matching predicate and retry for an hour, hanging
                     // the zip into the 90s leaf timeout. So the typed abort alone discriminates isolation
-                    // (fast BrowserAssertionTimedOutException) from a leak (hang) - no elapsed ceiling needed.
+                    // (fast BrowserAssertionTimedOutException) from a leak (hang), with no elapsed ceiling needed.
                     Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).maxDuration(100.millis))) {
                         Browser.goto(fastPage).andThen {
                             Abort.run[BrowserElementException | BrowserAssertionException] {
@@ -1056,8 +1056,7 @@ class BrowserSettlementTest extends BrowserTest:
       * contrast, not a stopwatch: the synchronous `root.textContent='init'` is observed at the click instant, the first timed mutation
       * ('a') lands 50ms later, and a 10ms window quiesces in that gap, so `#root` still shows an EARLY token (never the final 'e') when
       * click returns. The 500ms-window foil below asserts the opposite ('e'); the two outcomes differing under the two windows is the
-      * whole claim. (The former [50,320]ms elapsed band flaked when actionability + CDP overhead alone exceeded the ceiling, e.g. 602ms
-      * on a loaded runner; that overhead is unrelated to the window behaviour under test.)
+      * whole claim.
       */
     "mutationQuiescenceWindow(10ms) lets 30ms-spaced mutations resolve in the first window" in {
         val p = page(quiescenceMatrixHtml)

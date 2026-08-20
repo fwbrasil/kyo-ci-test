@@ -14,12 +14,12 @@ class ForeachTest extends CompatTest:
     }
 
     "foreach runs concurrently (peak-concurrency canary)" in run {
-        // Concurrency shows up as overlap, not wall-clock: each task marks itself active, samples
-        // the peak, and waits at a five-way barrier, so the last task to arrive samples 5 and no
-        // task can leave before all 5 have arrived. A sequential run never opens the barrier and
-        // fails through CompatTest's testTimeout. The barrier replaces a fixed hold, which left
-        // the sample racing the schedule: a task stalled past another's hold read a peak below 5
-        // from a correct binding. (Same shape as the bounded-concurrency canary below.)
+        // Concurrency shows up as overlap, not wall-clock: each task marks itself active, samples the
+        // peak, and waits at a five-way barrier, so the last task to arrive samples 5 and no task can
+        // leave before all 5 have arrived. A sequential run never opens the barrier and fails through
+        // CompatTest's testTimeout. A fixed hold instead of the barrier would leave the sample racing
+        // the schedule: a task stalled past another's hold could read a peak below 5 on a correct
+        // binding. (Same shape as the bounded-concurrency canary below.)
         val active = new AtomicInteger(0)
         val peak   = new AtomicInteger(0)
         CLatch.init(5).flatMap { barrier =>
@@ -183,13 +183,12 @@ class ForeachTest extends CompatTest:
     }
 
     "foreach with concurrency=2 on 6 items observes exactly 2 concurrent items" in run {
-        // Bounded path canary: peak concurrent invocations must be exactly 2 - never more (the
-        // bound holds) and never fewer (the bound is actually engaged, i.e. it did not run
-        // sequentially). The two-way barrier makes the "never fewer" half race-free: the first
-        // two items to run cannot leave until both have arrived, so the peak reaches 2 whatever
-        // the host's schedule does, where a fixed hold left that outcome to timing. The later
-        // items find the barrier open and pass straight through, and the bound is what keeps
-        // them from pushing the peak past 2.
+        // Bounded path canary: peak concurrent invocations must be exactly 2, never more (the bound
+        // holds) and never fewer (the bound is actually engaged, i.e. it did not run sequentially).
+        // The two-way barrier makes the "never fewer" half race-free: the first two items to run cannot
+        // leave until both have arrived, so the peak reaches 2 whatever the host's schedule does. The
+        // later items find the barrier open and pass straight through, and the bound keeps them from
+        // pushing the peak past 2.
         val active = new AtomicInteger(0)
         val peak   = new AtomicInteger(0)
         val c = CLatch.init(2).flatMap { barrier =>
@@ -214,11 +213,10 @@ class ForeachTest extends CompatTest:
     }
 
     "foreach unbounded (default concurrency) runs all 5 concurrently" in run {
-        // Unbounded path explicit canary: the default (Int.MaxValue) branch must run all 5 tasks
-        // in parallel, so the five-way barrier can only open if all 5 are active at once and the
-        // last arrival samples a peak of 5. A branch that admitted fewer than 5 at a time never
-        // opens it and fails through CompatTest's testTimeout, where a fixed hold would have left
-        // the peak to the host's schedule.
+        // Unbounded path explicit canary: the default (Int.MaxValue) branch must run all 5 tasks in
+        // parallel, so the five-way barrier only opens if all 5 are active at once and the last arrival
+        // samples a peak of 5. A branch that admitted fewer than 5 at a time never opens it and fails
+        // through CompatTest's testTimeout.
         val active = new AtomicInteger(0)
         val peak   = new AtomicInteger(0)
         CLatch.init(5).flatMap { barrier =>

@@ -1140,7 +1140,7 @@ class BrowserReadTest extends BrowserTest:
         withBrowser {
             // A one-hour retry delay makes any single retry an effective hang (caught by the
             // suite timeout). The empty-match fast path must skip retrying and return at once, so
-            // that it returns at all is the proof it did not retry - no elapsed threshold.
+            // that it returns at all is the proof it did not retry, with no elapsed threshold.
             Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour).take(20))) {
                 onPage("<div>No items</div>") {
                     Browser.textAll(Browser.Selector.css("li.item")).map { texts =>
