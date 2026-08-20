@@ -85,10 +85,13 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
 
         "teardown interrupts BOTH the fast and disk fibers before the close-buffers finalizer runs, and no read observes a closed handle" in {
             val markers = AtomicRef.Unsafe.init(Chunk.empty[String])
+            val closed  = Latch.Unsafe.init(1) // close() releases it; the test fences on it, no settle
             val machine = new Machine:
                 def read()(using AllowUnsafe): Unit      = discard(markers.updateAndGet(_.append("read")))
                 def readDisks()(using AllowUnsafe): Unit = discard(markers.updateAndGet(_.append("readDisks")))
-                def close()(using AllowUnsafe): Unit     = discard(markers.updateAndGet(_.append("close")))
+                def close()(using AllowUnsafe): Unit =
+                    discard(markers.updateAndGet(_.append("close")))
+                    closed.release()
             Clock.withTimeControl { tc =>
                 for
                     handles <- MachineHandles.init
@@ -98,8 +101,10 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                     _           <- tc.awaitPendingSleepers(2)
                     _           <- tc.advance(1.seconds)
                     interrupted <- fiber.interrupt
-                    // fiber.get resolves only after every Scope finalizer runs, so close() is recorded by now.
-                    _    <- Abort.run(fiber.get)
+                    _           <- Abort.run(fiber.get)
+                    // fiber.get resolves on the interrupted result BEFORE the close-buffers finalizer runs,
+                    // so fence on the latch close() releases rather than on a wall-clock settle.
+                    _    <- closed.safe.await
                     done <- fiber.done
                     snapshot = markers.get()
                 yield
