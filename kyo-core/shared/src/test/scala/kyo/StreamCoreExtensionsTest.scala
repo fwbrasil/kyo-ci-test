@@ -65,7 +65,11 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 // `spinning > 0` therefore means a genuine livelock, not a slow host.
                 watchdog <- Sync.defer {
                     val t = new Thread(() =>
-                        if !done.await(60, java.util.concurrent.TimeUnit.SECONDS) then forceStop.set(true)
+                        try
+                            if !done.await(60, java.util.concurrent.TimeUnit.SECONDS) then forceStop.set(true)
+                        catch
+                            // Interrupted at teardown once the merge completed and released `done`: nothing to do.
+                            case _: InterruptedException => ()
                     )
                     t.setDaemon(true)
                     t.start()
