@@ -22,14 +22,28 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
     implicit override val patienceConfig: PatienceConfig =
         PatienceConfig(timeout = Span(15, Seconds), interval = Span(50, Millis))
 
-    val executor = TestExecutors.cached
+    // A worker mounts by submitting ITSELF (a Runnable) to this executor, so wrapping it lets afterEach count how
+    // many worker run() invocations are in flight and wait for exactly that to reach zero, instead of guessing a
+    // fixed settle. The InternalClock each worker builds also uses this executor for its ticker; that runnable is
+    // not a Worker, so the isInstanceOf filter keeps it out of the count.
+    private val activeWorkers = new AtomicInteger(0)
+    val executor: Executor = command =>
+        TestExecutors.cached.execute { () =>
+            val isWorker = command.isInstanceOf[Worker]
+            if (isWorker) { val _ = activeWorkers.incrementAndGet() }
+            try command.run()
+            finally if (isWorker) { val _ = activeWorkers.decrementAndGet() }
+        }
 
     // Set to true after each test to stop all workers created during that test
     private var globalStop = new AtomicBoolean(false)
 
     override def afterEach(): Unit = {
         globalStop.set(true)
-        Thread.sleep(50)                      // give workers time to exit run() loop
+        // Wait for every mounted worker's run() loop to actually return (activeWorkers back to 0), not for a fixed
+        // delay. The nanoTime bound is a catastrophic-only hang canary, never the pass condition.
+        val deadline = System.nanoTime() + 15000000000L
+        while (activeWorkers.get() > 0 && System.nanoTime() < deadline) Thread.`yield`()
         globalStop = new AtomicBoolean(false) // fresh for next test
     }
 
