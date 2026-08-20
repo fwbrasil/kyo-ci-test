@@ -1315,22 +1315,24 @@ class ContainerItTest extends BasePodTest:
         }
 
         "delivers entries incrementally as container produces output" - runBackends {
-            // line2 is gated on a file the test writes only after receiving line1, so a following stream must
-            // deliver line1 first; a buffered one can't (the container can't exit before the gate) and hangs.
+            // The container emits both lines and then blocks forever, so it never exits on its own. A FOLLOWING
+            // stream delivers each line while the container is still running, so `take` returns line1 then line2; a
+            // BUFFERED stream would deliver nothing until the container exits, which it never does, so `take` would
+            // hang and the suite timeout would trip. Receiving both, in order, proves incremental delivery with no
+            // real sleep and no dependency on exec. `trap TERM` + `sleep infinity & wait` gives a clean fast teardown.
             val config = Container.Config("alpine")
-                .command("sh", "-c", "echo line1; while [ ! -f /tmp/go ]; do sleep 0.1; done; echo line2")
+                .command("sh", "-c", "trap 'exit 0' TERM; echo line1; echo line2; sleep infinity & wait")
             Container.init(config).map { c =>
                 Scope.run {
                     for
                         channel  <- Channel.init[Container.LogEntry](16)
                         consumer <- Fiber.initUnscoped(c.logStream.foreach(e => channel.put(e)))
                         first    <- channel.take
-                        _        <- c.exec("touch", "/tmp/go")
                         second   <- channel.take
                         _        <- consumer.interrupt
                     yield
                         assert(first.content == "line1", s"expected line1 delivered first, got ${first.content}")
-                        assert(second.content == "line2", s"expected line2 after opening the gate, got ${second.content}")
+                        assert(second.content == "line2", s"expected line2 delivered second, got ${second.content}")
                     end for
                 }
             }
