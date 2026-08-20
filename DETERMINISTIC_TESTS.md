@@ -90,6 +90,7 @@ To make one fiber wait for another to reach a point, use a coordination primitiv
 | `assert(elapsed < budget)` (op returns fast) | assert the terminal event/state that proves it returned, not the elapsed |
 | retry/schedule/backoff timing | `withTimeControl` + advancer fiber; assert attempt count and exact virtual elapsed |
 | "settle" sleep before reading | wait on the settle's own completion signal (a promise/latch/event) |
+| `Thread.sleep(window)` real-thread soak (concurrent stress) | bound each worker by a fixed op count and self-terminate; for producer/consumer, a producers-done latch plus consumers that drain until producers-done AND the queue is empty; assert conservation / no-duplication, never the window |
 
 ## Legitimately not the real clock (fine, keep)
 
@@ -124,6 +125,13 @@ uses a clock:
 (Passing a real timeout to the API under test and then asserting on **state**, e.g. `connect(host, port,
 deadline)` with `assert(nothing timed out)`, is using the API, not a pass-condition threshold; the
 assertion must still be the state, never the measured elapsed.)
+
+A test that deliberately **wedges the scheduler** (a livelock repro) cannot rely on the per-leaf timeout,
+which runs on that same scheduler and can no longer fire. A raw watchdog thread is then legitimate, but
+gate its firing on a **completion latch** the test releases when it finishes: the watchdog breaks the wedge
+only if the work has not completed within a catastrophic ceiling (a genuine livelock), so a slow-but-correct
+run releases the latch first and is never disturbed. A bare `Thread.sleep(window)` watchdog that always
+fires after a fixed delay is the flake to avoid.
 
 So a deviation is: (1) **validated**, a real reason virtual time cannot cover it, written at the site as
 `// deviation: <reason>`; (2) **reported** to the maintainer; (3) asserting state/structure, or at worst a
