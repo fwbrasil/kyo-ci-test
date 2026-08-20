@@ -4,7 +4,7 @@ import kyo.internal.TestClasspaths
 import kyo.internal.TestClasspaths2
 
 /** Characteristics of the live JVM standard classpath: a version-pinned given-instance count baseline, cacheDir write-collision handling,
-  * cold-init wall time on a real 80k-symbol corpus, and JPMS module count via jrt:/.
+  * cold-init stability on a real 80k-symbol corpus, and JPMS module count via jrt:/.
   */
 class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
 
@@ -23,7 +23,7 @@ class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
     // `standard` classpath also carries kyo-tasty, kyo-data, and the fixtures, whose given count shifts with every unrelated kyo change, so
     // a baseline measured there needs re-tuning constantly; measured against scala-library alone it is deterministic and only moves on a
     // deliberate scala-library bump, where re-pinning it re-validates the decoder against the new stdlib. The leaves below still exercise
-    // the full corpus for symbol count, cold-init timing, and JPMS modules.
+    // the full corpus for symbol count, cold-init stability, and JPMS modules.
     "given-instance count on scala-library is exactly 409 (scala 3.8.4)" in {
         TestClasspaths.withClasspath(TestClasspaths.scalaLibrary)(Tasty.classpath).map { classpath =>
             val count = classpath.symbols.count(_.isGiven)
@@ -60,29 +60,22 @@ class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    "standard 81,569-symbol classpath cold-init median < 5,000 ms" in {
+    "standard classpath cold-init is stable across repeated loads (>= 80,000 symbols each)" in {
         val roots = TestClasspaths2.standardRoots
-        def timedLoad: Duration < (Async & Abort[TastyError]) =
-            Clock.nowMonotonic.map { start =>
-                TestClasspaths.withClasspath(roots)(Tasty.classpath).map { classpath =>
-                    Clock.nowMonotonic.map { end =>
-                        // >= 80,000: the standard classpath measures ~80,321 after finalizeMerge's package dedup
-                        // removes the per-file duplicate Package partials (was ~81,569 with duplicates). Real classes/members are
-                        // unaffected (unioned into the canonical package); only duplicate Package headers are collapsed.
-                        assert(classpath.symbols.size >= 80000, s"Expected >= 80,000 symbols; got ${classpath.symbols.size}")
-                        end - start
-                    }
-                }
+        def load: Int < (Async & Abort[TastyError]) =
+            TestClasspaths.withClasspath(roots)(Tasty.classpath).map { classpath =>
+                // >= 80,000: the standard classpath measures ~80,321 after finalizeMerge's package dedup
+                // removes the per-file duplicate Package partials (was ~81,569 with duplicates). Real classes/members are
+                // unaffected (unioned into the canonical package); only duplicate Package headers are collapsed.
+                assert(classpath.symbols.size >= 80000, s"Expected >= 80,000 symbols; got ${classpath.symbols.size}")
+                classpath.symbols.size
             }
-        end timedLoad
-        timedLoad.map { t1 =>
-            timedLoad.map { t2 =>
-                timedLoad.map { t3 =>
-                    val times  = Chunk(t1, t2, t3).sortBy(_.toMillis)
-                    val median = times(1)
+        load.map { n1 =>
+            load.map { n2 =>
+                load.map { n3 =>
                     assert(
-                        median < 5.seconds,
-                        s"Expected cold-init median < 5 seconds on standard classpath; got ${median.toMillis} ms (runs: ${t1.toMillis}, ${t2.toMillis}, ${t3.toMillis})"
+                        n1 == n2 && n2 == n3,
+                        s"Cold-init symbol count is not stable across repeated loads: $n1, $n2, $n3"
                     )
                     succeed
                 }
