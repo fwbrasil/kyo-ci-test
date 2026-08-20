@@ -56,12 +56,16 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                     else Emit.valueWith(Chunk(100))(Loop.continue(()))
                 )
             )
+            val done = new java.util.concurrent.CountDownLatch(1)
             for
+                // The bug livelocks the scheduler, so the per-leaf timeout (which runs on that scheduler) cannot
+                // fire: a raw watchdog thread is the only thing that can break it. It force-stops the producers
+                // ONLY if the merges have not completed within a catastrophic 60s, so a correct run (producers
+                // self-terminate on the halt, however slow) releases `done` first and is never force-stopped.
+                // `spinning > 0` therefore means a genuine livelock, not a slow host.
                 watchdog <- Sync.defer {
                     val t = new Thread(() =>
-                        try Thread.sleep(2000)
-                        catch case _: InterruptedException => ()
-                        forceStop.set(true)
+                        if !done.await(60, java.util.concurrent.TimeUnit.SECONDS) then forceStop.set(true)
                     )
                     t.setDaemon(true)
                     t.start()
@@ -71,6 +75,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                     Stream.collectAllHalting(Seq(Stream.init(0 to 50), infinite)).run
                 )
             yield
+                done.countDown()
                 watchdog.interrupt()
                 assert(
                     spinning.get() == 0,

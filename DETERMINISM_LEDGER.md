@@ -13,18 +13,18 @@ state/ordering pass condition and at most a catastrophic-only ceiling; keep, lab
 
 | Site | Shape | Class | Status |
 |---|---|---|---|
-| kyo-data MpmcUnboundedUnsafeQueueTest:112,156,195,243,285 | `Thread.sleep(200)` soak window (5 tests) | TO-FIX | op-count + producersDone latch (the miss) |
-| kyo-data UnsafeQueueBaseTest:536 | `Thread.sleep(testDurationMs)` shared soak helper | TO-FIX | op-count body signature |
-| kyo-scheduler BlockingMonitorTest:595,662,715,753,801,842,882,955 | `Thread.sleep(10-60s)` | INSPECT | confirm the sleep IS the blocked-thread under test (mechanism), barrier-detected |
-| kyo-scheduler WorkerTest:32 | `Thread.sleep(50)` afterEach settle | INSPECT | barrier on workers exiting vs real-thread teardown deviation |
+| kyo-data MpmcUnboundedUnsafeQueueTest:112,156,195,243,285 | `Thread.sleep(200)` soak window (5 tests) | FIXED | op-count + producersDone latch (the miss); validating |
+| kyo-data UnsafeQueueBaseTest:536 | `Thread.sleep(testDurationMs)` shared soak helper | FIXED | fixed per-thread iteration budget + unbounded join; validating |
+| kyo-scheduler BlockingMonitorTest:595,662,715,753,801,842,882,955 | `Thread.sleep(10-60s)` | DEVIATION | the sleeping task IS the blocked thread the monitor detects; barrier-started, interrupted at teardown |
+| kyo-scheduler WorkerTest:32 | `Thread.sleep(50)` afterEach settle | DEVIATION | teardown hygiene, gates no assertion; leaked workers self-exit on the captured stop flag |
 | kyo-scheduler SchedulerTest:201 | `while blk0<4 && nanoTime<deadline do sleep(5)` | DEVIATION | state poll (blk0>=4) + 10s catastrophic ceiling, real carriers |
-| kyo-scheduler SchedulerTest:240 | `Thread.sleep(10)` | INSPECT | context |
+| kyo-scheduler SchedulerTest:240 | `while probes<=10 && nanoTime<deadline do sleep(10)` | DEVIATION | state poll (probesSent>10) + 3s catastrophic ceiling, real regulator |
 | kyo-scheduler ReporterTest:51 | `while empty && millis<deadline do sleep(10)` | DEVIATION | state poll (file content) + 5s ceiling, real subprocess |
-| kyo-core StreamCoreExtensionsTest:62 | watchdog thread `sleep(2000)` then forceStop | INSPECT | 2s watchdog could false-fire on a slow host |
+| kyo-core StreamCoreExtensionsTest:62 | watchdog thread `sleep(2000)` then forceStop | FIXED | latch-gated watchdog: force-stops only after a catastrophic 60s of non-completion (real livelock); validating |
 | kyo-core IOPromiseBlockingTest:41 | `while waiters()==0 do sleep(1)` | DEVIATION | cross-thread state poll, below effect system, no ceiling (suite timeout) |
 | kyo-browser BrowserLauncherCleanupJvmTest:126 | `awaitCondition` loop `sleep(stepMs)` w/ deadline | DEVIATION | state poll (cond) + deadline ceiling, real browser process |
-| kyo-ffi GuardCloseStressTest:39 | `Thread.sleep(1-5ms)` interleave jitter | INSPECT | jitter for a close-race stress; not a pass condition |
-| kyo-test LeakCheckTest:23,38 | `Thread.sleep(20/10)` loadAvg sampling | INSPECT | samples a real OS load metric over time |
+| kyo-ffi GuardCloseStressTest:39 | `Thread.sleep(1-5ms)` interleave jitter | FINE | simulates a callback body to create stress pressure; gates no assertion |
+| kyo-test LeakCheckTest:23,38 | `Thread.sleep(20/10)` loadAvg sampling | DEVIATION | samples a real OS load metric over time; no virtual seam |
 | kyo-test LeakCheckTest:296 | `try Thread.sleep(60000)` | DEVIATION | a thread blocking is the leak subject under test |
 | kyo-ffi GuardCloseStressTest (deadline) | 2s busy-wait deadline | FIXED | b5ef783dbb (spin until state; suite-timeout canary) |
 | kyo-data Mpmc/Mpsc/Spmc/SpmcUnbounded/MpscUnbounded soaks | `Thread.sleep(200/300/1000)` | FIXED | acd43abd34 (op-count + conservation) |
@@ -34,7 +34,7 @@ state/ordering pass condition and at most a catastrophic-only ceiling; keep, lab
 
 | Site | Shape | Class | Status |
 |---|---|---|---|
-| kyo-http UnsafeServerDispatchTest:1664,1668 | assert closed-state around a real idle timeout | INSPECT | may assert closed/open relative to real elapsed |
+| kyo-http UnsafeServerDispatchTest:1664,1668 | assert closed-state around an idle timeout | FINE | under `Clock.withTimeControl`; exact `tc.advance` brackets the timeout (model virtual-time test) |
 | kyo-scheduler BlockingMonitorTest:115 | `assert(nanoTime < deadline, "did not complete N scans")` | DEVIATION | pass condition is N scans done; deadline catastrophic |
 | kyo-scheduler InternalClockTest:66,82 | `assert(nanoTime < deadline, "clock stopped publishing")` | DEVIATION | pass condition is an update published; deadline catastrophic |
 | kyo-scheduler WorkerTest:614-911 | `assert(!worker.checkAvailability(currentTimeMillis()))` | FINE | currentTime is an API input; assertion is on the boolean state |

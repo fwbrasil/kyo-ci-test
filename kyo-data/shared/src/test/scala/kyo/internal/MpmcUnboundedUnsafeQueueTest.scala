@@ -76,18 +76,23 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
     "MpmcUnboundedUnsafeQueue-specific concurrent".notJs - {
 
         "xaddUniqueness" in {
-            val q        = new MpmcUnboundedUnsafeQueue[Long](8)
-            val stop     = new AtomicBoolean(false)
-            val start    = new CountDownLatch(1)
-            val consumed = new ConcurrentHashMap[Long, java.lang.Boolean]()
-            val dup      = new AtomicBoolean(false)
-            val counter  = new AtomicLong(0)
+            val q             = new MpmcUnboundedUnsafeQueue[Long](8)
+            val perProducer   = 20000
+            val producerCount = 3
+            val total         = perProducer * producerCount
+            val start         = new CountDownLatch(1)
+            val producersDone = new CountDownLatch(producerCount)
+            val consumed      = new ConcurrentHashMap[Long, java.lang.Boolean]()
+            val dup           = new AtomicBoolean(false)
 
-            val producers = (0 until 3).map { pid =>
+            val producers = (0 until producerCount).map { pid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
-                        discard(q.offer(counter.incrementAndGet()))
+                    var seq = 1
+                    while seq <= perProducer do
+                        discard(q.offer(pid * 1000000L + seq))
+                        seq += 1
+                    producersDone.countDown()
                 )
                 t.setDaemon(true)
                 t
@@ -95,7 +100,7 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
             val consumers = (0 until 3).map { cid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
+                    while producersDone.getCount > 0 || !q.isEmpty() do
                         q.poll() match
                             case Maybe.Present(v) =>
                                 if consumed.put(v, java.lang.Boolean.TRUE) != null then
@@ -109,29 +114,35 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producers ++ consumers).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
-            stop.set(true)
-            (producers ++ consumers).foreach(_.join(10000))
+            (producers ++ consumers).foreach(_.join())
 
-            // Drain remaining
-            while q.poll().isDefined do ()
+            var r = q.poll()
+            while r.isDefined do
+                if consumed.put(r.get, java.lang.Boolean.TRUE) != null then dup.set(true)
+                r = q.poll()
 
             assert(!dup.get(), "XADD produced duplicate elements")
+            assert(consumed.size == total, s"data loss: consumed=${consumed.size}, total=$total")
         }
 
         "pooledConcurrentNoDuplicates" in {
-            val q        = new MpmcUnboundedUnsafeQueue[Long](8, maxPooledChunks = 4)
-            val stop     = new AtomicBoolean(false)
-            val start    = new CountDownLatch(1)
-            val consumed = new ConcurrentHashMap[Long, java.lang.Boolean]()
-            val dup      = new AtomicBoolean(false)
-            val counter  = new AtomicLong(0)
+            val q             = new MpmcUnboundedUnsafeQueue[Long](8, maxPooledChunks = 4)
+            val perProducer   = 20000
+            val producerCount = 4
+            val total         = perProducer * producerCount
+            val start         = new CountDownLatch(1)
+            val producersDone = new CountDownLatch(producerCount)
+            val consumed      = new ConcurrentHashMap[Long, java.lang.Boolean]()
+            val dup           = new AtomicBoolean(false)
 
-            val producers = (0 until 4).map { pid =>
+            val producers = (0 until producerCount).map { pid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
-                        discard(q.offer(counter.incrementAndGet()))
+                    var seq = 1
+                    while seq <= perProducer do
+                        discard(q.offer(pid * 1000000L + seq))
+                        seq += 1
+                    producersDone.countDown()
                 )
                 t.setDaemon(true)
                 t
@@ -139,7 +150,7 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
             val consumers = (0 until 4).map { cid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
+                    while producersDone.getCount > 0 || !q.isEmpty() do
                         q.poll() match
                             case Maybe.Present(v) =>
                                 if consumed.put(v, java.lang.Boolean.TRUE) != null then
@@ -153,26 +164,34 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producers ++ consumers).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
-            stop.set(true)
-            (producers ++ consumers).foreach(_.join(10000))
+            (producers ++ consumers).foreach(_.join())
 
-            while q.poll().isDefined do ()
+            var r = q.poll()
+            while r.isDefined do
+                if consumed.put(r.get, java.lang.Boolean.TRUE) != null then dup.set(true)
+                r = q.poll()
+
             assert(!dup.get(), "Pooled mode produced duplicate elements")
+            assert(consumed.size == total, s"data loss: consumed=${consumed.size}, total=$total")
         }
 
         "pooledConcurrentNoDataLoss" in {
-            val q        = new MpmcUnboundedUnsafeQueue[Long](8, maxPooledChunks = 4)
-            val stop     = new AtomicBoolean(false)
-            val start    = new CountDownLatch(1)
-            val offered  = new AtomicLong(0)
-            val consumed = new AtomicLong(0)
+            val q             = new MpmcUnboundedUnsafeQueue[Long](8, maxPooledChunks = 4)
+            val perProducer   = 20000
+            val producerCount = 4
+            val total         = perProducer.toLong * producerCount
+            val start         = new CountDownLatch(1)
+            val producersDone = new CountDownLatch(producerCount)
+            val consumed      = new AtomicLong(0)
 
-            val producers = (0 until 4).map { pid =>
+            val producers = (0 until producerCount).map { pid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
-                        discard(q.offer(offered.incrementAndGet()))
+                    var i = 0
+                    while i < perProducer do
+                        discard(q.offer(pid * 100000000L + i))
+                        i += 1
+                    producersDone.countDown()
                 )
                 t.setDaemon(true)
                 t
@@ -180,7 +199,7 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
             val consumers = (0 until 4).map { cid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
+                    while producersDone.getCount > 0 || !q.isEmpty() do
                         q.poll() match
                             case Maybe.Present(_) => discard(consumed.incrementAndGet())
                             case _                => Thread.`yield`()
@@ -192,31 +211,33 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producers ++ consumers).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
-            stop.set(true)
-            (producers ++ consumers).foreach(_.join(10000))
+            (producers ++ consumers).foreach(_.join())
 
             var remaining = 0L
             while q.poll().isDefined do remaining += 1
 
             assert(
-                consumed.get() + remaining == offered.get(),
-                s"Data loss: offered=${offered.get()}, consumed=${consumed.get()}, remaining=$remaining"
+                consumed.get() + remaining == total,
+                s"Data loss: consumed=${consumed.get()}, remaining=$remaining, total=$total"
             )
         }
 
         "pooledPeekConsistency" in {
-            val q       = new MpmcUnboundedUnsafeQueue[Long](8, maxPooledChunks = 4)
-            val stop    = new AtomicBoolean(false)
-            val start   = new CountDownLatch(1)
-            val failure = new AtomicBoolean(false)
-            val counter = new AtomicLong(0)
+            val q             = new MpmcUnboundedUnsafeQueue[Long](8, maxPooledChunks = 4)
+            val perProducer   = 20000
+            val producerCount = 3
+            val start         = new CountDownLatch(1)
+            val producersDone = new CountDownLatch(producerCount)
+            val failure       = new AtomicBoolean(false)
 
-            val producers = (0 until 3).map { pid =>
+            val producers = (0 until producerCount).map { pid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
-                        discard(q.offer(counter.incrementAndGet()))
+                    var seq = 1
+                    while seq <= perProducer do
+                        discard(q.offer(pid * 1000000L + seq)) // always > 0
+                        seq += 1
+                    producersDone.countDown()
                 )
                 t.setDaemon(true)
                 t
@@ -224,7 +245,7 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
             val consumers = (0 until 3).map { cid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
+                    while producersDone.getCount > 0 || !q.isEmpty() do
                         q.peek() match
                             case Maybe.Present(v) =>
                                 if v <= 0 then failure.set(true)
@@ -240,27 +261,30 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producers ++ consumers).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
-            stop.set(true)
-            (producers ++ consumers).foreach(_.join(10000))
+            (producers ++ consumers).foreach(_.join())
 
             assert(!failure.get(), "Peek returned invalid value in pooled mode")
         }
 
         "rotationLockContention" in {
             // Many producers forcing concurrent chunk allocation via ROTATION lock
-            val q        = new MpmcUnboundedUnsafeQueue[Long](8, maxPooledChunks = 0)
-            val stop     = new AtomicBoolean(false)
-            val start    = new CountDownLatch(1)
-            val consumed = new ConcurrentHashMap[Long, java.lang.Boolean]()
-            val dup      = new AtomicBoolean(false)
-            val counter  = new AtomicLong(0)
+            val q             = new MpmcUnboundedUnsafeQueue[Long](8, maxPooledChunks = 0)
+            val perProducer   = 10000
+            val producerCount = 8
+            val total         = perProducer * producerCount
+            val start         = new CountDownLatch(1)
+            val producersDone = new CountDownLatch(producerCount)
+            val consumed      = new ConcurrentHashMap[Long, java.lang.Boolean]()
+            val dup           = new AtomicBoolean(false)
 
-            val producers = (0 until 8).map { pid =>
+            val producers = (0 until producerCount).map { pid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
-                        discard(q.offer(counter.incrementAndGet()))
+                    var seq = 1
+                    while seq <= perProducer do
+                        discard(q.offer(pid * 1000000L + seq))
+                        seq += 1
+                    producersDone.countDown()
                 )
                 t.setDaemon(true)
                 t
@@ -268,7 +292,7 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
             val consumers = (0 until 4).map { cid =>
                 val t = new Thread(() =>
                     start.await()
-                    while !stop.get() do
+                    while producersDone.getCount > 0 || !q.isEmpty() do
                         q.poll() match
                             case Maybe.Present(v) =>
                                 if consumed.put(v, java.lang.Boolean.TRUE) != null then
@@ -282,12 +306,15 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producers ++ consumers).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
-            stop.set(true)
-            (producers ++ consumers).foreach(_.join(10000))
+            (producers ++ consumers).foreach(_.join())
 
-            while q.poll().isDefined do ()
+            var r = q.poll()
+            while r.isDefined do
+                if consumed.put(r.get, java.lang.Boolean.TRUE) != null then dup.set(true)
+                r = q.poll()
+
             assert(!dup.get(), "Rotation lock contention caused duplicates")
+            assert(consumed.size == total, s"data loss: consumed=${consumed.size}, total=$total")
         }
     }
 end MpmcUnboundedUnsafeQueueTest
