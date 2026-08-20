@@ -810,8 +810,9 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             }
 
             assert(allStarted.await(30, TimeUnit.SECONDS), "all tasks should start")
-            // Let monitor establish baseline
-            Thread.sleep(20)
+            // Let the monitor take its baseline CPU-time samples, counted in its own scans so
+            // the baseline exists whatever the host's pace.
+            awaitMonitorCycles(3)
 
             // Request interrupt on all tasks simultaneously
             tasks.foreach(t => t.interrupted = true)

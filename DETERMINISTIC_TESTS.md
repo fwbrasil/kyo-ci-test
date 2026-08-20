@@ -81,13 +81,30 @@ To make one fiber wait for another to reach a point, use a coordination primitiv
 
 ## Deviations
 
-If a test must touch the real clock (e.g. it validates the platform clock itself, or a native/JS timer
-boundary that has no virtual-time seam), it is a deviation:
+Some tests exercise a real seam that virtual time cannot cover: the platform clock itself, a real OS
+socket/kernel poller, a spawned subprocess, raw threads below the effect system. `withTimeControl` does not
+reach these.
 
-1. It must be **validated**: a real reason virtual time cannot cover it, written at the site.
-2. It must be **reported** to the maintainer, not left silent.
-3. It must still not assert a threshold that a slow/fast runner can flip; assert a bound so wide it can
-   only fail on a genuine defect, and say so.
+**"No virtual-time seam" is not a license to keep a timing assertion.** The pass/fail condition must still
+not depend on real time. What makes a real-clock test deterministic is *what it asserts*, not whether it
+uses a clock:
+
+- **Assert a state, event, structure, or monotonicity**, never measured elapsed. "The connect completed",
+  "the peer-closed flag is set", "entries arrived in order", "count == N", "b >= a". A slow or fast runner
+  cannot flip any of these.
+- **A timeout is legitimate only as a hang-canary ceiling**: a genuine defect hangs and trips the suite
+  timeout. It is never the pass condition. `awaitCondition(5.seconds)(state)` then `assert(state)` is fine;
+  `assert(elapsed < 5.seconds)` is not.
+- If you truly need a magnitude bound (a real perf/skew check with no state proxy), make it
+  **catastrophic-only** (so wide only a genuine defect trips it) and **label + report** it as a deviation.
+
+So a deviation is: (1) **validated**, a real reason virtual time cannot cover it, written at the site as
+`// deviation: <reason>`; (2) **reported** to the maintainer; (3) asserting state/structure, or at worst a
+catastrophic-only bound, never a runner-flippable threshold.
+
+Converting a real-I/O test off a threshold usually means: replace `assert(elapsed < budget)` with the
+terminal state/event it produces; replace a `Thread.sleep`-to-open-a-window with a fixed operation count or
+a latch; and let the suite timeout be the only hang guard.
 
 ## Checklist before adding a timing-touching test
 
