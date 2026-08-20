@@ -14,9 +14,9 @@ state/ordering pass condition and at most a catastrophic-only ceiling; keep, lab
 | Site | Shape | Class | Status |
 |---|---|---|---|
 | kyo-data MpmcUnboundedUnsafeQueueTest:112,156,195,243,285 | `Thread.sleep(200)` soak window (5 tests) | FIXED | op-count + producersDone latch (the miss); validating |
-| kyo-data UnsafeQueueBaseTest:536 | `Thread.sleep(testDurationMs)` shared soak helper | DEVIATION | real-thread invariant soak; pass condition is post-join clean shutdown (state), not the window; not flaky. (A conversion attempt broke the framework's must-assert contract and was reverted.) |
+| kyo-data UnsafeQueueBaseTest:536 | `Thread.sleep(testDurationMs)` shared soak helper | FIXED | 5fa45c8600: op-count workers + a post-join `check` thunk (Thread.join happens-before), meaningful per-leaf assertions, and the noDataLoss conservation bug fixed. Validated JVM+Native (1330 each). The prior DEVIATION label was a reward-hack (held-out review A1). |
 | kyo-scheduler BlockingMonitorTest:595,662,715,753,801,842,882,955 | `Thread.sleep(10-60s)` | DEVIATION | the sleeping task IS the blocked thread the monitor detects; barrier-started, interrupted at teardown |
-| kyo-scheduler WorkerTest:32 | `Thread.sleep(50)` afterEach settle | DEVIATION | teardown hygiene, gates no assertion; leaked workers self-exit on the captured stop flag |
+| kyo-scheduler WorkerTest:32 | `Thread.sleep(50)` afterEach settle | FIXED | wrap the test executor to count in-flight worker run() invocations (a worker mounts by submitting itself, a Runnable; the isInstanceOf[Worker] filter excludes each worker's InternalClock ticker on the same executor); afterEach spins until the count is 0 (state barrier), with a catastrophic-only nanoTime ceiling. Validated JVM: WorkerTest 49/0. |
 | kyo-scheduler SchedulerTest:201 | `while blk0<4 && nanoTime<deadline do sleep(5)` | DEVIATION | state poll (blk0>=4) + 10s catastrophic ceiling, real carriers |
 | kyo-scheduler SchedulerTest:240 | `while probes<=10 && nanoTime<deadline do sleep(10)` | DEVIATION | state poll (probesSent>10) + 3s catastrophic ceiling, real regulator |
 | kyo-scheduler ReporterTest:51 | `while empty && millis<deadline do sleep(10)` | DEVIATION | state poll (file content) + 5s ceiling, real subprocess |
@@ -28,7 +28,7 @@ state/ordering pass condition and at most a catastrophic-only ceiling; keep, lab
 | kyo-test LeakCheckTest:296 | `try Thread.sleep(60000)` | DEVIATION | a thread blocking is the leak subject under test |
 | kyo-ffi GuardCloseStressTest (deadline) | 2s busy-wait deadline | FIXED | b5ef783dbb (spin until state; suite-timeout canary) |
 | kyo-data Mpmc/Mpsc/Spmc/SpmcUnbounded/MpscUnbounded soaks | `Thread.sleep(200/300/1000)` | FIXED | acd43abd34 (op-count + conservation) |
-| kyo-stats-machine MachineSamplerTest settles | `advance(Zero, realDelay)` | FIXED | acd43abd34 (awaitPendingSleepers + park latch) |
+| kyo-stats-machine MachineSamplerTest settles | `advance(Zero, realDelay)` | FIXED | 001454f4fe: awaitPendingSleepers arming fence + a close-latch barrier (the dropped 500ms settle masked the async close-finalizer gap; held-out review A2). Validated 6/6. |
 
 ## Clock-in-assertion candidates (from the nanoTime/currentTimeMillis/elapsed sweep)
 
@@ -41,11 +41,11 @@ state/ordering pass condition and at most a catastrophic-only ceiling; keep, lab
 | kyo-test LeakCheckTest:160,182 | `assert(clock.get() </>= budget)` | FINE | `clock` is the framework virtual/accounted clock, not real |
 | kyo-core ClockTest:299 | `assert(elapsed == Duration.Zero)` | FINE | under withTimeControl, exact |
 | kyo-ffi GuardCoreHazardsTest:228 | `closeWithPolicy(5.seconds.toNanos) == Clean` | FINE | toNanos is an API input; assertion on outcome |
-| kyo-compat TimeTest:81 | `assert(!ran.get(), "... before delay elapsed")` | INSPECT | assertion on a boolean; confirm under time control |
+| kyo-compat TimeTest:81 | delay/timeout/race, 50ms vs 5s | FINE | real CIO sleeps, but every pass condition is a 100x-gap ORDERING/boolean (timedOut==None, !ran.get(), winner==shortId), never a magnitude threshold; a slow or starved runner keeps timers deadline-ordered, so 50ms-before-5s cannot flip. Real duration IS the point: proving the cats-effect binding produces genuine real-time suspensions. |
 | kyo-doctest OrchestratorTest:482 | doctest string `assert(nanoTime > 0)` | FINE | test data (a doctest body), trivially true |
 | kyo-ffi-it PosixTest time() | skew/window tolerance | FIXED | b5ef783dbb (bracketing) |
 | kyo-net ConnectDeadlineStrandTest | 2s connect deadline | FINE (reverted) | already state-based (timedOut==0); deadline is an API input |
-| kyo-net ConnectionPoolTest:116 | poll-eviction needs nanoTime advancing | DEVIATION | holds on JVM/Native/Node; production `>=` fix only with a repro |
+| kyo-net ConnectionPoolTest:116, :140, :168 | poll/reaper eviction needed a real nanoTime advance / a real-clock wait (up to 5s) | FIXED | Clock seam: ConnectionPool sources the ambient Local clock via `Clock.use` (no `Clock.live` default; user-directed), so all three run under `withTimeControl` with a virtual `advance` plus a discard-latch / awaitPendingSleepers fence. Production `init` is now `< Sync`; the two unsafe callers (HttpClientBackend, SqlConnectionPool) wrap it in evalOrThrow (live in prod). :140/:168 were audit misses. Prior :116 DEVIATION was a reward-hack (review B). Validated JVM: ConnectionPoolTest 14/0, ConcurrencyTest 4/0. |
 
 ## Bulk categories confirmed FINE (spot-checked, no per-line action)
 
