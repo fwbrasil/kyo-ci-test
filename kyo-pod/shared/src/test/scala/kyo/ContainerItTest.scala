@@ -1315,23 +1315,22 @@ class ContainerItTest extends BasePodTest:
         }
 
         "delivers entries incrementally as container produces output" - runBackends {
+            // line2 is gated on a file the test writes only after receiving line1, so a following stream must
+            // deliver line1 first; a buffered one can't (the container can't exit before the gate) and hangs.
             val config = Container.Config("alpine")
-                .command("sh", "-c", "for i in 1 2 3 4 5; do echo line$i; sleep 0.5; done")
+                .command("sh", "-c", "echo line1; while [ ! -f /tmp/go ]; do sleep 0.1; done; echo line2")
             Container.init(config).map { c =>
                 Scope.run {
                     for
-                        t0      <- Clock.now
-                        entries <- c.logStream.take(5).run
-                        tEnd    <- Clock.now
+                        channel  <- Channel.init[Container.LogEntry](16)
+                        consumer <- Fiber.initUnscoped(c.logStream.foreach(e => channel.put(e)))
+                        first    <- channel.take
+                        _        <- c.exec("touch", "/tmp/go")
+                        second   <- channel.take
+                        _        <- consumer.interrupt
                     yield
-                        val totalMs = tEnd.toJava.toEpochMilli - t0.toJava.toEpochMilli
-                        assert(entries.size >= 3, s"Expected at least 3 log entries, got ${entries.size}")
-                        // If entries arrive incrementally (following), total time should span > 1 second
-                        // If all collected at once (no --follow), they arrive instantly
-                        assert(
-                            totalMs > 1000,
-                            s"Entries arrived in ${totalMs}ms — expected > 1000ms for incremental streaming"
-                        )
+                        assert(first.content == "line1", s"expected line1 delivered first, got ${first.content}")
+                        assert(second.content == "line2", s"expected line2 after opening the gate, got ${second.content}")
                     end for
                 }
             }
@@ -2013,54 +2012,43 @@ class ContainerItTest extends BasePodTest:
     }
 
     "ContainerImage.buildFromPath" - {
-        "streams build progress incrementally during multi-step build" - runBackends {
+        "streams multi-step build progress with each step's output delivered in order" - runBackends {
             val dir     = Path("/tmp/" + uniqueName("kyo-build-inc"))
             val imgName = uniqueName("kyo-built-inc")
             for
                 _ <- dir.mkDir
-                // Two RUN steps with a sleep each — enough to verify first event arrives before the
-                // final event (streaming, not collect-then-emit). Adding a third step would just
-                // extend total time without strengthening the signal.
+                // Two RUN steps with distinct markers; the streamed output must carry both, step1 before step2.
                 _ <- (dir / "Dockerfile").write(
                     "FROM alpine:latest\n" +
-                        "RUN sleep 2 && echo step1\n" +
-                        "RUN sleep 2 && echo step2\n"
+                        "RUN echo step1\n" +
+                        "RUN echo step2\n"
                 )
-                // Consume the full stream, recording each progress event's arrival time relative to the
-                // build start. Consuming to completion avoids closing the streaming HTTP response early,
-                // which would leave the connection in a state kyo-http's pool can't reuse cleanly.
+                // Consume to completion; closing a streaming response early wedges kyo-http's pool.
                 result <- Scope.run {
                     for
-                        t0      <- Clock.now
-                        offsets <- AtomicRef.init(Chunk.empty[Long])
+                        texts <- AtomicRef.init(Chunk.empty[String])
                         _ <- ContainerImage.buildFromPath(
                             dir,
                             tags = Chunk(s"$imgName:latest"),
                             noCache = true
-                        ).foreach { _ =>
-                            Clock.now.map(t => offsets.updateAndGet(_.append(t.toJava.toEpochMilli - t0.toJava.toEpochMilli)).unit)
+                        ).foreach { progress =>
+                            texts.updateAndGet(_.append(progress.stream.getOrElse(""))).unit
                         }
-                        os <- offsets.get
-                    yield os
+                        ts <- texts.get
+                    yield ts
                 }
                 _ <- Abort.run[ContainerException](ContainerImage.remove(ContainerImage(imgName, "latest"), force = true))
                 _ <- (dir / "Dockerfile").remove
                 _ <- dir.removeAll
             yield
-                val offs = result
-                assert(offs.size >= 2, s"Expected multiple build progress events for a multi-step build, got: ${offs.toSeq}")
-                val firstMs = offs.head
-                val lastMs  = offs.last
-                // Streaming delivers progress events spread across the build's runtime, so the first event
-                // lands early while the last lands near completion; a buffered build collects everything and
-                // emits it in one burst after finishing, so the first and last events arrive together. The
-                // first event landing before the midpoint of the [start, last-event] delivery window is the
-                // streaming witness.
-                assert(
-                    firstMs * 2 < lastMs,
-                    s"Build progress events were not spread across the build (first=${firstMs}ms, last=${lastMs}ms); " +
-                        s"they appear buffered until completion rather than streamed. Offsets: ${offs.toSeq}"
-                )
+                val texts = result
+                assert(texts.size >= 2, s"Expected multiple build progress events for a multi-step build, got: ${texts.size}")
+                val joined   = texts.mkString("\n")
+                val step1Idx = joined.indexOf("step1")
+                val step2Idx = joined.indexOf("step2")
+                assert(step1Idx >= 0, s"Expected step1 output in the streamed build, got: $joined")
+                assert(step2Idx >= 0, s"Expected step2 output in the streamed build, got: $joined")
+                assert(step1Idx < step2Idx, s"Expected step1 output before step2 in the streamed build, got: $joined")
             end for
         }
 

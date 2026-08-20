@@ -627,9 +627,8 @@ class DocsMarkdownTest extends WebsiteTest:
     // ---- Scale guard: a large README transpiles + renders with structure intact (a hang trips the suite timeout) ----
 
     "large synthetic README transpiles and renders with structure intact at scale" in {
-        // Mixed prose + code fences (with lone-`/` operators) + a table + lists, sized ~128 KB.
-        // Pre-fix this either hangs in the tokenizer (lone `/`) or runs O(n^2) in the inline parser;
-        // post-fix it completes and the structure survives. A regression to the hang trips the suite timeout.
+        // ~128 KB of mixed prose, code fences with lone-`/` operators, tables, lists. Pre-fix this hangs in
+        // the tokenizer (lone `/`) or runs O(n^2) in the inline parser; the hang would trip the suite timeout.
         val sb = new StringBuilder()
         sb.append("# Large synthetic module\n\n")
         var i = 0

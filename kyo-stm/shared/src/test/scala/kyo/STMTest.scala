@@ -1307,14 +1307,17 @@ class STMTest extends kyo.test.Test[Any]:
         "STM.retryIf re-evaluates a side-effecting cond on every transaction attempt" in {
             for
                 ref      <- TRef.init(0)
+                latch    <- Latch.init(1)
                 attempts <- AtomicInt.init
                 _ <- Fiber.initUnscoped {
-                    Async.sleep(20.millis).andThen(STM.run(ref.set(1)))
+                    // Writer waits for the reader's first read (of 0) before setting 1, forcing a retry.
+                    latch.await.andThen(STM.run(ref.set(1)))
                 }
                 result <- STM.run(STM.defaultRetrySchedule.forever) {
                     for
-                        _ <- attempts.incrementAndGet
+                        n <- attempts.incrementAndGet
                         v <- ref.get
+                        _ <- if n == 1 then latch.release else Kyo.unit
                         _ <- STM.retryIf(v == 0)
                     yield v
                 }

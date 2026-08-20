@@ -94,18 +94,13 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                     handles <- MachineHandles.init
                     clock   <- Clock.get
                     fiber   <- Fiber.initUnscoped(Clock.let(clock)(Scope.run(MachineSampler.runWith(handles, _ => machine))))
-                    // A zero-duration advance with a real wall-clock pause lets the freshly-spawned fiber
-                    // actually reach both Clock.repeatAtInterval registrations before virtual time moves, so
-                    // neither schedule's anchor point races the fiber's own async startup.
-                    _           <- tc.advance(Duration.Zero, 100.millis)
+                    // Wait for both schedules (fast + disk) to arm before advancing.
+                    _           <- tc.awaitPendingSleepers(2)
                     _           <- tc.advance(1.seconds)
                     interrupted <- fiber.interrupt
-                    // fiber.get suspends until the fiber's promise genuinely resolves (including every
-                    // registered Scope finalizer, which Scope.run awaits before its own computation
-                    // completes), a stronger synchronization point than a bare done-flag poll.
+                    // fiber.get resolves only after every Scope finalizer runs, so close() is recorded by now.
                     _    <- Abort.run(fiber.get)
                     done <- fiber.done
-                    _    <- tc.advance(Duration.Zero, 500.millis)
                     snapshot = markers.get()
                 yield
                     assert(interrupted)
@@ -122,6 +117,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
             val innerSampler = AtomicRef.Unsafe.init(Maybe.empty[MachineSampler])
             val released     = AtomicBoolean.Unsafe.init(false)
             val parkedThread = AtomicRef.Unsafe.init(Maybe.empty[Thread])
+            val parkedLatch  = Latch.Unsafe.init(1) // readDisks releases it as it parks; the test awaits it, no settle
             Clock.withTimeControl { tc =>
                 for
                     handles <- MachineHandles.init
@@ -141,6 +137,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                             // therefore this leaf, is JVM/Native-only (JS has no thread to off-load to): `.notJs`.
                             discard(readCount.getAndSet(readCount.get() + 1L))
                             parkedThread.set(Present(Thread.currentThread()))
+                            parkedLatch.release()
                             @scala.annotation.tailrec
                             def parkUntilReleased(): Unit =
                                 if released.get() then ()
@@ -155,15 +152,11 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                         innerSampler.set(Present(s))
                         machine
                     fiber <- Fiber.initUnscoped(Clock.let(clock)(Scope.run(MachineSampler.runWith(handles, buildMachine))))
-                    _     <- tc.advance(Duration.Zero, 100.millis) // let the fiber reach both schedule registrations first
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    // Let the disk read reach the dedicated disk thread and park before the guards are read; the
-                    // fast fiber advances on scheduler workers throughout, unaffected by the parked disk thread.
-                    _ <- tc.advance(Duration.Zero, 500.millis)
+                    // Wait for both schedules to arm, then for the disk read to reach its thread and park.
+                    _ <- tc.awaitPendingSleepers(2)
+                    _ <- parkedLatch.safe.await
+                    // Five fast ticks; the disk stays in-flight and every disk cycle skips.
+                    _ <- Loop.repeat(5)(tc.advance(1.seconds).andThen(tc.awaitPendingSleepers(2)))
                     inFlightAfterFive = innerSampler.get() match
                         case Present(s) => s.diskReadInFlight()
                         case Absent     => false
@@ -200,13 +193,10 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                         def readDisks()(using AllowUnsafe): Unit = ()
                         def close()(using AllowUnsafe): Unit     = ()
                     fiber <- Fiber.initUnscoped(Clock.let(clock)(Scope.run(MachineSampler.runWith(handles, _ => machine))))
-                    _     <- tc.advance(Duration.Zero, 100.millis) // let the fiber reach the fast-fiber schedule registration first
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    _     <- tc.advance(1.seconds)
-                    _     <- fiber.interrupt
+                    // One interval per tick, fencing on the fibers re-arming so the anchored fire instants stay exact.
+                    _ <- tc.awaitPendingSleepers(2)
+                    _ <- Loop.repeat(5)(tc.advance(1.seconds).andThen(tc.awaitPendingSleepers(2)))
+                    _ <- fiber.interrupt
                     snapshot = recorded.get()
                 yield assert(snapshot == Chunk(1.seconds, 2.seconds, 3.seconds, 4.seconds, 5.seconds))
                 end for

@@ -413,7 +413,6 @@ class ClockTest extends kyo.test.Test[Any]:
                 task     <- Clock.repeatAtInterval(1.millis)(Clock.now.map(channel.put))
                 instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
-                _        <- Async.sleep(2.millis)
                 _        <- assertEventually(channel.poll.map(_.isEmpty))
             yield ()
         }

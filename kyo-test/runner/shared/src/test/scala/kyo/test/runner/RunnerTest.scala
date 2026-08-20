@@ -457,8 +457,7 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
             val beats = rec.recorded
             assert(beats.nonEmpty, "expected at least one heartbeat for a leaf that ran far longer than the interval")
             assert(beats.forall(_._1 == Chunk("slow-leaf")), s"every heartbeat must name the running leaf, got $beats")
-            // The reported elapsed grows as the leaf keeps running: assert monotonicity, a structural property of the
-            // running-elapsed payload, rather than a real-time threshold that a coarse-clock runner could flip.
+            // Assert the elapsed is monotonic (structural), not a real-time threshold a coarse clock could flip.
             val elapsed = beats.map(_._2)
             assert(
                 elapsed.zip(elapsed.drop(1)).forall((a, b) => b >= a),
