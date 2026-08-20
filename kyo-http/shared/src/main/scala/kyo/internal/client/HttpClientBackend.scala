@@ -1353,7 +1353,9 @@ private[kyo] object HttpClientBackend:
         transportConfig: HttpTransportConfig = HttpTransportConfig.default
     )(using AllowUnsafe, Frame): HttpClientBackend =
         val registry = new kyo.internal.ConnectionRegistry[HttpConnection]
-        val pool = ConnectionPool.init[HttpAddress, HttpConnection](
+        // evalOrThrow resolves the pool's ambient clock at this unsafe boundary (Clock.live in production); a test
+        // that needs virtual-time eviction constructs its own pool under Clock.withTimeControl instead.
+        val pool = Sync.Unsafe.evalOrThrow(ConnectionPool.init[HttpAddress, HttpConnection](
             maxConnsPerHost,
             idleConnectionTimeout,
             conn => conn.transport.isOpen,
@@ -1361,7 +1363,7 @@ private[kyo] object HttpClientBackend:
                 registry.remove(conn)
                 conn.http1.close()
                 conn.transport.close()
-        )
+        ))
         new HttpClientBackend(
             transport,
             transportConfig,

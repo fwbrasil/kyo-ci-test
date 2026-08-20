@@ -14,7 +14,8 @@ class ConnectionPoolTest extends Test:
     val key2 = NetAddress.Tcp("host2", 80)
 
     def mkPool(max: Int = 2): ConnectionPool[NetAddress, String] =
-        ConnectionPool.init[NetAddress, String](max, kyo.Duration.Infinity, _ => true, _ => ())
+        // Infinity timeout: no reaper, and idle-age is never compared, so the ambient clock is immaterial here.
+        Sync.Unsafe.evalOrThrow(ConnectionPool.init[NetAddress, String](max, kyo.Duration.Infinity, _ => true, _ => ()))
 
     "poll" - {
         "returns empty when no idle connections" in {
@@ -34,12 +35,12 @@ class ConnectionPoolTest extends Test:
     "release" - {
         "discards when full" in {
             val discardCount = new AtomicInteger(0)
-            val pool = ConnectionPool.init[NetAddress, String](
+            val pool = Sync.Unsafe.evalOrThrow(ConnectionPool.init[NetAddress, String](
                 2,
                 kyo.Duration.Infinity,
                 _ => true,
                 _ => discard(discardCount.incrementAndGet())
-            )
+            ))
             pool.release(key1, "a")
             pool.release(key1, "b")
             pool.release(key1, "c")
@@ -100,12 +101,12 @@ class ConnectionPoolTest extends Test:
 
     "isAlive check during poll" in {
         val discardCount = new AtomicInteger(0)
-        val pool = ConnectionPool.init[NetAddress, String](
+        val pool = Sync.Unsafe.evalOrThrow(ConnectionPool.init[NetAddress, String](
             2,
             kyo.Duration.Infinity,
             conn => conn != "dead",
             _ => discard(discardCount.incrementAndGet())
-        )
+        ))
         pool.release(key1, "dead")
         pool.release(key1, "alive")
         val result = pool.poll(key1)
@@ -114,81 +115,92 @@ class ConnectionPoolTest extends Test:
     }
 
     "idle-timeout eviction during poll" in {
-        // Deterministic without sleep: a zero idle timeout means any positive elapsed time evicts.
-        // nanoTime is monotonic, so the elapsed between release (timestamp) and poll (re-read) is
-        // strictly positive, reliably exceeding the zero timeout. The expired conn is discarded and
-        // poll continues to the next slot.
-        val discardCount = new AtomicInteger(0)
-        val pool = ConnectionPool.init[NetAddress, String](
-            2,
-            kyo.Duration.Zero,
-            _ => true,
-            _ => discard(discardCount.incrementAndGet())
-        )
-        pool.release(key1, "stale1")
-        pool.release(key1, "stale2")
-        // Both released conns are immediately past the zero idle timeout: poll evicts+discards each
-        // and finds no live conn left, returning empty. (The synchronous poll runs long before the
-        // reaper's first sweep, so poll does the eviction here, as this case intends.)
-        val result = pool.poll(key1)
-        // A zero timeout is finite, so init spawns a reaper; interrupt it so it does not outlive the test.
-        discard(pool.close())
-        assert(result == Maybe.empty)
-        assert(discardCount.get() == 2)
+        // A connection released then polled after the idle timeout has elapsed in VIRTUAL time is evicted and
+        // discarded by poll. The pool reads idle-age from the ambient clock, which withTimeControl rebinds, so
+        // advancing past a positive timeout drives eviction at an exact boundary with no real sleep. (The finite
+        // timeout also spawns a reaper on the same clock; whether poll or a reaper sweep evicts first, each conn is
+        // discarded exactly once, so the counts hold regardless of the interleaving.)
+        Clock.withTimeControl { tc =>
+            val discardCount = new AtomicInteger(0)
+            for
+                pool <- ConnectionPool.init[NetAddress, String](
+                    2,
+                    100.millis,
+                    _ => true,
+                    _ => discard(discardCount.incrementAndGet())
+                )
+                _ = pool.release(key1, "stale1") // idle-start stamped at virtual time 0
+                _ = pool.release(key1, "stale2")
+                _ <- tc.advance(150.millis) // past the 100ms timeout
+                result = pool.poll(key1) // both conns expired: poll evicts+discards each, finds none live
+                _ <- Sync.defer(discard(pool.close())) // interrupt the reaper so it does not outlive the test
+            yield
+                assert(result == Maybe.empty)
+                assert(discardCount.get() == 2)
+            end for
+        }
     }
 
     "reaper expires an idle connection with no further poll" in {
         // The lazy-on-poll defect: without a background reaper a connection released and never polled again is
         // never inspected, so its socket is never closed (the process-lifetime default client leaks it). A finite
-        // idle timeout now spawns a reaper that closes an idle connection within ~idleTimeout + reapInterval with
-        // no poll. Driven by the live Clock and a bounded Async wait (no Thread.sleep). The Duration.Infinity pools
-        // every other case here uses spawn no reaper, so they are unaffected.
-        val discardCount = AtomicInt.Unsafe.init(0)
-        val pool = ConnectionPool.init[NetAddress, String](
-            2,
-            100.millis,
-            _ => true,
-            _ => discard(discardCount.incrementAndGet())
-        )
-        pool.release(key1, "c")
-        def waitForReap(remaining: Int): Boolean < Async =
-            if discardCount.get() == 1 then true
-            else if remaining <= 0 then false
-            else Async.sleep(20.millis).andThen(waitForReap(remaining - 1))
-        for
-            reaped <- waitForReap(250)                  // up to ~5s
-            _      <- Sync.defer(discard(pool.close())) // interrupt the reaper so it does not outlive the test
-        yield assert(
-            reaped && discardCount.get() == 1,
-            s"reaper must close the idle connection exactly once with no poll; discardCount=${discardCount.get()}"
-        )
-        end for
+        // idle timeout spawns a reaper that closes an idle connection with no poll. Driven by VIRTUAL time: the
+        // reaper runs on the ambient clock, which withTimeControl rebinds, so advancing past the timeout wakes it
+        // deterministically; a latch released by the discard callback fences on the eviction, no sleep.
+        Clock.withTimeControl { tc =>
+            val discardCount = AtomicInt.Unsafe.init(0)
+            val reaped       = Latch.Unsafe.init(1)
+            for
+                pool <- ConnectionPool.init[NetAddress, String](
+                    2,
+                    100.millis,
+                    _ => true,
+                    _ =>
+                        discard(discardCount.incrementAndGet())
+                        reaped.release()
+                )
+                _ = pool.release(key1, "c") // idle-start stamped at virtual time 0
+                _ <- tc.awaitPendingSleepers(1)        // the reaper has armed its first sleep
+                _ <- tc.advance(150.millis)            // past the 100ms timeout: the reaper wakes and evicts
+                _ <- reaped.safe.await                 // fence on the discard
+                _ <- Sync.defer(discard(pool.close())) // interrupt the reaper so it does not outlive the test
+            yield assert(
+                discardCount.get() == 1,
+                s"reaper must close the idle connection exactly once with no poll; discardCount=${discardCount.get()}"
+            )
+            end for
+        }
     }
 
     "reaper expires idle connections across multiple host pools" in {
-        // The sweep iterates every host pool, so a connection idle past the timeout is closed regardless of which host it
-        // belongs to. Release one to each of two hosts, never poll, and assert both are closed by the reaper.
-        val discardCount = AtomicInt.Unsafe.init(0)
-        val pool = ConnectionPool.init[NetAddress, String](
-            2,
-            100.millis,
-            _ => true,
-            _ => discard(discardCount.incrementAndGet())
-        )
-        pool.release(key1, "a")
-        pool.release(key2, "b")
-        def waitForReap(remaining: Int): Boolean < Async =
-            if discardCount.get() == 2 then true
-            else if remaining <= 0 then false
-            else Async.sleep(20.millis).andThen(waitForReap(remaining - 1))
-        for
-            reaped <- waitForReap(250) // up to ~5s
-            _      <- Sync.defer(discard(pool.close()))
-        yield assert(
-            reaped && discardCount.get() == 2,
-            s"reaper must close both hosts' idle connections; discardCount=${discardCount.get()}"
-        )
-        end for
+        // The sweep iterates every host pool, so a connection idle past the timeout is closed regardless of which host
+        // it belongs to. Release one to each of two hosts, never poll, and assert both are closed by the reaper. Driven
+        // by VIRTUAL time (the reaper runs on the withTimeControl-rebound ambient clock); a latch counting both
+        // discards fences on the eviction, no sleep.
+        Clock.withTimeControl { tc =>
+            val discardCount = AtomicInt.Unsafe.init(0)
+            val reaped       = Latch.Unsafe.init(2)
+            for
+                pool <- ConnectionPool.init[NetAddress, String](
+                    2,
+                    100.millis,
+                    _ => true,
+                    _ =>
+                        discard(discardCount.incrementAndGet())
+                        reaped.release()
+                )
+                _ = pool.release(key1, "a") // idle-start stamped at virtual time 0
+                _ = pool.release(key2, "b")
+                _ <- tc.awaitPendingSleepers(1) // the reaper has armed its first sleep
+                _ <- tc.advance(150.millis)     // past the 100ms timeout: one sweep evicts both hosts
+                _ <- reaped.safe.await          // fence on both discards
+                _ <- Sync.defer(discard(pool.close()))
+            yield assert(
+                discardCount.get() == 2,
+                s"reaper must close both hosts' idle connections; discardCount=${discardCount.get()}"
+            )
+            end for
+        }
     }
 
     "release that observes close mid-publish disposes the connection, never orphans it (fd-leak race regression, CI #1837)" in {
@@ -199,7 +211,9 @@ class ConnectionPoolTest extends Test:
         // every platform. The connection must still be disposed exactly once.
         val discardCount = AtomicInt.Unsafe.init(0)
         val pool =
-            ConnectionPool.init[NetAddress, String](2, kyo.Duration.Infinity, _ => true, _ => discard(discardCount.incrementAndGet()))
+            Sync.Unsafe.evalOrThrow(
+                ConnectionPool.init[NetAddress, String](2, kyo.Duration.Infinity, _ => true, _ => discard(discardCount.incrementAndGet()))
+            )
         pool.raceProbe = () => discard(pool.close())
         pool.release(key1, "c")
         assert(
@@ -221,12 +235,12 @@ class ConnectionPoolTest extends Test:
             else
                 val discarded = AtomicRef.Unsafe.init(Chunk.empty[String])
                 val pool =
-                    ConnectionPool.init[NetAddress, String](
+                    Sync.Unsafe.evalOrThrow(ConnectionPool.init[NetAddress, String](
                         n,
                         kyo.Duration.Infinity,
                         _ => true,
                         c => discard(discarded.updateAndGet(_ :+ c))
-                    )
+                    ))
                 for
                     latch     <- Latch.init(1)
                     releasers <- Fiber.init(Async.foreach(0 until n, n)(j => latch.await.map(_ => Sync.defer(pool.release(key1, "c" + j)))))

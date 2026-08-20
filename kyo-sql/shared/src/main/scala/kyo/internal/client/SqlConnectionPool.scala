@@ -961,7 +961,8 @@ private[kyo] object SqlConnectionPool:
         frame: Frame
     )(using AllowUnsafe): SqlConnectionPool[C] =
         given capturedFrame: Frame = frame
-        val pool = ConnectionPool.init[SqlConnectionPool.Endpoint, C](
+        // evalOrThrow resolves the pool's ambient clock at this unsafe boundary (Clock.live in production).
+        val pool = Sync.Unsafe.evalOrThrow(ConnectionPool.init[SqlConnectionPool.Endpoint, C](
             maxConnectionsPerHost = config.maxConnections.max(2),
             idleConnectionTimeout = config.idleTimeout,
             // Unsafe: isAlive is called from pool.poll, a non-Kyo context that already carries AllowUnsafe.
@@ -986,7 +987,7 @@ private[kyo] object SqlConnectionPool:
                 catch
                     case ex: Throwable if NonFatal(ex) =>
                         Log.live.unsafe.error(s"kyo.sql: SqlConnectionPool.discard: error closing connection: ${ex.getMessage}")
-        )
+        ))
         new SqlConnectionPool[C](
             pool,
             new ConcurrentHashMap[SqlConfig.Address, Channel[Unit]](),
