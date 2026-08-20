@@ -14,7 +14,7 @@ state/ordering pass condition and at most a catastrophic-only ceiling; keep, lab
 | Site | Shape | Class | Status |
 |---|---|---|---|
 | kyo-data MpmcUnboundedUnsafeQueueTest:112,156,195,243,285 | `Thread.sleep(200)` soak window (5 tests) | FIXED | op-count + producersDone latch (the miss); validating |
-| kyo-data UnsafeQueueBaseTest:536 | `Thread.sleep(testDurationMs)` shared soak helper | FIXED | fixed per-thread iteration budget + unbounded join; validating |
+| kyo-data UnsafeQueueBaseTest:536 | `Thread.sleep(testDurationMs)` shared soak helper | DEVIATION | real-thread invariant soak; pass condition is post-join clean shutdown (state), not the window; not flaky. (A conversion attempt broke the framework's must-assert contract and was reverted.) |
 | kyo-scheduler BlockingMonitorTest:595,662,715,753,801,842,882,955 | `Thread.sleep(10-60s)` | DEVIATION | the sleeping task IS the blocked thread the monitor detects; barrier-started, interrupted at teardown |
 | kyo-scheduler WorkerTest:32 | `Thread.sleep(50)` afterEach settle | DEVIATION | teardown hygiene, gates no assertion; leaked workers self-exit on the captured stop flag |
 | kyo-scheduler SchedulerTest:201 | `while blk0<4 && nanoTime<deadline do sleep(5)` | DEVIATION | state poll (blk0>=4) + 10s catastrophic ceiling, real carriers |

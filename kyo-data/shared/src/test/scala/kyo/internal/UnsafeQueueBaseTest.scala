@@ -524,7 +524,8 @@ abstract class UnsafeQueueBaseTest extends kyo.test.Test[Any]:
 
     // ---- Concurrency helpers (JVM + Native only, not linked on JS) ----
 
-    protected val iterationsPerThread = 100000
+    protected val testDurationMs = 200L
+    protected val testTimeout    = 10000L
 
     protected def concurrentTest(body: (AtomicBoolean, CountDownLatch) => Seq[Thread])(using kyo.test.AssertScope): Unit =
         val stop    = new AtomicBoolean(false)
@@ -532,19 +533,17 @@ abstract class UnsafeQueueBaseTest extends kyo.test.Test[Any]:
         val threads = body(stop, start)
         threads.foreach(_.start())
         start.countDown()
-        // Each worker runs a fixed iteration budget and self-terminates: a deterministic soak, no wall clock.
-        // A worker that fails to terminate hangs the join into the per-leaf timeout. `stop` stays a cooperative abort.
-        threads.foreach(_.join())
+        Thread.sleep(testDurationMs)
+        stop.set(true)
+        threads.foreach(_.join(testTimeout))
+        threads.foreach(t => assert(!t.isAlive, s"Thread ${t.getName} did not terminate"))
     end concurrentTest
 
     protected def thread(name: String, start: CountDownLatch, stop: AtomicBoolean)(body: => Unit): Thread =
         val t = new Thread(
             () =>
                 start.await()
-                var i = 0
-                while i < iterationsPerThread && !stop.get() do
-                    body
-                    i += 1
+                while !stop.get() do body
             ,
             name
         )
