@@ -71,6 +71,35 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
                 q.offer(null)
             }
         }
+
+        "peekAtEmptyChunkBoundaryReturnsAbsent".notJs in {
+            // JCTools invariant: peek() is Absent iff the queue is empty. Draining exactly k*chunkCapacity elements
+            // leaves consumerIndex at offset 0 of a successor chunk that was never allocated (no producer reserved
+            // that index), so peek's forward walk finds a null next link. JCTools returns null here via the strict
+            // empty-check its peek while-condition (and poll) apply on every retry; the port had dropped that check
+            // from this one branch, so peek spun forever. Deterministic and single-threaded; the watchdog thread
+            // only bounds a regression to seconds instead of the leaf timeout.
+            for
+                pooled <- Seq(0, 4) // the forward-walk branch is shared by non-pooled and pooled; both were affected
+                k      <- Seq(1, 2, 3)
+            do
+                val q = new MpmcUnboundedUnsafeQueue[Int](8, maxPooledChunks = pooled)
+                val n = k * 8
+                for i <- 0 until n do discard(q.offer(i))
+                for _ <- 0 until n do discard(q.poll())
+                var peeked: Maybe[Int] = Maybe.empty
+                val t                  = new Thread(() => peeked = q.peek())
+                t.setDaemon(true)
+                t.start()
+                t.join(10000)
+                assert(!t.isAlive, s"peek() did not return within 10s at an empty chunk boundary (pooled=$pooled, k=$k)")
+                assert(peeked.isEmpty, s"peek() must be Absent at an empty boundary (pooled=$pooled, k=$k), got $peeked")
+                // peek recovers: an element offered at the boundary is peekable and then pollable
+                discard(q.offer(999))
+                assert(q.peek() == Maybe(999), s"peek() must see the element offered at the boundary (pooled=$pooled, k=$k)")
+                assert(q.poll() == Maybe(999), s"poll() must return the element offered at the boundary (pooled=$pooled, k=$k)")
+            end for
+        }
     }
 
     "MpmcUnboundedUnsafeQueue-specific concurrent".notJs - {
