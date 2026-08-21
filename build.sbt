@@ -209,6 +209,14 @@ lazy val `kyo-settings` = Seq(
     // Exclude generated FFI binding impls (src_managed *BindingsImpl from the kyo-ffi codegen): measuring
     // them tracks the generator, not hand-written code.
     coverageExcludedFiles := ".*src_managed.*",
+    // Compact object headers (JEP 519) are buggy on JDK 25 under the forked test workload: heavy fiber
+    // concurrency + pervasive arraycopy (Chunk/Span) + G1GC hit JDK-8380060 and a G1 concurrent-mark
+    // metadata corruption, surfacing as a rare ClassNotFoundError for a class present on disk (the
+    // io_uring test flake). Force COH OFF in the forks explicitly so it stays off regardless of the
+    // driver's opts. The DRIVER JVM keeps COH ON (.jvmopts / CI JAVA_OPTS): it runs no forked-test
+    // workload, only compile and the Scala.js/Wasm linker, whose large graph needs COH's header
+    // savings to fit the 12 GB driver heap (without it the kyo-ui Wasm linker GC-thrashes to a hang).
+    Test / javaOptions += "-XX:-UseCompactObjectHeaders",
     // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM (4GB on the 16GB CI
     // runners), too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
     // classpaths under globalK-way leaf concurrency). Pin an explicit fork heap on CI; with the

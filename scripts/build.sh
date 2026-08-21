@@ -38,7 +38,7 @@ fi
 # runners are 4 vCPU / 16 GB on both linux-x64 and linux-arm64. One place.
 CI_MEMORY="${CI_MEMORY:-16g}"
 CI_CPUS="${CI_CPUS:-4}"
-CI_DRIVER_OPTS="-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
+CI_DRIVER_OPTS="-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
 CONTAINER_IMAGE="${KYO_BUILD_IMAGE:-ubuntu:noble}"
 
 ENV_KIND="direct"
