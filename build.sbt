@@ -209,10 +209,6 @@ lazy val `kyo-settings` = Seq(
     // Exclude generated FFI binding impls (src_managed *BindingsImpl from the kyo-ffi codegen): measuring
     // them tracks the generator, not hand-written code.
     coverageExcludedFiles := ".*src_managed.*",
-    // Compact object headers (JEP 519, a product flag in JDK 25 which the build requires) shrink the
-    // per-object header from 12-16 to 8 bytes. The test forks allocate heavily (kyo-tasty decodes 80k
-    // symbols), so this cuts heap pressure where the forks run closest to their cap.
-    Test / javaOptions += "-XX:+UseCompactObjectHeaders",
     // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM (4GB on the 16GB CI
     // runners), too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
     // classpaths under globalK-way leaf concurrency). Pin an explicit fork heap on CI; with the

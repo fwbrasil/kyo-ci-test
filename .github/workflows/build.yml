@@ -78,8 +78,8 @@ jobs:
       # .jvmopts after these env opts on the java command line, so an -Xmx set here would never
       # take effect. The env therefore carries only the non-heap flags, which do reach the JVM
       # because .jvmopts holds no conflicting duplicates for them.
-      JAVA_OPTS: "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
-      JVM_OPTS:  "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
+      JAVA_OPTS: "-Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
+      JVM_OPTS:  "-Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
       # Run kyo-schema-tests' native link+test in its own sbt driver (via testKyo --only) instead of the
       # aggregate: its whole-program optimize needs a full ~12G heap, while the aggregate driver is
       # heap-capped for container/browser fork headroom and would OOM linking it. ci-test.sh honors this
