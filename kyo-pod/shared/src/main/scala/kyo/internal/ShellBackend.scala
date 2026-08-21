@@ -730,7 +730,11 @@ final private[kyo] class ShellBackend(
                                     drain(proc.stdout, LogEntry.Source.Stdout),
                                     drain(proc.stderr, LogEntry.Source.Stderr)
                                 ).unit
-                            Fiber.init(Abort.run[Closed](drainBoth).andThen(channel.close.unit)).andThen {
+                            // Drain-preserving close: closeAwaitEmpty keeps the channel readable until the consumer has
+                            // emptied it, then closes. A hard close would escalate the queue to fully-closed and sweep the
+                            // still-buffered backlog into a discarded return value, dropping whatever the fan-in fiber put
+                            // but the consumer had not yet drained (the last entry produced, e.g. a final stderr line).
+                            Fiber.init(Abort.run[Closed](drainBoth).andThen(channel.closeAwaitEmpty.unit)).andThen {
                                 channel.streamUntilClosed().emit
                             }
                         }
