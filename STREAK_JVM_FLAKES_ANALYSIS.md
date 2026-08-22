@@ -42,13 +42,62 @@ dedup (its `.id` absent from `symbolIdMap`), its `addrToFinal` entry is silently
 a different id than the reference holds. This is the address-path analogue of the negId-collision
 merge-order bug the sibling test already guards.
 
-### Fix (in progress)
-Make the address->final-id resolution deterministic regardless of merge order. Candidate: when
-`symbolIdMap.getOrElse(partialSym.id, -1)` misses while building `addrToFinal`, fall back to
-resolving the partialSym by its fully-qualified name via `state.fullNameIndex -> symbolIdMap`
-(the same fullName path `globalizeUnresolvedNegIds`/`negRemap` already uses at `:1044-1050`), so a
-deduped-away instance still maps to the canonical final id. Exact site being confirmed against the
-merge/dedup construction; verified against the reproduction before commit.
+### Root cause NAILED (histogram evidence): doubled `scala.` prefix from a nested duplicate package
+Instrumenting a 0-load's annotation resolutions: all 98 stdlib `@tailrec` annotations resolve to
+**`scala.scala.annotation.tailrec`** (a DOUBLED `scala.` prefix), not `scala.annotation.tailrec`,
+so `symbolsAnnotatedWith("scala.annotation.tailrec")` matches 0. This also explains
+`tailrecIndexed=true`: `findClassLike` reads the precomputed `byFullName` index (finds the
+correctly-merged `tailrec`), while annotation matching walks the owner chain at query time
+(`typeFullNameString`->`computeFullName`) and hits a duplicate whose owner chain is
+`tailrec -> annotation -> scala -> scala -> root`.
+
+So there are TWO distinct `scala` package descriptors, one owning the other (nested). The
+duplicate-package collapse (`ClasspathOrchestrator.scala:923-931`) groups by
+`state.packagesByFullName` and picks `minBy(_.id)`; these two never merge because at registration
+they carry different fullNames (`"scala"` vs `"scala.scala"`). The nested duplicate's creation is
+decode-arrival-order-dependent (the collapse comment at `:910-922` already flags concurrency > 1
+as only best-effort deterministic). The address-remap / negId theory is NOT the cause.
+
+Reproduction: concurrent `ClasspathOrchestrator.init(standard, SoftFail, cpus)` loads; ~1 in 24
+resolves the 98 `@tailrec` to the doubled name (see AnnotationFidelityConcurrencyTest tailrec case).
+
+### Confirmed origin: two divergent computeFullName implementations
+scala-library pickles a package clause as NESTED PACKAGE nodes (an outer `PACKAGE(scala)` containing
+an inner `PACKAGE(scala.annotation)`); the inner node's path still decodes to the compound name
+`"scala.annotation"` (`AstUnpickler.extractPackageName`, `:1208-1237`) while its per-file owner is
+the outer `scala` package (`:311-315`). So a package's flat Name already carries the whole prefix
+AND it is owner-nested. Two `computeFullName` implementations then disagree:
+
+- Registration side (`ClasspathOrchestrator.scala:2644-2671`) STOPS at the first Package
+  (`if c.kind == SymbolKind.Package then done = true`, `:2664`), because the flat name is the whole
+  prefix. So `byFullName["scala.annotation.tailrec"]` is correct and `findClassLike` resolves
+  (`tailrecIndexed=true`).
+- Query side (`Tasty.scala:4250-4269`) had NO such guard: it walked the whole owner chain, so
+  `tailrec -> scala.annotation(compound) -> scala -> root` produced `"scala.scala.annotation.tailrec"`.
+  This is the path `symbolsAnnotatedWith -> annotationFullNameMatches -> typeFullNameString ->
+  computeFullName` takes, hence 0.
+
+Order dependence: `scala.annotation` is declared by several files that collapse to one canonical
+descriptor; different files give it a different owner (nested file -> `scala`; flat file -> root),
+and `descs(canonical).ownerId` is written last-write-wins over `for fr <- fileResults` in
+decode-arrival order (`:1011-1018`, `fileResults` filled at `mergeOneInto:765`). Nested-owner file
+last -> doubled -> 0; root-owner file last -> flat -> 98.
+
+### Fix (applied): stop the query-side walk at a COMPOUND-named package
+`Tasty.scala:4259-4260` computeFullName: stop the owner walk when `cur` is a Package whose flat
+Name is compound (`n.indexOf('.') >= 0`). A compound package name (`"scala.annotation"`) already
+carries its entire dotted prefix from root, so re-walking its owner can only double it; stopping
+yields `"scala.annotation.tailrec"` regardless of whether that descriptor's owner is `scala` or
+root, so the `:1011-1018` last write can no longer affect the computed name. Fixes the doubling for
+every symbol at its source; the `minBy(_.id)` canonical choice and merge order become irrelevant.
+
+NOTE: an initial version stopped at ANY Package. That regressed the Java path
+(`ClasspathAnnotatedJavaTest`, `AnnotationLikeBaseTest`): Java classes use SIMPLE-named nested
+packages (`java` > `lang`), which do NOT carry the prefix, so stopping at `lang` truncated
+`java.lang.Deprecated` to `lang.Deprecated` and `symbolsAnnotatedWith("java.lang.Deprecated")`
+returned 0. The compound-name discriminant is what distinguishes the two: compound = prefix already
+embedded (stop); simple = walk the owner chain. Verified: full kyo-tastyJVM suite green, Java tests
+pass, 0 doubled resolutions across many concurrent-load runs vs the prior ~4%.
 
 ### Per-scope jar pool (commit a1da7cd345): a hardening, not this fix
 `JvmJarPool.active` was a process-global `AtomicReference[JarMappedReaderPool]`
