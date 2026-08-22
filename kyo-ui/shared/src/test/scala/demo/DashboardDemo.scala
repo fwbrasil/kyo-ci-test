@@ -86,8 +86,8 @@ object DashboardDemo extends KyoApp:
             events   <- Signal.initRef(Chunk.empty[String])
             tick     <- AtomicInt.init(0)
             handlers <- UI.runHandlers("/")(dashboard(requests, users, cpu, latency, events))
-            server   <- HttpServer.init(port, "127.0.0.1")(handlers*)
-            _        <- Console.printLine(s"Dashboard running on http://127.0.0.1:${server.port}/")
+            server   <- HttpServer.init(port, "localhost")(handlers*)
+            _        <- Console.printLine(s"Dashboard running on http://localhost:${server.port}/")
             _        <- Fiber.init(updater(tick, requests, users, cpu, latency, events))
             _        <- server.await
         yield ()

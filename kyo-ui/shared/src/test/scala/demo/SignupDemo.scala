@@ -106,8 +106,8 @@ object SignupDemo extends KyoApp:
         val port = args.headOption.flatMap(_.toIntOption).getOrElse(0)
         for
             handlers <- UI.runHandlers("/")(formUI)
-            server   <- HttpServer.init(port, "127.0.0.1")(handlers*)
-            _        <- Console.printLine(s"Signup running on http://127.0.0.1:${server.port}/")
+            server   <- HttpServer.init(port, "localhost")(handlers*)
+            _        <- Console.printLine(s"Signup running on http://localhost:${server.port}/")
             _        <- server.await
         yield ()
         end for
