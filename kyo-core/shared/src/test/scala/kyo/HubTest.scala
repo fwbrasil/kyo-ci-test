@@ -3,8 +3,7 @@ package kyo
 class HubTest extends kyo.test.Test[Any]:
     val repeats = 100
 
-    // A blocked operation can never complete, so any window over which `Async.timeout` reports
-    // it did not finish proves the block. Kept short since the assertion is on the failure outcome.
+    // A blocked operation never completes, so an `Async.timeout` reporting it unfinished proves the block.
     val blockedWindow = 100.millis
 
     "initWith" - {
@@ -352,8 +351,7 @@ class HubTest extends kyo.test.Test[Any]:
                 _      <- latch.release
                 result <- slowConsumer.get
                 _      <- producerFiber.get
-            // result == (1 to 10) is the property: every item reached the deliberately-throttled
-            // consumer, in order, with no loss.
+            // result == (1 to 10) is the property: every item reached the throttled consumer, in order, with no loss.
             yield assert(result == (1 to 10))
         }
 

@@ -2,8 +2,8 @@ package kyo
 
 class MeterTest extends kyo.test.Test[Any]:
 
-    // A permanently blocked acquisition can never complete, so any window over which `Async.timeout`
-    // reports it did not finish proves the block. Kept short since the assertion is on the failure outcome.
+    // A permanently blocked acquisition never completes, so any window `Async.timeout` reports it did not finish in proves
+    // the block. Short since the assertion is on the failure outcome, not the elapsed time.
     val blockedWindow = 100.millis
 
     "mutex" - {
@@ -583,13 +583,8 @@ class MeterTest extends kyo.test.Test[Any]:
             yield assert(runs.size == 10 && extra.isEmpty)
         }
         "replenish doesn't overflow".notJs in {
-            // Consume every permit, then let the periodic replenish (driven under virtual time) run for
-            // several periods. `release()` is capped at `rate`, so no number of firings can push
-            // availablePermits past the cap: it refills to exactly `rate` and stays there. Advancing the
-            // controlled clock past the periods is a happens-before on the replenish firings, so the final
-            // count is exact rather than a wall-clock settle. Excluded on JS for the same reason as the
-            // sibling repeatAtInterval-under-time-control tests: driving a periodic loop under manual time
-            // needs multi-iteration interleaving the single-threaded runtime does not provide.
+            // Consume every permit, then advance virtual time past several replenish periods. `release()` is capped at `rate`, so no number
+            // of firings pushes availablePermits past it: it refills to exactly `rate`. Excluded on JS: manual-time periodic loops need interleaving the single thread lacks.
             Clock.withTimeControl { control =>
                 for
                     meter     <- Meter.initRateLimiter(5, 5.millis)

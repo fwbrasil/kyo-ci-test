@@ -76,8 +76,6 @@ class BrowserVerifyReadTest extends BrowserTest:
     // settle reads its bound from configLocal, not a hardcoded literal.
     // Two runs use the same never-converging counter. Override A uses a tight 200ms retrySchedule;
     // override B uses a wider 600ms retrySchedule. Both must abort a BrowserReadException.
-    // The wider bound must perform strictly more probes than the tighter one (probe count is set by the
-    // schedule, not by wall time), proving the bound comes from configLocal rather than a hardcoded constant.
     "settle reads its bound from configLocal and not a hardcoded constant" in {
         withBrowser {
             onPage("""<body>
@@ -87,11 +85,8 @@ class BrowserVerifyReadTest extends BrowserTest:
                     setInterval(() => { window.__kyoFlicker2 = Date.now(); }, 5);
                 </script>
             </body>""") {
-                // The flicker never stabilizes, so settle exhausts its retrySchedule and fails. The polled expression counts every
-                // probe in window.__reads. The number of probes a settle performs is set by the schedule (maxDuration / interval), a
-                // config-determined count, so the wider 600ms bound must probe strictly more than the narrower 200ms bound. That
-                // read-count comparison proves the bound came from configLocal, with no dependence on measured elapsed time (the two
-                // runs share a runner, so any load slows both proportionally and preserves the ordering).
+                // The flicker never stabilizes, so settle exhausts its retrySchedule; window.__reads counts the probes. Probe count is
+                // maxDuration/interval, so the wider 600ms bound probes strictly more than the 200ms bound, proving the bound came from configLocal, not elapsed time.
                 val runSettle =
                     Abort.run[BrowserReadException] {
                         SettleRead.settle(
@@ -450,8 +445,7 @@ class BrowserVerifyReadTest extends BrowserTest:
 
     // waitForStable returns after the DOM quiesces.
     // A setInterval mutates the DOM 10 times over ~200ms then stops.
-    // waitForStable is given an effectively-infinite timeout so a broken quiescence detection hangs
-    // into the leaf timeout; a correct implementation returns once the DOM quiesces.
+    // waitForStable gets an effectively-infinite timeout, so broken quiescence detection hangs into the leaf timeout.
     "waitForStable returns after the DOM quiesces" in {
         withBrowser {
             onPage("""<html><body>

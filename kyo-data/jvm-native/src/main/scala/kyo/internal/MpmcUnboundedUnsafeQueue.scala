@@ -264,11 +264,9 @@ final private[kyo] class MpmcUnboundedUnsafeQueue[A](chunkSize: Int, maxPooledCh
     end moveToNextConsumerChunk
 
     def peek()(using AllowUnsafe): Maybe[A] =
-        // peek mirrors poll's chunk resolution exactly, but reads WITHOUT consuming: where poll CASes consumerIndex
-        // and moves to the next chunk, peek returns the element only when it is present AND consumerIndex has not
-        // moved (JCTools' `e != null && cIndex == consumerIndex` guard), and returns Absent only on the same strict
-        // empty-check (cIdx == producerIndex). Like poll (and JCTools), it moves at most ONE chunk and retries when
-        // consumerChunk lags or is ahead; it never walks the concurrently recycled pooled chunk graph.
+        // peek mirrors poll's chunk resolution but WITHOUT consuming: it returns the element only when present AND consumerIndex
+        // has not moved (JCTools' `e != null && cIndex == consumerIndex` guard), and Absent only on the strict empty-check
+        // (cIdx == producerIndex). Like poll it moves at most ONE chunk and retries when consumerChunk lags/ahead; it never walks the recycled pooled chunk graph.
         @tailrec def loop(pIndex: Long): Maybe[A] =
             val cIdx          = consumerIndex.get()
             val ciChunkOffset = (cIdx & chunkMask).toInt

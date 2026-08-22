@@ -7,8 +7,8 @@ package kyo
   */
 class STMStressTest extends kyo.test.Test[Any]:
 
-    // Run leaves sequentially: each stress leaf saturates the scheduler with many concurrent fibers, so running
-    // several in parallel oversubscribes the CPU and can trip the per-leaf Async.timeout guards spuriously.
+    // Run leaves sequentially: each stress leaf saturates the scheduler, so running several in parallel oversubscribes
+    // the CPU and can trip the per-leaf Async.timeout guards spuriously.
     override def config = super.config.sequential
 
     "every transaction under heavy single-ref contention commits, none starves".notJs in {
@@ -212,10 +212,9 @@ class STMStressTest extends kyo.test.Test[Any]:
                     yield ()
                 }
             }
-            // The waiter re-runs the nested transaction through its schedule (STM retry is
-            // schedule-based re-execution, not park-and-notify). Wait until it has attempted
-            // the nested read at least once with r1 == 0, so publishing r1 forces a further
-            // retry that observes the write (nestedRetries >= 2).
+            // STM retry is schedule-based re-execution, not park-and-notify. Wait until the waiter has attempted the
+            // nested read at least once with r1 == 0, so publishing r1 forces a retry that observes the write
+            // (nestedRetries >= 2).
             _     <- assertEventually(nestedRetries.get.map(_ >= 2))
             _     <- STM.run(r1.set(42))
             _     <- Abort.run(Async.timeout(5.seconds)(waiter.get))
@@ -275,9 +274,8 @@ class STMStressTest extends kyo.test.Test[Any]:
                 }
             }
             _ <- Kyo.foreachDiscard(0 until 10)(i => gates(i).await)
-            // All 10 waiters are re-running through their schedules against ref == 0; wait
-            // until they have collectively attempted before publishing so the wake path is
-            // exercised rather than each waiter reading the final value on its first attempt.
+            // All 10 waiters re-run their schedules against ref == 0; wait until they have collectively attempted
+            // before publishing, so the wake path is exercised, not a first-attempt read of the final value.
             _     <- assertEventually(attempts.get.map(_ >= 10))
             _     <- Kyo.foreachDiscard(1 to 10)(i => STM.run(ref.set(i)))
             _     <- Kyo.foreachDiscard(waiters)(_.get)
@@ -635,8 +633,8 @@ class STMStressTest extends kyo.test.Test[Any]:
                     yield ()
                 }.andThen(woken.set(true))
             }
-            // Wait until the waiter has attempted (and retried) against ref == 0 before
-            // publishing, so it is genuinely woken rather than reading 1 on its first attempt.
+            // Wait until the waiter has retried against ref == 0 before publishing, so it is genuinely woken, not a
+            // first-attempt read of 1.
             _ <- assertEventually(attempts.get.map(_ >= 2))
             _ <- STM.run(ref.set(1))
             _ <- Abort.run(Async.timeout(5.seconds)(waiter.get))
@@ -872,9 +870,8 @@ class STMStressTest extends kyo.test.Test[Any]:
                     }.andThen(slowDone.incrementAndGet)
                 }
             }
-            // Wait until both slow transactions have entered their body (and their long in-body
-            // sleep) before launching the short transactions, so the no-livelock property is
-            // exercised with the slow transactions genuinely in flight.
+            // Wait until both slow transactions have entered their body (and long in-body sleep) before launching the
+            // short ones, so the no-livelock property is exercised with the slow transactions genuinely in flight.
             _  <- assertEventually(slowStarted.get.map(_ >= 2))
             _  <- Async.fill(50, 50)(STM.run(STM.defaultRetrySchedule.forever)(other.update(_ + 1)).andThen(shortDone.incrementAndGet))
             _  <- Abort.run(Async.timeout(15.seconds)(slows.get))
@@ -1759,9 +1756,8 @@ class STMStressTest extends kyo.test.Test[Any]:
                     yield v
                 }
             }))
-            // Wait until the reader has retried at least twice against the unsatisfiable value,
-            // then publish the satisfying value so it commits (sideEffects >= 2 proves it truly
-            // retried through the schedule rather than reading 5 on its first attempt).
+            // Wait until the reader has retried at least twice against the unsatisfiable value, then publish the
+            // satisfying value so it commits (sideEffects >= 2 proves it retried, not a first-attempt read of 5).
             _      <- assertEventually(sideEffects.get.map(_ >= 2))
             _      <- STM.run(ref.set(5))
             result <- reader.get

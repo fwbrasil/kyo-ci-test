@@ -597,20 +597,15 @@ final private[kyo] class HttpClientBackend private (
         AllowUnsafe,
         Frame
     ): Stream[Span[Byte], Async] =
-        // Every branch MUST complete bodyOutcome exactly one way (true = body drained, inbound clean, connection
-        // reusable; false = undrained/corrupt/close-framed, discard). A branch that leaves it pending would turn
-        // every response on that branch into a connection checked out forever (the reuse decision never resolves).
+        // Every branch MUST complete bodyOutcome once (true = drained/clean/reusable, false = undrained/corrupt/
+        // close-framed, discard); leaving it pending checks the connection out forever (the reuse decision never resolves).
         if parsed.isChunked then
             // For chunked streaming, pipe decoded chunks through a Channel.
             // Use closeAwaitEmpty (not close) to avoid dropping buffered items
             // that the consumer hasn't read yet.
             val decodedCh = Channel.Unsafe.init[Span[Byte]](4)
-            // Start the chunked decoder in a background fiber. It owns a fresh DecoderState (default arg): a
-            // streaming decode outlives the request scope, so it must NOT share the connection-scoped state that
-            // the next request would reset out from under it. Its terminal result is the connection's reuse
-            // decision: Done => the body drained and inbound is clean, reuse; any fault (Closed / malformed /
-            // too-large) => discard. Complete BEFORE closeAwaitEmpty so reuse does not wait on the consumer
-            // draining decodedCh.
+            // Fresh DecoderState (a streaming decode outlives the request scope, so it must not share connection-scoped state);
+            // its terminal result is the reuse decision (Done => reuse, fault => discard), completed before closeAwaitEmpty so reuse does not wait on the consumer.
             discard(kyo.scheduler.IOTask(
                 Abort.run[Closed | HttpMalformedBodyException | HttpPayloadTooLargeException](ChunkedBodyDecoder.readStreaming(
                     conn.http1.bodyChannel,
@@ -624,10 +619,8 @@ final private[kyo] class HttpClientBackend private (
                 kyo.kernel.internal.Trace.init,
                 kyo.kernel.internal.Context.empty
             ))
-            // Abandonment: if the consumer drops, aborts, or is interrupted before the body drains, close the
-            // per-request decoded channel so the background decode's next put fails Closed -> discard. Closing a
-            // per-request channel never touches the connection, so it is always safe; a full drain already closed
-            // it (closeAwaitEmpty), making this a no-op.
+            // If the consumer abandons (drop/abort/interrupt) before the body drains, close the per-request decoded channel
+            // so the decode's next put fails Closed -> discard. Never touches the connection (safe); a no-op after a full drain already closed it.
             Stream[Span[Byte], Async] {
                 Sync.ensure(Sync.Unsafe.defer(discard(decodedCh.close())))(decodedCh.safe.streamUntilClosed().emit)
             }
@@ -639,9 +632,8 @@ final private[kyo] class HttpClientBackend private (
                 if lastBodySpan.nonEmpty then Stream.init(Seq(lastBodySpan))
                 else Stream.empty[Span[Byte]]
             else
-                // Emit initial bytes, then read remaining from channel. readContentLengthStream completes the
-                // outcome true when it drains `remaining`; the finalizer completes false on drop/interrupt (a
-                // no-op once true already won).
+                // readContentLengthStream completes the outcome true once it drains `remaining`; the finalizer completes
+                // false on drop/interrupt (a no-op once true already won).
                 Stream[Span[Byte], Async] {
                     Sync.ensure(Sync.Unsafe.defer(bodyOutcome.foreach(_.completeDiscard(Result.succeed(false))))) {
                         val emitInitial: Unit < (Emit[Chunk[Span[Byte]]] & Async) =
@@ -1058,12 +1050,8 @@ final private[kyo] class HttpClientBackend private (
                         bodyOutcome match
                             case Absent        => pool.release(key, conn)
                             case Present(done) =>
-                                // Streaming route: the response body outlives `use`, which completes at headers time
-                                // with a lazy stream. Winning the CAS here TRANSFERS the reuse decision to the
-                                // body-completion promise, so the ensure finalizer (which fires on every completion,
-                                // success included) loses its CAS and cannot discard a connection whose body is still
-                                // draining. The callback is the unique, once-only decider: true => the body drained and
-                                // inbound is clean, reuse; false => undrained, corrupt, or close-framed, discard.
+                                // Streaming route: the body outlives `use` (lazy stream at headers time), so winning the CAS transfers
+                                // the reuse decision to the body-completion promise; the ensure finalizer cannot discard a still-draining connection. Callback decides once: true => reuse, false => discard.
                                 done.asInstanceOf[IOPromise[Nothing, Boolean]].onComplete { outcome =>
                                     if outcome == Result.succeed(true) then pool.release(key, conn)
                                     else pool.discard(conn)
@@ -1279,10 +1267,8 @@ final private[kyo] class HttpClientBackend private (
         if request.method == HttpMethod.HEAD then
             (sendBuffered(conn, route, request, maxResponseLength, multipartBoundary), Absent)
         else if RouteUtil.isStreamingResponse(route) then
-            // The body of a streaming response outlives the response fiber (it completes at headers time with a
-            // lazy stream), so the connection's reuse decision must wait for the body. It travels as a separate
-            // promise: true = drained and reusable, false = discard. Buffered routes complete their body before
-            // the response fiber, so they carry no obligation (Absent).
+            // A streaming response body outlives the response fiber (lazy stream at headers time), so its reuse decision travels
+            // as a separate promise (true = reusable, false = discard); buffered routes complete their body first, so no obligation (Absent).
             val bodyOutcome = Promise.Unsafe.init[Boolean, Any]()
             (sendStreaming(conn, route, request, maxResponseLength, multipartBoundary, Present(bodyOutcome)), Present(bodyOutcome))
         else

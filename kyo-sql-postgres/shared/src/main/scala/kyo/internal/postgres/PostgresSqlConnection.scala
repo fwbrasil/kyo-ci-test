@@ -462,9 +462,8 @@ private[kyo] object PostgresSqlConnection:
         Stream[PostgresClient.Notification, Async & Abort[SqlException] & Scope](
             if nulAt >= 0 then Abort.fail(SqlRequestNotificationChannelNulException(nulAt))
             else
-                // Own the dedicated connection across the openDedicated->Scope.ensure handover: a custody whose orphan
-                // finalizer closes a listener an interrupt drops before the exit finalizer registers (openDedicated
-                // claims into it via custodyLocal). take() hands ownership to Scope.ensure(adapter.close) on success.
+                // Own the dedicated connection across the openDedicated->Scope.ensure handover: a custody (openDedicated claims into it
+                // via custodyLocal) closes the listener if an interrupt drops it before the exit finalizer; take() hands ownership to Scope.ensure on success.
                 Sync.Unsafe.defer(new kyo.db.Connection.Custody).map { custody =>
                     Scope.ensure { _ =>
                         Sync.Unsafe.defer(custody.orphan()).map {

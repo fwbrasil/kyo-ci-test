@@ -28,11 +28,8 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
     // invocations through a side effect (a RateCell's histogram count, here) must account for every window.
     private val probeTrials = 5
 
-    // On a contended CI runner a JIT deopt or safepoint attributes a small, one-off, per-window cost to the
-    // measuring thread (observed ~64 bytes/window on windows-x64) that recurs in every window, so the
-    // best-of-trials minimum cannot filter it. It is per-window, not per-op, so it is admitted as a floor
-    // for these decode-path probes; a genuine per-op allocation is at least one 16-byte object every op
-    // (16 * measuredIters per window), three orders of magnitude above this floor, so it still fails.
+    // A JIT deopt or safepoint charges a small per-window cost to the measuring thread (~64 bytes/window on windows-x64) that recurs every
+    // window, which best-of-trials cannot filter. Per-window not per-op, so it is admitted as a floor; a real per-op allocation still fails.
     private val perWindowFloorBytes = 1024L
 
     private def histogramSummary(path: String*): Summary =

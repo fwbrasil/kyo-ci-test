@@ -43,8 +43,8 @@ class JsIoDriverTest extends kyo.net.Test:
     private def buffer(bytes: Array[Byte]): sjs.Dynamic =
         sjs.Dynamic.global.Buffer.from(sjs.typedarray.byteArray2Int8Array(bytes).buffer)
 
-    /** How many times a standing probe is read while its peer is open. The count is what the "stays false" leaf asserts over: each read resumes
-      * the probe once, so a latch on any of them is the regression, and no reading of a clock decides the outcome.
+    /** How many times a standing probe is read while its peer is open: each read resumes it once, so a latch on any is the regression.
+      * The "stays false" leaf asserts over this read count, not a clock.
       */
     private val liveWatchReads = 25
 
@@ -93,8 +93,8 @@ class JsIoDriverTest extends kyo.net.Test:
             }.map { stayedOpen =>
                 assert(stayedOpen, "isPeerClosed must stay false for a live peer that has not sent a FIN")
             }.andThen {
-                // The probe was live, not dead: half-closing the peer now makes it observe the FIN. Without this a probe that never resumed the
-                // socket at all would report false just as happily, and the reads above would prove nothing.
+                // Prove the probe was live, not dead: half-closing the peer now must make it observe the FIN. Without this a probe that never
+                // resumed the socket would report false just as happily, proving nothing.
                 discard(clientSock.end())
                 awaitCondition(5.seconds)(driver.isPeerClosed(handle)).map { observed =>
                     discard(clientSock.destroy())
@@ -127,9 +127,8 @@ class JsIoDriverTest extends kyo.net.Test:
             filled <- awaitCondition(5.seconds)(accepted.inbound.full().getOrElse(false))
             _ = assert(filled, "the first chunk never reached the accepted side's inbound channel, so the second could not overflow it")
             _ <- Abort.run[Closed](client.outbound.safe.put(Span.fromUnsafe(Array.fill[Byte](64)(2))))
-            // A pump that overflows the channel parks by registering a put on it, so a pending put IS the parked state. Awaiting that state is
-            // what guarantees the FIN below lands on a parked pump: a FIN arriving while a read is still armed is reclaimed through the ordinary
-            // EOF path, leaving the grace reclaim untested.
+            // A pump that overflows parks by registering a put, so a pending put IS the parked state. Awaiting it guarantees the FIN below lands
+            // on a parked pump: a FIN arriving while a read is still armed takes the ordinary EOF path, leaving the grace reclaim untested.
             parked <- awaitCondition(5.seconds)(accepted.inbound.pendingPuts().getOrElse(0) > 0)
             _ = assert(
                 parked,

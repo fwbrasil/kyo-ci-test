@@ -54,10 +54,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
     /** Waits until the keep-alive idle timer for the next idle period is armed.
       *
-      * `restartParserKeepAlive` arms the timer, then restarts the parser, whose take on inbound (no next request has
-      * arrived) is observable proof the timer exists. A test needs that before advancing virtual time against the
-      * deadline: the response it already collected was written while the handler fiber ran, so it says nothing about
-      * the arm.
+      * `restartParserKeepAlive` arms the timer then restarts the parser, so a parser take on inbound is proof the
+      * timer exists. Tests need this before advancing virtual time against the deadline: the already-collected
+      * response was written while the handler ran and says nothing about the arm.
       */
     private def awaitIdleTimerArmed(inbound: Channel.Unsafe[Span[Byte]])(using Frame): Boolean < Async =
         pollUntil(inbound.pendingTakes().contains(1))
@@ -199,8 +198,8 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             val request = "GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
             discard(inbound.offer(Span.fromUnsafe(request.getBytes(StandardCharsets.US_ASCII))))
-            // A pipelined follow-up, offered as its own span so the parser cannot have buffered it while parsing the
-            // first request. It is only consumed if the parser restarts, which Connection: close forbids.
+            // Pipelined follow-up as its own span, so the parser cannot have buffered it with the first request.
+            // Consumed only if the parser restarts, which Connection: close forbids.
             val followUp = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
             discard(inbound.offer(Span.fromUnsafe(followUp.getBytes(StandardCharsets.US_ASCII))))
 
@@ -208,9 +207,8 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
-                // With Connection: close the dispatch registers no keep-alive completion hook at all, so once the
-                // response is out nothing on this connection can run again: the follow-up span is still queued and
-                // unread, and nothing further was written.
+                // Connection: close registers no keep-alive hook, so once the response is out nothing runs again:
+                // the follow-up span stays queued and unread, nothing more is written.
                 assert(
                     inbound.size().contains(1),
                     s"the follow-up request must stay unread after Connection: close, queued=${inbound.size()}"
@@ -348,9 +346,8 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            // The body reader registers a take on inbound when it runs out of bytes, so a pending take is the signal
-            // that readBody has actually parked. Sending the body only then exercises the park-and-resume path the
-            // leaf is about, instead of hoping a fixed delay outlasted the handler dispatch.
+            // The body reader takes on inbound when out of bytes, so a pending take signals readBody has parked.
+            // Sending the body only then exercises the park-and-resume path, not hoping a fixed delay sufficed.
             pollUntil(inbound.pendingTakes().contains(1)).map { parked =>
                 assert(parked, "readBody must park on inbound while the body is outstanding")
                 discard(inbound.offer(Span.fromUnsafe(body.getBytes(StandardCharsets.US_ASCII))))
@@ -494,13 +491,12 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
             // Drop the connection exactly when the body reader is parked on the 70 bytes that never arrive: the
-            // pending take on inbound is what says the reader got that far, so the drop lands on the path the leaf
-            // is about rather than wherever a fixed delay happened to leave it.
+            // pending take proves the reader got that far, so the drop lands on the intended path, not a delay's guess.
             pollUntil(inbound.pendingTakes().contains(1)).map { parked =>
                 assert(parked, "readBody must park on inbound while the rest of the body is outstanding")
                 discard(inbound.close())
-                // readBody now aborts Closed, so nothing may be written for this request. The poll returns as soon as
-                // anything is written (a violation surfaces immediately) and otherwise ends with an empty outbound.
+                // readBody aborts Closed, so nothing may be written for this request. The poll returns as soon as
+                // anything is written (violation surfaces at once), otherwise ends with an empty outbound.
                 pollUntil(!outbound.empty().contains(true), maxPolls = 100).map { _ =>
                     // Drain whatever is in the outbound channel
                     val sb   = new StringBuilder
@@ -746,10 +742,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "Content-Length together with Transfer-Encoding is refused, not framed" in {
-            // A request carrying both Content-Length and Transfer-Encoding has two candidate framings, the CL.TE
-            // request-smuggling shape (RFC 9112 section 6.1). The parser refuses it instead of picking one, so the
-            // dispatch answers 400 with Connection: close and tears the connection down: the body is never dechunked,
-            // routed, or handed to the handler, and the 413 the over-limit Content-Length would trigger is never reached.
+            // Both Content-Length and Transfer-Encoding is the CL.TE request-smuggling shape (RFC 9112 section 6.1).
+            // The parser refuses it rather than pick a framing, so the dispatch answers 400 Connection: close and
+            // tears down: the body is never dechunked, routed, or handled, and the over-limit 413 is never reached.
             val route  = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val served = new AtomicBoolean(false)
             val handler = route.handler { req =>
@@ -1109,10 +1104,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 collectWsUpgradeResponse(outbound).map { response =>
                     assert(response.contains("HTTP/1.1 101 Switching Protocols"), s"Expected 101, got: $response")
                     discard(inbound.offer(Span.fromUnsafe(encodeClientTextFrame("hello"))))
-                    // The oversized frame ends the read pump, which closes the session's inbound and fails the
-                    // handler's take. The handler returning is therefore the point at which the frame's fate is
-                    // settled: it was either delivered before then or never will be. The timeout is a deadlock
-                    // ceiling, not a window the assertion depends on.
+                    // The oversized frame ends the read pump, closing the session's inbound and failing the handler's
+                    // take. The handler returning is when the frame's fate is settled: delivered by then or never.
+                    // The timeout is a deadlock ceiling, not a window the assertion depends on.
                     Async.timeout(30.seconds)(handlerDone.await).andThen {
                         assert(!received.get(), "Oversized frame should close before reaching the handler")
                         discard(inbound.close())
@@ -1160,14 +1154,13 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
                 collectWsUpgradeResponse(outbound).map { response =>
                     assert(response.contains("101"), s"Expected 101, got: $response")
-                    // After upgrade, sending a second HTTP request should NOT produce an HTTP response.
-                    // The connection is now HttpWebSocket -- the parser should NOT restart. Those bytes reach the WS
-                    // codec instead, which rejects them as an unmasked client frame and ends the session, so the
-                    // handler returning is the point at which the connection is done producing anything at all.
+                    // After upgrade a second HTTP request must produce no HTTP response: the connection is now
+                    // HttpWebSocket and the parser must not restart. Those bytes reach the WS codec, which rejects
+                    // them as an unmasked client frame and ends the session, so the handler returning means done.
                     val secondRequest = "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
                     discard(inbound.offer(Span.fromUnsafe(secondRequest.getBytes(StandardCharsets.US_ASCII))))
                     Async.timeout(30.seconds)(handlerDone.await).andThen {
-                        // Poll outbound: there should be no HTTP response (only WS frames, if any)
+                        // Poll outbound: no HTTP response (WS frames only, if any)
                         var foundHttpResponse = false
                         var done              = false
                         while !done do
@@ -1291,10 +1284,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 assert(response.contains("101"), s"Expected 101, got: $response")
                 // Send a close frame
                 discard(inbound.offer(Span.fromUnsafe(encodeClientCloseFrame(1000, "bye"))))
-                // The server reads the Close frame, which registers the peer's close reason and fails the read loop
-                // with Closed. The handler's ws.take() fails too, and the session cleanup mirrors the peer's code and
-                // reason back as its own Close frame (RFC 6455 section 5.5.1). Reading that frame is the settled
-                // outcome; the timeout is a deadlock ceiling for a server that never answers.
+                // The server reads the Close frame, registering the peer's reason and failing the read loop (and
+                // ws.take()) with Closed. Cleanup mirrors the peer's code and reason back as its own Close frame
+                // (RFC 6455 section 5.5.1). Reading that frame is the settled outcome; the timeout is a deadlock ceiling.
                 Async.timeout(30.seconds)(readWsFrame(outbound)).map { frameBytes =>
                     val opcode     = frameBytes(0) & 0x0f
                     val payloadLen = frameBytes(1) & 0x7f
@@ -1376,18 +1368,18 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             collectWsUpgradeResponse(outbound).map { response =>
                 assert(response.contains("101"), s"Expected 101, got: $response")
                 // Handler returned immediately. serveWebSocket installs a 1000 close reason, drains the write pump so
-                // the close frame reaches the wire, and only then lets Sync.ensure interrupt the read pump. The close
-                // frame is that sequence's last observable step, so reading it is what says the teardown ran.
+                // the close frame reaches the wire, then lets Sync.ensure interrupt the read pump. Reading that frame,
+                // the sequence's last observable step, is what says teardown ran.
                 Async.timeout(30.seconds)(readWsFrame(outbound)).map { closeFrame =>
                     assert((closeFrame(0) & 0x0f) == 0x08, s"Expected the session close frame, got opcode: ${closeFrame(0) & 0x0f}")
                     discard(inbound.offer(Span.fromUnsafe(encodeClientTextFrame("after-cleanup"))))
                     // A surviving write pump would echo this frame back. The poll returns the moment one appears, so a
-                    // pump that outlived the handler is caught as soon as it acts rather than after a fixed wait.
+                    // pump that outlived the handler is caught as soon as it acts, not after a fixed wait.
                     def echoed =
                         outbound.poll() match
                             case Result.Success(Present(span)) =>
                                 val data = span.toArray
-                                // Text opcode = 1, if we see it, the echo pump is still running
+                                // Text opcode = 1: seeing it means the echo pump still runs
                                 data.length >= 2 && (data(0) & 0x0f) == 1
                             case _ => false
                     pollUntil(echoed, maxPolls = 100).map { gotEcho =>
@@ -1531,7 +1523,6 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             Clock.withTimeControl { tc =>
                 Clock.use { clock =>
-                    // Send one keep-alive request
                     val request = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
                     sendRequest(inbound, request)
 
@@ -1572,13 +1563,13 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             sendRequest(inbound, request1)
             sendRequest(inbound, request2)
 
-            // Virtual time never advances here, so a stalled runner cannot let the idle timer fire between the two
-            // pipelined requests: what the leaf asserts is that pipelining leaves no idle gap at all.
+            // Virtual time never advances, so a stalled runner cannot fire the idle timer between the two pipelined
+            // requests: the leaf asserts pipelining leaves no idle gap.
             Clock.withTimeControl { _ =>
                 Clock.use { clock =>
                     UnsafeServerDispatch.serve(router, inbound, outbound, config, clock = clock)
 
-                    // Both requests should succeed (pipelining, no idle gap)
+                    // Both succeed: pipelining, no idle gap
                     collectResponse(outbound).map { response1 =>
                         assert(response1.contains("HTTP/1.1 200 OK"), s"First response expected 200, got: $response1")
                         collectResponse(outbound).map { response2 =>
@@ -1606,9 +1597,8 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
                     UnsafeServerDispatch.serve(router, inbound, outbound, config, clock = clock)
 
-                    // Each round idles for three quarters of the timeout and then sends another request. A timer armed
-                    // once at connection start would expire during the second round; only a timer rearmed per request
-                    // keeps the connection alive across all of them.
+                    // Each round idles three quarters of the timeout then sends another request. A timer armed once at
+                    // connection start would expire in the second round; only a per-request rearm keeps it alive.
                     def round(previous: String): String < (Async & Abort[Closed]) =
                         assert(previous.contains("HTTP/1.1 200 OK"), s"Expected 200, got: $previous")
                         awaitIdleTimerArmed(inbound).map { armed =>
@@ -1658,8 +1648,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
                         awaitIdleTimerArmed(inbound).map { armed =>
                             assert(armed, "the keep-alive restart must arm the idle timer")
-                            // One millisecond short of the configured period: the deadline is the configured one, so the
-                            // connection must still be open.
+                            // One millisecond short of the configured period, so the connection must still be open.
                             tc.advance(idleTimeout - 1.milli).andThen {
                                 assert(!inbound.closed(), s"connection closed before the configured $idleTimeout elapsed")
                                 // The remaining millisecond reaches the deadline.
@@ -1694,8 +1683,8 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     collectResponse(outbound).map { response =>
                         assert(response.contains("HTTP/1.1 200 OK"))
 
-                        // The parser take proves the keep-alive restart ran; with the timeout disabled it armed nothing,
-                        // so no amount of elapsed time can close the connection.
+                        // The parser take proves the keep-alive restart ran; with the timeout disabled it armed
+                        // nothing, so no elapsed time can close the connection.
                         awaitIdleTimerArmed(inbound).map { restarted =>
                             assert(restarted, "the keep-alive restart must leave the parser waiting for the next request")
                             tc.advance(1.hour).andThen {
@@ -1724,7 +1713,6 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             Clock.withTimeControl { tc =>
                 Clock.use { clock =>
-                    // First request succeeds
                     val request = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
                     sendRequest(inbound, request)
 
@@ -1762,7 +1750,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val inbound1  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound1 = Channel.Unsafe.init[Span[Byte]](16)
 
-            // Connection 2: also goes idle, on its own independently armed timer
+            // Connection 2: also idle, on its own independently armed timer
             val inbound2  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound2 = Channel.Unsafe.init[Span[Byte]](16)
 
@@ -1778,7 +1766,6 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     UnsafeServerDispatch.serve(router, inbound1, outbound1, config, clock = clock)
                     UnsafeServerDispatch.serve(router, inbound2, outbound2, config, clock = clock)
 
-                    // Collect responses from both
                     collectResponse(outbound1).map { r1 =>
                         assert(r1.contains("HTTP/1.1 200 OK"))
                         collectResponse(outbound2).map { r2 =>

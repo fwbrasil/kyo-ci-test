@@ -67,10 +67,8 @@ class BrowserLauncherTest extends BaseBrowserTest:
                 }
             }
         yield
-            // A nonexistent executable fails at spawn, deterministically and immediately (it is not
-            // a launch-timeout path), so the typed BrowserSetupFailedException IS the property:
-            // it fails for the right reason. A genuine hang is caught by the per-leaf timeout, so no
-            // wall-clock envelope is needed.
+            // A nonexistent executable fails at spawn immediately (not a launch-timeout path), so the typed
+            // BrowserSetupFailedException IS the property. A genuine hang is caught by the per-leaf timeout; no wall-clock envelope.
             result match
                 case Result.Success(_)                              => fail("Expected failure for invalid executable")
                 case Result.Failure(_: BrowserSetupFailedException) => succeed

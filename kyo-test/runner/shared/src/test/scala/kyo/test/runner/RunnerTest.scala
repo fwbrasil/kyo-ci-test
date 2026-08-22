@@ -152,11 +152,9 @@ end RTJoinedFailSuite
 /** A detached fiber asserts AFTER the body returns: the leaf stays Passed and the assert records into the now-CLOSED
   * scope, which emits the "a fiber outlived its test" stderr warning instead of failing the leaf.
   *
-  * The body returns immediately; the detached fiber parks on a release latch. The test completes that latch only after
-  * the runner has joined the body, scored the leaf, and closed the scope, so when the fiber then asserts false `record`
-  * takes the closed branch (the stderr warning plus the process-global collector) rather than the sink. The latch makes
-  * the after-body ordering exact: the assert lands strictly after the scope is closed. The closed->log branch itself is
-  * unit-covered in the api `AssertScopeTest`.
+  * The detached fiber parks on a release latch the test completes only after the runner has scored the leaf and closed
+  * the scope, so the fiber's false assert takes the closed branch (stderr warning plus process-global collector), not
+  * the sink. The latch makes the ordering exact. The closed->log branch itself is unit-covered in api `AssertScopeTest`.
   */
 class RTDetachedAfterSuite extends TestBase[Any]:
     "detached-fails-after" in Sync.defer {
@@ -167,8 +165,8 @@ class RTDetachedAfterSuite extends TestBase[Any]:
 end RTDetachedAfterSuite
 
 object RTDetachedAfterSuite:
-    // Set by the test before the suite runs. The detached fiber parks on it and asserts only once the test releases it,
-    // which the test does after the runner has scored the leaf and closed the scope.
+    // Set by the test before the suite runs; the detached fiber parks on it and asserts only once the test releases it,
+    // after the runner has scored the leaf and closed the scope.
     @volatile var release: kyo.Promise[Unit, Any] = null.asInstanceOf[kyo.Promise[Unit, Any]]
 end RTDetachedAfterSuite
 
@@ -358,12 +356,9 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     "AssertScope: a detached fiber that fails AFTER the body leaves the leaf Passed" in {
-        // The body returns immediately; the detached fiber parks on a release latch. The test completes the latch only
-        // AFTER the runner has scored the leaf and closed the scope, so the fiber's assert takes the closed branch (a
-        // stderr "a fiber outlived its test" warning plus an enqueue into the process-global collector) rather than
-        // failing the leaf. The deterministic integration fact is that the leaf stays Passed; the closed->log warning
-        // itself is covered by the api AssertScopeTest (close() then record() emits the warning). The latch lands the
-        // assert strictly after the scope closes.
+        // The latch releases the parked fiber only after the runner scored the leaf and closed the scope, so its assert
+        // hits the closed branch (stderr warning + process-global collector), not the leaf. The asserted fact: the leaf
+        // stays Passed. The closed->log warning itself is covered by the api AssertScopeTest.
         import kyo.AllowUnsafe.embrace.danger
         val release = Sync.Unsafe.evalOrThrow(Promise.init[Unit, Any])
         RTDetachedAfterSuite.release = release
@@ -377,10 +372,9 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
                 },
                 s"expected the detached-after leaf to be Passed but got $report"
             )
-            // The leaf is scored and its scope closed; release the parked fiber so its assert records into the now-closed
-            // scope, then wait for that record to land in the process-global collector with a Kyo-native asynchronous poll
-            // (not a blocking sleep) so the single-threaded JS event loop can run the detached fiber, then drain so the
-            // record does not pollute later tests. The poll is bounded best-effort and never asserted on.
+            // Release the parked fiber so its assert records into the now-closed scope, then poll (Kyo-native, not a
+            // blocking sleep, so the single-threaded JS event loop can run the fiber) until the record lands in the
+            // process-global collector, then drain so it does not pollute later tests. The poll is best-effort, never asserted.
             val settle: Unit < (Async & Abort[Throwable]) =
                 release.completeDiscard(Result.succeed(())).andThen {
                     Loop(0) { attempt =>

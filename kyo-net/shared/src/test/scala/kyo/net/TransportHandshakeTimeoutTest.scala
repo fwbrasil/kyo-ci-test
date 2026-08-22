@@ -9,9 +9,8 @@ import kyo.net.internal.TlsProviderPlatform
   *
   * The deadline arms per accepted connection: a plaintext client completes the TCP accept but never sends a ClientHello, so the server
   * handshake parks; a finite `handshakeTimeout` reaps it (closing the accepted fd), which the client observes as its inbound terminating.
-  * Reaps and disarms are observed through the public `Connection` surface, never a sleep-as-synchronization: the disarm leaf pairs the
-  * connection under test with a deliberately stalled one, whose reap is the event proving the deadline instant has passed. `Async.timeout`
-  * appears only as a ceiling that turns a missing reap into a failure instead of a hang.
+  * Reaps and disarms are observed through the public `Connection` surface, never a sleep: the disarm leaf pairs the tested connection with a
+  * stalled one whose reap proves the deadline instant passed, and `Async.timeout` is only a ceiling turning a missing reap into a failure, not a hang.
   */
 class TransportHandshakeTimeoutTest extends Test:
 
@@ -158,11 +157,8 @@ class TransportHandshakeTimeoutTest extends Test:
         }
     }
 
-    // Proving a NON-event (the completed handshake's timer never fires) needs a point in time that is provably past that timer's deadline
-    // instant. A second, deliberately stalled connection on the SAME listener supplies one as an EVENT rather than as elapsed time: the server
-    // arms one deadline per accepted connection, so the stalled peer's deadline (accepted later, same duration) always falls due strictly after
-    // the completed peer's would have. Observing the stalled peer being reaped therefore proves the completed peer's deadline instant is behind
-    // us, and the round-trip that follows proves the completed peer was not reaped at it.
+    // Proving the completed handshake's timer never fires needs a point provably past its deadline. One deadline is armed per accepted connection, so a
+    // second stalled peer (accepted later, same duration) falls due strictly after; its reap proves the deadline passed, then the round-trip proves the completed peer was not reaped.
     "a handshake that completes within the deadline is NOT reaped on every backend" in {
         assumeTls()
         given Frame = Frame.internal

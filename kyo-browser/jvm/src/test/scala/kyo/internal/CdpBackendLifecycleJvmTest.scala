@@ -237,10 +237,8 @@ class CdpBackendLifecycleJvmTest extends kyo.BaseBrowserTest:
                             _          <- backend.close(500.millis)
                             slowResult <- slowFiber.getResult
                         yield
-                            // The in-flight getTargets seeing ConnectionLost is the proof that close
-                            // force-closed via the closeNow fallback rather than waiting for the slow
-                            // send: had close waited out the 10s server delay the send would have
-                            // completed and slowResult would be Success. No wall-clock ceiling needed.
+                            // The in-flight getTargets seeing ConnectionLost proves close force-closed via the closeNow
+                            // fallback: had it waited out the 10s server delay the send would have completed (Success).
                             slowResult match
                                 case Result.Success(Result.Failure(_: BrowserConnectionLostException)) => succeed
                                 case other =>

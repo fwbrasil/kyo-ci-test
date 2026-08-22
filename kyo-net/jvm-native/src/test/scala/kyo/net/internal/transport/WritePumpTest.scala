@@ -605,16 +605,14 @@ class WritePumpTest extends Test:
         // Mirrors the writable-wait-failure test above (same setup: smallBufferedPair(2048,2048), a 1 MB payload guaranteeing EAGAIN, the
         // onAwaitWritable hook closing the handle the instant the writable wait registers), but pins the DROP-CORRECTNESS half of the lost-CAS
         // contract: once teardown wins (state swings to TornDown), the pump must never resurrect and must never issue
-        // another write for the now-undeliverable captured tail. closedLatch latches the teardown and the write count is sampled inside it; the
-        // load-bearing assertions a CAS-retry regression would break are that the state reads TornDown and that the pump's FINAL write count
-        // (read once the driver's loop fiber has died, so no further callback can reach the pump) still equals the count at teardown.
+        // another write for the now-undeliverable captured tail. The load-bearing assertions a CAS-retry regression would break: the state
+        // reads TornDown, and the pump's FINAL write count (read once the driver loop has died) still equals the count at teardown.
         "an error teardown racing a partial write drops the tail without resurrection" in {
             assumePoller()
             val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
-            // The driver's loop fiber. It completes only after the terminal exit has settled every promise the pump could still be waiting on,
-            // which is what makes the write count read below a final one rather than a mid-flight snapshot.
+            // The driver loop completes only after the terminal exit settles every promise the pump awaits, making the write count below final.
             val driverLoop = spy.start()
             PosixTestSockets.smallBufferedPair(2048, 2048).map { case (clientFd, peerFd) =>
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
@@ -652,9 +650,8 @@ class WritePumpTest extends Test:
                         state.get() == WriteState.TornDown,
                         s"the pump must not be resurrected after teardown won, state was ${state.get()}"
                     )
-                    // Closing the driver settles every promise the pump could still be waiting on, running each completion callback on the poll
-                    // carrier, and the loop fiber completing is the point past which no callback can reach the pump at all. The write count is
-                    // read there, so it is the pump's final count and not a snapshot taken while a resurrection is still on its way.
+                    // Closing the driver settles every promise the pump awaits; the loop fiber completing is the point past which no callback
+                    // can reach the pump, so the write count read there is final, not a snapshot mid-resurrection.
                     spy.close()
                     Abort.run[Timeout](Async.timeout(10.seconds)(driverLoop.safe.get)).map { exit =>
                         // closeHandle closed clientFd; only peerFd remains to close.

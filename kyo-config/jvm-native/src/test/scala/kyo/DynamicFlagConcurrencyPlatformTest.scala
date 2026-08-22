@@ -5,9 +5,8 @@ import org.scalatest.freespec.AnyFreeSpec
 
 /** Concurrency leaf that needs a real background writer thread.
   *
-  * Scala.js and Wasm javalib provide no Thread.start/join, so the concurrent-writer proof lives in the JVM
-  * and Native sources rather than the shared suite. It witnesses that apply() completes every call while a
-  * writer continuously flips the expression, and that no read is torn, without depending on wall-clock time.
+  * Scala.js and Wasm javalib have no Thread.start/join, so the concurrent-writer proof lives in JVM and Native, not the
+  * shared suite. It witnesses that apply() completes every call while a writer flips the expression, with no torn read.
   */
 class DynamicFlagConcurrencyPlatformTest extends AnyFreeSpec {
 
@@ -38,8 +37,8 @@ class DynamicFlagConcurrencyPlatformTest extends AnyFreeSpec {
                 stop = true
                 writer.join()
             }
-            // Every call returned (a lock-taking apply() contended by the writer could not reach the
-            // full count) and every read saw a consistent value; neither depends on wall-clock time.
+            // Every call returned (a lock-taking apply() contended by the writer could not reach the full count) and every
+            // read saw a consistent value.
             assert(completed == iterations && errors == 0)
         }
     }

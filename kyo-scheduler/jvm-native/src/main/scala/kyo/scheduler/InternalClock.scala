@@ -18,8 +18,8 @@ import scala.annotation.nowarn
   * @param executor
   *   Executor for running the update thread
   * @param now
-  *   The time source sampled on every update, defaulting to the system clock. Overridable so a test can drive the published value directly:
-  *   `currentMillis()` reports whatever this source last returned, independent of real time.
+  *   Time source sampled on every update (default the system clock), overridable so a test drives the published value:
+  *   `currentMillis()` then reports whatever this source last returned, independent of real time.
   */
 final case class InternalClock(executor: Executor, now: () => Long = () => System.currentTimeMillis()) {
 

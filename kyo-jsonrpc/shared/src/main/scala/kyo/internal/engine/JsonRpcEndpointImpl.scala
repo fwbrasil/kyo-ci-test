@@ -48,10 +48,8 @@ private[kyo] object WriterMsg:
     case class SuppressIfCancelled(id: JsonRpcId, env: JsonRpcEnvelope) extends WriterMsg
 end WriterMsg
 
-/** Enqueue a required response from a Sync-only callback with the backpressuring delivery guarantee the notify,
-  * sendUnmatched, and progress paths already use: fork a fiber that `put`s. A full writerChannel (a progress flood
-  * outpacing the transport drain) then delays the response instead of dropping it and hanging the caller. The put
-  * fails Closed only when the endpoint is closing, where the response is genuinely undeliverable.
+/** Enqueue a required response from a Sync-only callback via the backpressuring path notify/sendUnmatched/progress use:
+  * fork a fiber that `put`s, so a full writerChannel delays the response instead of dropping it and hanging the caller.
   */
 private def enqueueResponse(writerChannel: Channel[WriterMsg], msg: WriterMsg)(using Frame, AllowUnsafe): Unit =
     discard(Fiber.Unsafe.init(Abort.run[Closed](writerChannel.put(msg)).unit))
@@ -704,7 +702,7 @@ object JsonRpcEndpointImpl:
                                                                 dispatchRequest
                                                             case JsonRpcMessageGate.Decision.Reject(response) =>
                                                                 // Request has an id: send the gate-supplied response so caller is not left hanging
-                                                                // Unsafe: offer to writerChannel inside gate decision handler
+                                                                // Unsafe: enqueueResponse forks a put, so a full writerChannel delays this gate response rather than dropping it
                                                                 Sync.Unsafe.defer {
                                                                     enqueueResponse(writerChannel, WriterMsg.SendEnvelope(response))(using
                                                                         frame,

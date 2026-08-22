@@ -40,9 +40,8 @@ class TransportBackpressureReclaimTest extends kyo.net.Test:
             client   <- transport.connect("127.0.0.1", listener.port, config = config).safe.get
             accepted <- acceptedP.asInstanceOf[Fiber.Unsafe[Connection, Abort[Closed]]].safe.get
             _        <- Abort.run[Closed](client.outbound.safe.put(Span.fromUnsafe(Array.fill[Byte](128)(1))))
-            // A pump that overflows the channel parks by registering a put on it, so a pending put IS the parked state. Awaiting that state,
-            // rather than a fixed window, is what guarantees the FIN below lands on a parked pump: a FIN arriving before the pump parked would
-            // be observed by an armed read and reclaimed through the ordinary EOF path, leaving the grace reclaim untested.
+            // An overflowing pump parks by registering a put, so a pending put IS the parked state. Awaiting it guarantees the FIN below lands on a
+            // parked pump: a FIN arriving earlier would be observed by an armed read and reclaimed via the EOF path, leaving the grace reclaim untested.
             parked <- awaitCondition(5.seconds)(accepted.inbound.pendingPuts().getOrElse(0) > 0)
             _ = assert(
                 parked,

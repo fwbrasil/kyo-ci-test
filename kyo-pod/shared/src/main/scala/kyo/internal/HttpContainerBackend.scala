@@ -136,10 +136,8 @@ final private[kyo] class HttpContainerBackend(
     private def conflictExceptionFor(ctx: ResourceContext)(using Frame): ContainerException =
         ErrorClassification.conflictFor(ctx)
 
-    /** Podman/docker refuse a state-dependent operation (exec-create, top) on a non-running container with a wrong-state message
-      * rather than a distinct status (podman's compat shim reports HTTP 500). Detect that family from the body and type it as
-      * [[ContainerAlreadyStoppedException]] for a container context, matching the shell backend; callers (exec/top) then recover via a
-      * fresh state read instead of seeing an opaque operation failure.
+    /** Podman/docker refuse a state-dependent op (exec-create, top) on a non-running container with a wrong-state body, not a distinct status
+      * (podman reports HTTP 500). Type it as [[ContainerAlreadyStoppedException]] for a container context so callers recover via a fresh state read.
       */
     private def notRunningExceptionFor(body: Maybe[String], ctx: ResourceContext)(using Frame): Option[ContainerException] =
         ctx match
@@ -418,9 +416,8 @@ final private[kyo] class HttpContainerBackend(
     private def ctxContainer(id: Container.Id): ResourceContext = ResourceContext.Container(id)
 
     def start(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        // Container start can stall under daemon load; the default 5s HttpClient timeout is too tight
-        // for the cold-start path. Raise it to at least 30s so the daemon can ack /start;
-        // `c.timeout.max(...)` preserves any longer caller override.
+        // Container start can stall under daemon load; the default 5s timeout is too tight for cold start. Raise to at
+        // least 30s so the daemon can ack /start; `c.timeout.max(...)` preserves any longer caller override.
         HttpClient.withConfig(c => c.timeout(c.timeout.max(30.seconds))) {
             postUnitAccept304(s"/containers/${id.value}/start", ctxContainer(id))
         }
@@ -491,11 +488,8 @@ final private[kyo] class HttpContainerBackend(
         deleted.andThen(awaitRemoved(id))
     end remove
 
-    /** DELETE acks the removal request while teardown is still in flight on rootless podman, so block on the
-      * daemon-authoritative `/wait?condition=removed` until the container is actually gone (a `Missing` reply means it
-      * already is). This gives `remove` the shell backend's "fully retired on return" post-condition, so creation cannot
-      * outrun retirement and exhaust the per-user kernel keyring (`runc create` fails "unable to create session key: disk
-      * quota exceeded"). Mirrors [[waitForExit]]'s `/wait` long-poll.
+    /** DELETE acks while teardown is still in flight on rootless podman, so block on `/wait?condition=removed` until the container is gone
+      * (`Missing` means it already is). This gives `remove` a "fully retired on return" post-condition, so creation cannot exhaust the kernel keyring.
       */
     private def awaitRemoved(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
         def waitForRemoved: Unit < (Async & Abort[ContainerException]) =
@@ -530,10 +524,8 @@ final private[kyo] class HttpContainerBackend(
                 case Result.Failure(other)                        => Abort.fail(other)
                 case _                                            => ()
             }
-        // /wait?condition=removed is the daemon-authoritative removal signal, but confirm the record is actually gone
-        // before returning: on loaded rootless podman the DELETE can ack while the record lingers. If the container
-        // survives, force-remove once more and re-wait, so `remove` never returns while the container is still
-        // retiring. A single guarded re-attempt, not a poll loop; the warning attributes it if it ever fires.
+        // On loaded rootless podman the DELETE can ack while the record lingers, so confirm it is gone before returning; if
+        // it survives, force-remove once more and re-wait. A single guarded re-attempt, not a poll loop.
         waitForRemoved.andThen {
             stillPresent.map {
                 case false => ()
@@ -2315,9 +2307,8 @@ final private[kyo] class HttpContainerBackend(
         MemorySwap: Long = 0,
         NanoCPUs: Long = 0,
         CpusetCpus: String = "",
-        // Podman's docker-compat create translates an explicit PidsLimit:0 into cgroup pids.max=1
-        // (docker treats 0 as unlimited), so the container's PID 1 cannot fork. Omit the field when
-        // no limit is configured so podman applies its default (unlimited), matching the CLI.
+        // Podman's docker-compat create maps an explicit PidsLimit:0 to cgroup pids.max=1 (docker treats 0 as unlimited),
+        // so PID 1 cannot fork. Omit the field when unset so podman applies its unlimited default, matching the CLI.
         @omit PidsLimit: Maybe[Long] = Absent,
         Privileged: Boolean = false,
         CapAdd: Seq[String] = Seq.empty,
@@ -2360,8 +2351,7 @@ final private[kyo] class HttpContainerBackend(
         MemorySwap: Long = 0,
         NanoCPUs: Long = 0,
         CpusetCpus: String = "",
-        // See HostConfig.PidsLimit: an explicit 0 is mistranslated to pids.max=1 by podman's
-        // docker-compat update. Omit when no limit is configured.
+        // See HostConfig.PidsLimit: podman's docker-compat update mistranslates an explicit 0 to pids.max=1. Omit when unset.
         @omit PidsLimit: Maybe[Long] = Absent,
         RestartPolicy: RestartPolicyEntry = RestartPolicyEntry()
     ) derives Schema

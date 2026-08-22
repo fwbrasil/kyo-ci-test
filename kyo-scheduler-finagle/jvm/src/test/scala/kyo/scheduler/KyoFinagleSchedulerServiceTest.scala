@@ -20,9 +20,8 @@ import scala.util.control.NoStackTrace
 
 class KyoFinagleSchedulerServiceTest extends AnyFreeSpec with NonImplicitAssertions with Eventually {
 
-    // ScalaTest's default eventually patience is 150ms, too short for a cross-runtime interrupt to
-    // propagate under load. Give it a generous timeout so the retried raise-and-check does not
-    // false-fail; the happy path still returns in ~1ms.
+    // ScalaTest's default eventually patience (150ms) is too short for a cross-runtime interrupt to propagate under load;
+    // give it a generous timeout so the retried raise-and-check does not false-fail. The happy path still returns in ~1ms.
     implicit override val patienceConfig: PatienceConfig =
         PatienceConfig(timeout = Span(5, Seconds), interval = Span(20, Millis))
 
@@ -79,9 +78,8 @@ class KyoFinagleSchedulerServiceTest extends AnyFreeSpec with NonImplicitAsserti
             p
         }
         cdl.await()
-        // The fork links p as its interrupt target only after its body returns p; raising before
-        // that would race the linking. raise is idempotent, so retry it until the interrupt has
-        // propagated to p, instead of a fixed 100ms guess.
+        // The fork links p as its interrupt target only after its body returns p, so raising early races the linking.
+        // raise is idempotent, so retry until the interrupt reaches p, instead of a fixed 100ms guess.
         eventually {
             f.raise(error)
             assert(p.isInterrupted == Some(error))

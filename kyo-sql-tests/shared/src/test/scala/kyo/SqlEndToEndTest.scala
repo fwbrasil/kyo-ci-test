@@ -651,10 +651,8 @@ class SqlEndToEndTest extends SqlContainerTest:
         Scope.run {
             SqlSharedContainers.withFreshSchema(Backend.Postgres) { ctx =>
                 for
-                    // Three independent clients, one per close variant. Completion without error is the
-                    // contract; that an idle close returns within the grace period rather than at it is a
-                    // timing property that needs a Clock seam to assert deterministically, not a wall-clock
-                    // elapsed bound.
+                    // Three independent clients, one per close variant. Completion without error is the contract; that an idle
+                    // close returns within the grace period rather than at it needs a Clock seam to assert, not a wall-clock bound.
                     c1 <- SqlClient.initUnscoped(pgUrl(ctx))
                     _  <- c1.close(30.seconds)
                     c2 <- SqlClient.initUnscoped(pgUrl(ctx))

@@ -23,12 +23,11 @@ import kyo.*
   */
 object ContainerPredef:
 
-    /** A readiness [[Container.HealthCheck]] that runs `probe` from *inside* the container in one bounded poll loop,
-      * rather than the host firing a fresh `exec` per retry. Each host `exec` leaves a `conmon` that lingers ~300s on
-      * rootless podman, so a sub-second host-side poll across a fixture suite accumulates orphaned `conmon`; the
-      * in-container loop collapses each fixture's wait to a single `exec`. `budget` bounds the loop so a service that
-      * never comes up fails rather than hanging to the leaf timeout. Ready is exit code 0, so `probe` must exit
-      * non-zero until the service answers.
+    /** A readiness [[Container.HealthCheck]] that runs `probe` in one bounded poll loop *inside* the container, not a
+      * fresh host `exec` per retry. Each host `exec` leaves a `conmon` lingering ~300s on rootless podman, so a
+      * sub-second host-side poll across a fixture suite accumulates orphaned `conmon`; the in-container loop collapses
+      * each fixture's wait to a single `exec`. `budget` bounds the loop so a service that never comes up fails rather
+      * than hang to the leaf timeout. Ready is exit code 0, so `probe` must exit non-zero until the service answers.
       */
     private[kyo] def readinessLoop(probe: Chunk[String], budget: Duration = 120.seconds): Container.HealthCheck =
         val quoted = probe.map(a => "'" + a.replace("'", "'\\''") + "'").mkString(" ")
@@ -37,10 +36,9 @@ object ContainerPredef:
         val cmd = Command("sh", "-c", script)
         new Container.HealthCheck:
             def check(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
-                // The probe blocks inside the container until the service answers, so the exec must outlast the caller's
-                // ambient HttpClient timeout (often the 5s default; predef fixtures are reused beyond kyo-pod, e.g.
-                // kyo-sql, with no longer scoped timeout). Give it its own budget-covering timeout; the shell backend
-                // ignores the HttpClient config.
+                // The probe blocks inside the container until the service answers, so the exec must outlast the
+                // caller's ambient HttpClient timeout (often the 5s default; predef fixtures are reused beyond kyo-pod).
+                // Give it its own budget-covering timeout; the shell backend ignores the HttpClient config.
                 HttpClient.withConfig(_.timeout(budget + 15.seconds)) {
                     Abort.run[ContainerException](container.exec(cmd)).map {
                         case Result.Success(r) if r.isSuccess => Kyo.unit
@@ -58,11 +56,10 @@ object ContainerPredef:
         end new
     end readinessLoop
 
-    /** Best-effort container post-mortem: its terminal state (status + exit code) and the tail of its own logs. A
-      * flaky database fixture that dies or never becomes ready otherwise surfaces only as an opaque "already stopped"
-      * or "readiness did not pass"; the container's own stderr is what names the cause (an OOM-exit, a failed init, a
-      * bad config). Both reads are guarded so a container that was already reaped yields a placeholder rather than
-      * masking the original failure with a secondary error.
+    /** Best-effort container post-mortem: terminal state (status + exit code) and the tail of its logs. A flaky DB
+      * fixture that dies or never becomes ready otherwise surfaces only as an opaque "already stopped" or "readiness
+      * did not pass"; its own stderr names the cause (OOM-exit, failed init, bad config). Both reads are guarded so an
+      * already-reaped container yields a placeholder rather than masking the original failure with a secondary error.
       */
     private[kyo] def postMortem(container: Container)(using Frame): String < Async =
         Abort.run[ContainerException](container.inspect).map { infoR =>
@@ -88,9 +85,9 @@ object ContainerPredef:
             Abort.fail[ContainerException](ContainerHealthCheckException(container.id, reason, attempts = 1, lastError = detail))
         }
 
-    /** Run a fixture container operation, and on an abort (e.g. the container died and the daemon reports it not
-      * running) re-raise it enriched with the container's [[postMortem]]. Successful results (including a query that
-      * ran but returned a non-zero exit) pass through unchanged for the caller to assert on.
+    /** Run a fixture container operation; on an abort (e.g. the container died and the daemon reports it not running)
+      * re-raise it enriched with the container's [[postMortem]]. Successful results (including a query that ran but
+      * returned a non-zero exit) pass through unchanged for the caller to assert on.
       */
     private[kyo] def withPostMortem[A](container: Container, op: String)(body: => A < (Async & Abort[ContainerException]))(using
         Frame
@@ -384,9 +381,8 @@ object ContainerPredef:
             "--innodb-log-file-size=32M"
         )
 
-        /** Teardown budget for the post-SIGKILL `waitForExit` (see [[buildContainerConfig]]'s `stopSignal`). The fixture is force-removed
-          * with its anonymous volume, so no graceful shutdown is wanted; a cold SIGKILL of an idle `mysqld` exits at once, well under this
-          * ceiling. The value stays generous only to absorb reap latency when many containers contend for a loaded CI runner's CPU.
+        /** Teardown budget for the post-SIGKILL `waitForExit` (see [[buildContainerConfig]]'s `stopSignal`). A cold SIGKILL of the idle,
+          * force-removed `mysqld` exits at once; the budget stays generous only to absorb reap latency under CI contention.
           */
         val defaultStopTimeout: Duration = 30.seconds
 
@@ -407,14 +403,12 @@ object ContainerPredef:
                 .env("MYSQL_DATABASE", c.database)
                 .port(c.port, 0)
                 .command(commandLine*)
-                // Run under an init process (catatonit as PID 1). mysqld is not init-aware: as PID 1 it does not reap the zombie children
-                // its subprocesses leave behind, so under a loaded CI runner the container wedges in `stopping`, the daemon reports "given
-                // PID did not die within timeout" on stop/remove, and the fixture leaks daemon-side.
-                // The init reaps those zombies and forwards signals to mysqld, so teardown completes.
+                // Run under an init process (catatonit as PID 1): mysqld as PID 1 does not reap its subprocesses' zombie children, so under a
+                // loaded CI runner the container wedges in `stopping` and the daemon reports "given PID did not die within timeout", leaking
+                // daemon-side. The init reaps the zombies and forwards signals to mysqld, so teardown completes.
                 .initProcess(true)
-                // Teardown SIGKILLs rather than graceful-stopping. The fixture is thrown away with its anonymous volume, so mysqld's graceful
-                // InnoDB shutdown flush buys nothing and only adds a slow, I/O-heavy shutdown on an already-loaded runner. A cold SIGKILL of
-                // the idle post-test mysqld exits at once (the init forwards it and reaps), so force-remove completes promptly.
+                // Teardown SIGKILLs rather than graceful-stops: the fixture is discarded with its anonymous volume, so mysqld's InnoDB shutdown
+                // flush buys nothing and only adds a slow I/O-heavy shutdown on a loaded runner. The cold SIGKILL exits at once.
                 .stopSignal(Container.Signal.SIGKILL)
                 .stopTimeout(defaultStopTimeout)
                 .portMappingTimeout(defaultPortMappingTimeout)

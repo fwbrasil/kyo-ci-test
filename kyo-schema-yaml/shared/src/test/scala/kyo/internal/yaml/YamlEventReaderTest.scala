@@ -135,8 +135,8 @@ class YamlEventReaderTest extends kyo.test.Test[Any]:
                 durationValue = reader("PT2H3M").duration()
             )
 
-            // Per-field so a mismatch names the field and prints the actual value: the CI failure of this leaf on
-            // linux-x64 Native shows only the expected tuple, hiding which field (and to what) diverged.
+            // Per-field so a mismatch names the field and prints its actual value: the whole-tuple compare prints
+            // only the expected tuple, hiding which field (and to what) diverged.
             assert(observed.longValue == 9007199254740993L, s"longValue actual=${observed.longValue}")
             assert(observed.floatValue == 1.25f, s"floatValue actual=${observed.floatValue}")
             assert(observed.shortValue == 123.toShort, s"shortValue actual=${observed.shortValue}")

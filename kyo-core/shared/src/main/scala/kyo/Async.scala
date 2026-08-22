@@ -191,13 +191,11 @@ object Async extends AsyncPlatformSpecific:
             isolate.capture { state =>
                 Clock.use { clock =>
                     Sync.Unsafe.defer {
-                        // Arm the timeout before forking the guarded computation so the timer is registered
-                        // before the body can start. If the body forked first it could begin (and, under a
-                        // controlled clock, be advanced past the deadline) before the sleep is enqueued,
-                        // leaving a deadline in the already-elapsed past that never fires. Correctness of
-                        // arming first rests on IOPromise.onComplete firing immediately on an already
-                        // completed promise: if the sleep completes before the wiring below runs, the task
-                        // is still interrupted at registration.
+                        // Arm the timeout before forking the guarded computation, so the timer is registered before the
+                        // body starts. If the body forked first it could begin (and, under a controlled clock, be
+                        // advanced past the deadline) before the sleep is enqueued, leaving a deadline in the elapsed
+                        // past that never fires. This rests on IOPromise.onComplete firing immediately on an already
+                        // completed promise, so a sleep completing before the wiring below still interrupts at registration.
                         val sleepFiber = clock.unsafe.sleep(after)
                         Fiber.initUnscoped(isolate.isolate(state, v)).map { task =>
                             sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(error)))

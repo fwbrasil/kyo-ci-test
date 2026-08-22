@@ -30,10 +30,9 @@ class ReporterTest extends AnyFreeSpec with NonImplicitAssertions {
                 try s.mkString
                 finally s.close()
             } catch {
-                // The writer replaces this file atomically every topStatusFileMs. On Windows opening it
-                // for reading while that replace is in flight fails with a sharing violation ("used by
-                // another process"); treat it as "not readable this instant" and let the poll loop retry,
-                // rather than failing the test on a transient, expected Windows file-locking window.
+                // The writer replaces this file atomically every topStatusFileMs. On Windows, opening it for reading
+                // mid-replace fails with a sharing violation ("used by another process"); treat that as "not readable
+                // this instant" and let the poll loop retry rather than fail on the transient Windows file-locking window.
                 case _: java.io.IOException => ""
             }
         }

@@ -1157,10 +1157,8 @@ class BrowserIsolateTest extends BrowserTest:
     "withPopup with a schedule clause bounds the wait time" in {
         withBrowser {
             onPage("<div>no popup here</div>") {
-                // Outer config is effectively-infinite: if the per-call schedule failed to bound
-                // the wait, withPopup would fall back to it and hang (leaf timeout). The typed
-                // BrowserProtocolErrorException means the 300ms per-call budget fired (the
-                // property), with no wall-clock window.
+                // Outer config is effectively-infinite: if the per-call schedule failed to bound the wait, withPopup
+                // would fall back to it and hang. The typed BrowserProtocolErrorException means the 300ms budget fired.
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour))) {
                     Scope.run {
                         Abort.run[BrowserReadException] {

@@ -23,9 +23,8 @@ final private[kyo] class StreamSubscriber[V](
         UpstreamState.Uninitialized -> Maybe.empty[Fiber.Promise.Unsafe[Unit, Any]]
     )
 
-    // Completed the first time the subscriber leaves Uninitialized (onSubscribe delivered, i.e. the
-    // subscription is established). Lets a caller await establishment without touching the consumption
-    // `await` above, whose promise slot is owned by the emit loop.
+    // Completed when the subscriber first leaves Uninitialized (onSubscribe delivered). Lets a caller await
+    // establishment without touching the consumption `await` above, whose promise slot the emit loop owns.
     private val subscribed = Fiber.Promise.Unsafe.init[Unit, Any]()
 
     private inline def throwIfNull[A](b: A): Unit = if isNull(b) then throw new NullPointerException()
@@ -162,9 +161,8 @@ final private[kyo] class StreamSubscriber[V](
         Sync.defer(handleAwait())
     end await
 
-    // Resolves once onSubscribe has been delivered (the subscription is established). Used to order a
-    // downstream action (e.g. a publisher interruption) strictly after every subscriber is subscribed,
-    // so it cannot race subscription setup and orphan a still-Uninitialized subscriber.
+    // Resolves once onSubscribe has been delivered. Orders a downstream action (e.g. a publisher interruption)
+    // after every subscriber is subscribed, so it can't race setup and orphan a still-Uninitialized subscriber.
     private[interop] def awaitSubscribed(using Frame): Unit < Async =
         subscribed.safe.use(_ => ())
 

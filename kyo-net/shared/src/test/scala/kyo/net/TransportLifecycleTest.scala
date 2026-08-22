@@ -31,12 +31,9 @@ class TransportLifecycleTest extends Test:
                 transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get.map { listener =>
                     val port = listener.port
                     listener.close()
-                    // A connect to the just-closed port must be refused. The `listener.close()` is not observed
-                    // instantly on every OS (Windows in particular keeps the closing listener briefly reachable), so a
-                    // connect can still land on it and succeed for a short window. Poll the SAME port with a backoff to
-                    // let the close finalize before concluding: a genuinely-unbound port refuses within the settle
-                    // budget. If it keeps succeeding past the budget the port was rebound by another parallel suite, so
-                    // retry a fresh one; a real bug (a live connection to an unbound port) exhausts both budgets.
+                    // A connect to the just-closed port must be refused, but `listener.close()` is not observed instantly on every OS
+                    // (Windows keeps it briefly reachable), so poll the SAME port with a backoff: an unbound port refuses within the settle
+                    // budget; if it keeps succeeding past it the port was rebound by another suite (retry a fresh one), and a real bug exhausts both.
                     def settle(tries: Int): Unit < (Async & Abort[NetException | Closed]) =
                         Abort.run[NetException | Closed](transport.connect("127.0.0.1", port).safe.get).map {
                             case Result.Success(conn) =>

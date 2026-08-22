@@ -73,14 +73,10 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
         }
 
         "peekAtEmptyChunkBoundaryReturnsAbsent".notJs in {
-            // JCTools invariant: peek() is Absent iff the queue is empty. Draining exactly k*chunkCapacity elements
-            // leaves consumerIndex at offset 0 of a successor chunk that was never allocated (no producer reserved
-            // that index), so peek's forward walk finds a null next link. JCTools returns null here via the strict
-            // empty-check its peek while-condition (and poll) apply on every retry; the port had dropped that check
-            // from this one branch, so peek spun forever. Deterministic and single-threaded; the watchdog thread
-            // only bounds a regression to seconds instead of the leaf timeout.
+            // JCTools invariant: peek() is Absent iff empty. Draining exactly k*chunkCapacity leaves consumerIndex at offset 0
+            // of a never-allocated chunk; the strict empty-check should return null there, but the port dropped it, so peek spun.
             for
-                pooled <- Seq(0, 4) // the forward-walk branch is shared by non-pooled and pooled; both were affected
+                pooled <- Seq(0, 4) // forward-walk branch shared by non-pooled and pooled; cover both
                 k      <- Seq(1, 2, 3)
             do
                 val q = new MpmcUnboundedUnsafeQueue[Int](8, maxPooledChunks = pooled)

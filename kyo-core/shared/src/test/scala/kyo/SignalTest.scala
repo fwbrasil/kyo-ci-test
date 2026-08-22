@@ -512,16 +512,12 @@ class SignalTest extends kyo.test.Test[Any]:
                 refB <- Signal.initRef(0)
                 cl = refA.combineLatest(refB)
                 f <- Fiber.initUnscoped(cl.streamChanges.take(5).run)
-                // After emitting the initial (0, 0), streamChanges re-subscribes by racing refA.next and refB.next.
-                // Fire each change only once the stream has re-armed its waiter on the signal being changed. Gating
-                // on captured emits instead witnesses consumption, not re-subscription, so a set landing in the
-                // re-arm gap is dropped and the take never completes. The first re-subscription is clean (no ghost
-                // waiters yet): both refs arm to exactly 1.
+                // streamChanges re-subscribes by racing refA.next and refB.next, so fire each change only after its waiter
+                // re-arms (a set in the re-arm gap is dropped, hanging the take). The first re-subscription is clean, so both refs arm to exactly 1.
                 _ <- assertEventually(Kyo.zip(refA.waiters, refB.waiters).map { case (a, b) => a == 1 && b == 1 })
                 _ <- refA.set(1)
-                // Each awaitAny cancels its losing branch without unregistering, leaving one ghost waiter on the
-                // signal that did not fire; the next re-subscription arms that signal to 2 (1 ghost + 1 live). >= 2
-                // proves the live re-arm landed rather than matching the stale ghost alone.
+                // awaitAny cancels its losing branch without unregistering, leaving a ghost waiter; the next re-subscription
+                // arms that signal to 2 (ghost + live), so >= 2 proves the live re-arm landed, not a match on the stale ghost.
                 _  <- assertEventually(refB.waiters.map(_ >= 2))
                 _  <- refB.set(1)
                 _  <- assertEventually(refA.waiters.map(_ >= 2))
@@ -726,13 +722,8 @@ class SignalTest extends kyo.test.Test[Any]:
         }
 
         "every individual signal can wake the combinator" in {
-            // Each source position must be able to wake combineLatestAll's `next` on its own. Use a
-            // fresh combinator per position so the sync point is a clean `waiters == 1` on the source
-            // about to change (as in "any signal change emits" above). Reusing one combinator across
-            // positions would force syncing on the leftover callbacks an interrupted Async.race arm
-            // registers on the sibling sources, and that count is not deterministic: a losing arm
-            // interrupted before it registers leaves none, so a `waiters >= N` threshold can stay
-            // unreachable and hang the unbounded assertEventually.
+            // A fresh combinator per position keeps the sync point a clean `waiters == 1` on the source about to change;
+            // reusing one syncs on the non-deterministic ghost callbacks an interrupted Async.race arm leaves, so a `waiters >= N` threshold can hang assertEventually.
             def wakes(index: Int, expected: Chunk[Int]) =
                 for
                     r0 <- Signal.initRef(0)
@@ -803,16 +794,12 @@ class SignalTest extends kyo.test.Test[Any]:
                 refB <- Signal.initRef(0)
                 cl = refA.combineLatest(refB)
                 f <- Fiber.initUnscoped(cl.streamChanges.take(5).run)
-                // After emitting the initial (0, 0), streamChanges re-subscribes by racing refA.next and refB.next.
-                // Fire each change only once the stream has re-armed its waiter on the signal being changed. Gating
-                // on captured emits instead witnesses consumption, not re-subscription, so a set landing in the
-                // re-arm gap is dropped and the take never completes. The first re-subscription is clean (no ghost
-                // waiters yet): both refs arm to exactly 1.
+                // streamChanges re-subscribes by racing refA.next and refB.next, so fire each change only after its waiter
+                // re-arms (a set in the re-arm gap is dropped, hanging the take). The first re-subscription is clean, so both refs arm to exactly 1.
                 _ <- assertEventually(Kyo.zip(refA.waiters, refB.waiters).map { case (a, b) => a == 1 && b == 1 })
                 _ <- refA.set(1)
-                // Each awaitAny cancels its losing branch without unregistering, leaving one ghost waiter on the
-                // signal that did not fire; the next re-subscription arms that signal to 2 (1 ghost + 1 live). >= 2
-                // proves the live re-arm landed rather than matching the stale ghost alone.
+                // awaitAny cancels its losing branch without unregistering, leaving a ghost waiter; the next re-subscription
+                // arms that signal to 2 (ghost + live), so >= 2 proves the live re-arm landed, not a match on the stale ghost.
                 _  <- assertEventually(refB.waiters.map(_ >= 2))
                 _  <- refB.set(1)
                 _  <- assertEventually(refA.waiters.map(_ >= 2))
@@ -892,12 +879,8 @@ class SignalTest extends kyo.test.Test[Any]:
         }
 
         "does not re-emit on a same-value set" in {
-            // Causal fence instead of a settle window, using the same `waiters` side-channel as the
-            // streamChanges tests. Fence until the observer is parked (one waiter), do the same-value
-            // set(0), then fence again that it is still parked before the different-value set(1). The
-            // second fence orders any wakeup the same-value set could have caused strictly before set(1),
-            // so a spurious re-emission would have to land in `seen` ahead of the 1. The final sequence is
-            // exactly [0, 1] with no same-value emission between.
+            // Causal fence on `waiters`, not a settle window: wait for the observer parked, do the same-value set(0), then fence
+            // it is still parked before set(1). That orders any wakeup the same-value set could cause before set(1), so a spurious re-emission would land in `seen` before 1.
             for
                 ref   <- Signal.initRef(0)
                 seen  <- AtomicRef.init(Chunk.empty[Int])

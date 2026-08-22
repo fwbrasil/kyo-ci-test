@@ -3,9 +3,8 @@ package kyo.net
 import kyo.*
 
 /** Test transport whose `connect` hands out pre-built connections in order (see
-  * `kyo.net.internal.transport.Connection.inMemoryPair`), so a client backend under test runs its full pool/connect path against
-  * channel-backed connections with no sockets. Every other operation panics: the tests using this stub never listen, upgrade, or open
-  * stdio. Lives in package kyo.net because `Transport.capabilities` is `private[net]`.
+  * `kyo.net.internal.transport.Connection.inMemoryPair`), so a client backend runs its full pool/connect path against channel-backed
+  * connections with no sockets. Every other operation panics. Lives in package kyo.net because `Transport.capabilities` is `private[net]`.
   */
 final class TestChannelTransport(conns: Seq[Connection]) extends Transport:
 

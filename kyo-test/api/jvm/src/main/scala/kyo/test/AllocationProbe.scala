@@ -63,16 +63,8 @@ object AllocationProbe:
       * cannot be enabled the probe FAILS LOUD rather than passing silently: an unmeasurable claim is not a
       * satisfied one.
       *
-      * `perWindowFloorBytes` admits a bounded, one-off, per-WINDOW cost on top of the per-op bound. The
-      * per-thread counter attributes a JIT deopt or safepoint landing inside a window to the measuring
-      * thread; on a contended runner one such event can recur in every window, and the best-of-[[trials]]
-      * minimum does not filter it (that filter only drops an event confined to some windows). The cost does
-      * not scale with `measuredIters`, so it is a per-window constant, not a per-op allocation. A positive
-      * zero-allocation assertion over a decode-heavy op passes a small floor to stay green under that noise;
-      * a genuine per-op allocation is at least one 16-byte object every op (`16 * measuredIters` per window,
-      * three orders of magnitude above a sane floor at the usual 2000 iters), so it still fails. Defaults to
-      * 0 (strict): an op whose allocation is being MEASURED rather than asserted absent (a negative check
-      * that a boxing path DOES allocate) must keep the floor at 0.
+      * `perWindowFloorBytes` admits a bounded per-window cost (a JIT deopt/safepoint charged to the measuring thread every window, which
+      * best-of-[[trials]] cannot filter). Per-window not per-op, so a small floor stays green while a real per-op allocation still fails; defaults to 0.
       */
     def assertBoundedPerOp[A](warmupIters: Int, measuredIters: Int, maxBytesPerOp: Double, perWindowFloorBytes: Long = 0L)(
         op: => A

@@ -58,11 +58,8 @@ class RaceZipTest extends CompatTest:
         }
     }
     "zip runs in parallel (peak-concurrency canary)" in run {
-        // Parallelism is an overlap, not a duration: each leg marks itself active, samples the peak,
-        // and waits at the barrier, so the second leg to arrive always samples 2 and neither leg can
-        // leave before both have arrived. A sequential zip never opens the barrier and fails through
-        // CompatTest's testTimeout. A fixed hold instead of the barrier would leave the sample racing
-        // the schedule: a leg stalled past the other's hold could read a peak of 1 on a correct binding.
+        // Parallelism is overlap, not duration: each leg marks itself active, samples the peak, and waits at the barrier, so the second to
+        // arrive samples 2. A sequential zip never opens the barrier and fails via CompatTest's testTimeout (a fixed hold would race the sample).
         val active = new AtomicInteger(0)
         val peak   = new AtomicInteger(0)
         def leg(v: Int, barrier: CLatch): CIO[Int] =

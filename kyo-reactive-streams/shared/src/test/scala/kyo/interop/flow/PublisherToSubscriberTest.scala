@@ -195,21 +195,15 @@ abstract private class PublisherToSubscriberTest extends kyo.test.Test[Any]:
                         .andThen(latchPub.release).andThen(Async.never)
                 )))
                 _ <- latchPub.await
-                // latchPub only proves publisher.subscribe was called for each subscriber; onSubscribe
-                // is delivered asynchronously by the publisher's channel-consumer fiber. Interrupting
-                // before a subscriber is established would orphan it (it never receives onSubscribe or a
-                // terminal signal), and its run fiber would hang. Wait until every subscriber is actually
-                // subscribed, so this tests propagation to established parties rather than racing setup.
+                // latchPub only proves publisher.subscribe was called; onSubscribe is delivered asynchronously, and interrupting before a
+                // subscriber is established would orphan it and hang its run fiber. Wait until all are subscribed, so this tests propagation, not setup racing.
                 _ <- subscriber1.awaitSubscribed
                 _ <- subscriber2.awaitSubscribed
                 _ <- subscriber3.awaitSubscribed
                 _ <- subscriber4.awaitSubscribed
                 _ <- publisherFiber.interrupt.unit
-                // Interrupting the publisher fiber closes its scope, which must propagate
-                // cancellation to every subscriber; their run fibers then complete on their own.
-                // Awaiting each fiber's completion is the real end-of-propagation event. Interrupting
-                // the subscribers directly would be self-defeating: it would end them regardless of
-                // whether propagation worked.
+                // Interrupting the publisher closes its scope, which must propagate cancellation to every subscriber; awaiting each fiber's
+                // completion is the real end-of-propagation event. Interrupting subscribers directly would end them regardless of propagation.
                 _ <- fiber1.getResult
                 _ <- fiber2.getResult
                 _ <- fiber3.getResult

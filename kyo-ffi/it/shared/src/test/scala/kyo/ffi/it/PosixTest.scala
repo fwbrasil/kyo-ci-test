@@ -133,8 +133,7 @@ class PosixTest extends ItTestBase:
 
         "each rapid read stays bracketed by java.lang.System reads" in {
             assumePosixSymbols()
-            // Same bracketing across a 32-call burst: every read falls within its own [before, after] Java
-            // pair, exercising repeated FFI calls with no wall-clock tolerance in the pass condition.
+            // Same bracketing across a 32-call burst: every read falls within its own [before, after] Java pair.
             val posix      = Ffi.load[PosixBindings]
             var i          = 0
             var last: Unit = succeed

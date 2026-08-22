@@ -148,10 +148,8 @@ class BrowserLauncherPlatformTest extends BaseBrowserTest:
             assert(pidText.nonEmpty, "sentinel file is empty (fixture did not write inner PID)")
             val pid = pidText.toLong
 
-            // Verify the inner proc was killed by the fixture's shutdown hook by waiting on its actual termination, not by sampling
-            // liveness against a wall-clock cap. ProcessHandle.of(pid) is empty once the proc has been reaped (already dead); while
-            // it is alive, onExit completes the instant it terminates. The 30s is a hang backstop, not a bound the pass/fail rides
-            // on: a working hook kills the proc in milliseconds, so only a genuinely-broken hook ever reaches the timeout.
+            // Verify the shutdown hook killed the inner proc by waiting on its termination, not sampling liveness: ProcessHandle.of(pid) is empty
+            // once reaped, else onExit completes the instant it terminates. The 30s is a hang backstop, not a pass/fail bound (only a broken hook reaches it).
             val handleOpt = java.lang.ProcessHandle.of(pid)
             val innerExited =
                 if !handleOpt.isPresent then true

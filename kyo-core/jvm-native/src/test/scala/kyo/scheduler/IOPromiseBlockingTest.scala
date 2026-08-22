@@ -36,8 +36,8 @@ class IOPromiseBlockingTest extends kyo.test.Test[Any]:
                 end run
             thread.start()
 
-            // block() registers its waiter on the promise before parking, so a positive waiter count
-            // means the thread has reached the blocking call and the interrupt lands on a parked thread.
+            // block() registers its waiter before parking, so a positive waiter count means the thread reached the blocking
+            // call and the interrupt lands on a parked thread.
             while promise.waiters() == 0 do Thread.sleep(1)
 
             thread.interrupt()

@@ -68,11 +68,8 @@ private[kyo] object CancelExchange:
     private def onFreshConnection[A](address: SqlConfig.Address)(
         body: kyo.net.Connection => A < (Async & Abort[SqlException])
     )(using Frame): A < (Async & Abort[SqlException]) =
-        // The pool's cancel budget interrupts this via timeoutWithError. A finalizer on the connect fiber closes a
-        // connection an interrupt drops before closingOnce below registers, so the sidecar socket is never stranded with
-        // an armed read. The close is unconditional: after a STARTTLS upgrade the
-        // raw socket is Upgrading, whose close routes to upgradeAbandon and releases the upgraded fd, so this covers the
-        // negotiate handover too. closingOnce owns the ordered close on the success edge.
+        // The pool's cancel budget can interrupt this, so a finalizer closes a connection the interrupt drops before
+        // closingOnce registers (no stranded armed read); unconditional, since after STARTTLS the raw close routes to upgradeAbandon.
         Scope.run {
             // Unsafe: raw kyo-net transport connect; the cancel sidecar socket is opened outside the safe tier.
             Sync.Unsafe.defer(NetPlatform.transport.connect(address.host, address.port).safe).map { connFiber =>

@@ -45,10 +45,8 @@ private[kyo] trait ContainerRuntimeBase:
 
     lazy val available: Seq[String] =
         import AllowUnsafe.embrace.danger
-        // The windows-latest CI runner ships a Docker daemon in Windows-container mode, which cannot
-        // pull or run Linux images (alpine, postgres, redis, nginx), so `docker` CLI existence reports
-        // available while every container operation fails at `docker pull`. These are Linux-container
-        // integration tests; skip them on Windows (matching the POSIX-on-Windows gates in kyo-net).
+        // The windows-latest CI runner's Docker daemon runs in Windows-container mode and cannot pull or run Linux images,
+        // so `docker` reports available while every operation fails at `docker pull`. These are Linux-container tests; skip on Windows.
         if kyo.internal.Platform.isWindows then Seq.empty
         else
             val all = Seq("podman" -> hasPodman, "docker" -> hasDocker).collect { case (name, true) => name }

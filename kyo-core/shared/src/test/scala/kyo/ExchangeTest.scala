@@ -515,7 +515,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 doneFiber          <- Fiber.initUnscoped(ex.awaitDone)
                 // End the receive stream
                 _ <- receiveCh.close
-                // Wait deterministically for the exchange to reach its terminal state (mirrors the awaitDone leaf below).
+                // Deterministically await the exchange's terminal state (mirrors the awaitDone leaf below).
                 _ <- Abort.run[TestError | Closed](doneFiber.get)
                 // Subsequent apply calls should fail with Closed
                 result <- Abort.run[TestError | Closed](ex("after-stream-end"))
@@ -528,7 +528,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 doneFiber          <- Fiber.initUnscoped(ex.awaitDone)
                 // Close the receive channel with no pending requests
                 _ <- receiveCh.close
-                // Wait deterministically for the exchange to reach its terminal state.
+                // Deterministically await the exchange's terminal state.
                 _ <- Abort.run[TestError | Closed](doneFiber.get)
                 // Exchange should be closed cleanly
                 result <- Abort.run[TestError | Closed](ex("after-end"))

@@ -10,10 +10,8 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
 
     override def timeout = 60.seconds
 
-    // A per-process random token folded into every generated test resource name. Per-runtime suites
-    // (`#podman` / `#docker`) fork concurrently on one machine sharing `/tmp`; a bare per-JVM counter
-    // would emit the same `prefix-N` in each fork and collide on host bind-mount dirs. Hex of a random
-    // Long disambiguates the forks (and concurrent CI jobs) and stays valid for container/volume/network names.
+    // A per-process random token folded into every test resource name: per-runtime suites (`#podman`/`#docker`) fork
+    // concurrently sharing `/tmp`, so a bare per-JVM counter would emit the same `prefix-N` and collide on bind-mounts.
     private val runToken: String = java.lang.Long.toHexString(new java.util.Random().nextLong())
 
     private val nameCounter = new java.util.concurrent.atomic.AtomicLong(0L)
@@ -24,14 +22,11 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
     def uniqueName(prefix: String): String =
         s"$prefix-$runToken-${nameCounter.incrementAndGet()}"
 
-    // Container ops contend on a single daemon, so leaves must run sequentially: runBackends (below) assumes
-    // <=1 in-flight container op per daemon. Parallel leaves race the daemon and produce port conflicts,
-    // already-exists, image-pull, and backend errors.
+    // Container ops contend on a single daemon, so leaves must run sequentially (runBackends assumes <=1
+    // in-flight op per daemon); parallel leaves produce port conflicts, already-exists, and pull errors.
     //
-    // Only the socket category is disabled: these suites reach the daemon REST API over HttpClient, and the NIO
-    // transport defers a connection's real fd close to its idle selector's next select(), which nothing wakes, so
-    // the fd outlives the run; the socket is an opaque socket:[inode] no allowlist can match. File-descriptor,
-    // thread, and fiber detection stay on.
+    // Only socket leak-checking is disabled: the NIO transport defers a connection's fd close to its idle selector's
+    // next select() (which nothing wakes), so the fd outlives the run and its opaque socket:[inode] matches no allowlist.
     override def config = super.config.sequential.leakCheckSockets(false)
 
     // Linux CI's container runtime (podman REST API) intermittently takes longer than
@@ -44,11 +39,8 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
     override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
         HttpClient.withConfig(_.timeout(60.seconds))(body)
 
-    /** Fails the leaf if it leaves a container behind. Diffs the daemon's container set (all states) around the body,
-      * which runs under its own `Scope` first so scope-managed containers are torn down; any new container afterward is
-      * one the leaf failed to free. Left unchecked these accumulate and exhaust the rootless per-user kernel keyring
-      * (each `runc create` allocates a session key; at `kernel.keys.maxkeys` it fails "unable to create session key:
-      * disk quota exceeded"). Diff-based, so a container leaked by an earlier leaf is attributed to that leaf.
+    /** Fails the leaf if it leaves a container behind (diffs the container set around the body, run under its own `Scope`
+      * first). Unchecked, leaks exhaust the rootless kernel keyring (`runc create` session keys, capped at `kernel.keys.maxkeys`).
       */
     private def checkingContainerLeak(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using
         Frame,
@@ -60,10 +52,8 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                 Scope.run(v).andThen {
                     Container.list(all = true).map { after =>
                         val candidates = after.filterNot(s => beforeIds.contains(s.id))
-                        // The daemon's listing side lags behind inspect on podman: a just-removed container can still show
-                        // up in `list` for a moment (the same lag HttpContainerBackend.awaitTerminalState documents). Confirm
-                        // each candidate is genuinely still present via an authoritative inspect before flagging it, so a
-                        // removed-but-still-listed container is not reported as a false leak.
+                        // The daemon's listing lags inspect on podman: a just-removed container can still appear in `list`.
+                        // Confirm each candidate via an authoritative inspect before flagging, avoiding a false leak.
                         Kyo.foreach(candidates) { s =>
                             Abort.run[ContainerException](backend.state(s.id)).map {
                                 case Result.Failure(_: ContainerMissingException) => Maybe.empty[Container.Summary]

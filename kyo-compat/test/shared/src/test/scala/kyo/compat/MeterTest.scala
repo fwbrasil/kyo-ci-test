@@ -73,12 +73,8 @@ class MeterTest extends CompatTest:
         }
     }
     "concurrent runs respect the permit limit" in run {
-        // Meter(2) + 4 runs: the permit limit shows up as concurrency, not elapsed. Each run marks
-        // itself active while holding the permit; the peak active count must be exactly 2, never 3+ (the
-        // limit holds) and reaching 2 (the limit is engaged, not serialised to 1). The two-way barrier
-        // makes the second half race-free: the first two holders cannot leave until both hold a permit,
-        // so the peak reaches 2 whatever the host's schedule does. Later runs find the barrier open and
-        // pass through, and the limit keeps the peak from going past 2.
+        // Meter(2) + 4 runs: the limit shows up as concurrency, not elapsed. Peak active must be exactly 2 (never 3+,
+        // never serialised to 1); the two-way barrier holds the first two until both have a permit so the peak reaches 2.
         val ctr    = new AtomicInteger(0)
         val active = new AtomicInteger(0)
         val peak   = new AtomicInteger(0)
@@ -121,11 +117,8 @@ class MeterTest extends CompatTest:
         }
     }
     "second acquire blocks until first holder releases" in run {
-        // Blocking is a happens-before, not a duration, and two markers pin it from both sides: the
-        // holder reads `waiterEntered` while it still owns the only permit, so a false there means the
-        // waiter's acquire had not completed; the waiter reads `releasing`, flipped as the holder's last
-        // act inside the critical section, so a true there means its acquire completed after the holder
-        // was done.
+        // Blocking is a happens-before, not a duration, pinned both sides: the holder reads `waiterEntered` while still
+        // holding the only permit (false => not yet acquired), the waiter reads `releasing` (true => acquired after release).
         val waiterEntered = new AtomicBoolean(false)
         val releasing     = new AtomicBoolean(false)
         val c =
@@ -136,8 +129,7 @@ class MeterTest extends CompatTest:
                             m.run {
                                 acquired.succeed(()).flatMap { _ =>
                                     attempting.get.flatMap { _ =>
-                                        // Scheduling nudge so the waiter reaches its blocked acquire before the
-                                        // permit goes back; the assertions hold whatever it does in that window.
+                                        // Scheduling nudge toward the waiter's blocked acquire; the assertions hold regardless.
                                         CIO.sleep(50.millis).flatMap { _ =>
                                             CIO.defer {
                                                 val enteredWhileHeld = waiterEntered.get()

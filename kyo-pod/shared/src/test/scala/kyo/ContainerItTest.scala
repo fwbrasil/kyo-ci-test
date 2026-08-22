@@ -32,10 +32,8 @@ class ContainerItTest extends BasePodTest:
             assertRuns(alpine)
         }
 
-        // Regression: podman's docker-compat create mistranslates an explicit HostConfig.PidsLimit:0
-        // (sent when no maxProcesses was configured) into cgroup pids.max=1, so an init-process
-        // container's PID 1 (catatonit) could not fork its command ("failed to spawn pid1"). With no
-        // pids limit configured the field must be omitted; then the container can spawn children.
+        // Regression: podman's docker-compat create mistranslates an explicit HostConfig.PidsLimit:0 into cgroup pids.max=1, so an
+        // init-process container's PID 1 (catatonit) cannot fork ("failed to spawn pid1"). Omit the field when no maxProcesses is configured.
         "init-process container without a pids limit can fork its command" - runBackends {
             val forking = Container.Config(ContainerImage("alpine", "latest"))
                 .command("sh", "-c", "for i in $(seq 1 16); do sleep infinity & done; trap 'exit 0' TERM; wait")
@@ -146,10 +144,8 @@ class ContainerItTest extends BasePodTest:
             if ContainerRuntime.findSocket(runtime).isEmpty then
                 succeed("no socket available for this runtime; precondition not met")
             else
-                // Decorate the permits=2 semaphore so every body the backend admits through meter.run bumps a
-                // shared in-flight counter and records the peak. The backend routes each exec through this
-                // meter, so the peak concurrency it admits is observable directly: exactly 2 proves the limit
-                // is enforced and saturated.
+                // The backend routes each exec through meter.run, so decorating the permits=2 semaphore to record peak in-flight makes
+                // the admitted concurrency directly observable: exactly 2 proves the limit is enforced and saturated.
                 Meter.initSemaphore(2).map { base =>
                     val inFlight = new java.util.concurrent.atomic.AtomicInteger(0)
                     val peak     = new java.util.concurrent.atomic.AtomicInteger(0)
@@ -1315,11 +1311,8 @@ class ContainerItTest extends BasePodTest:
         }
 
         "delivers entries incrementally as container produces output" - runBackends {
-            // The container emits both lines and then blocks forever, so it never exits on its own. A FOLLOWING
-            // stream delivers each line while the container is still running, so `take` returns line1 then line2; a
-            // BUFFERED stream would deliver nothing until the container exits, which it never does, so `take` would
-            // hang and the suite timeout would trip. Receiving both, in order, proves incremental delivery with no
-            // real sleep and no dependency on exec. `trap TERM` + `sleep infinity & wait` gives a clean fast teardown.
+            // The container emits both lines then blocks forever, so a FOLLOWING stream delivers line1 then line2 while it runs, while a
+            // BUFFERED stream would deliver nothing and hang into the suite timeout. Receiving both in order proves incremental delivery.
             val config = Container.Config("alpine")
                 .command("sh", "-c", "trap 'exit 0' TERM; echo line1; echo line2; sleep infinity & wait")
             Container.init(config).map { c =>
@@ -1800,9 +1793,8 @@ class ContainerItTest extends BasePodTest:
 
         "imagePull actually contacts registry when image exists — not identical to ensure" - runBackends {
             val img = ContainerImage("alpine", "latest")
-            // ensure short-circuits on the locally-present image and contacts no registry; pull re-contacts
-            // the registry even when the image is already present, so it surfaces progress events (per-layer
-            // "Already exists", the digest, an "up to date" status). Their presence witnesses the registry contact.
+            // ensure short-circuits on the local image; pull re-contacts the registry even when the image is present,
+            // surfacing progress events ("Already exists", digest, "up to date") whose presence witnesses the contact.
             ContainerImage.ensure(img).andThen {
                 Scope.run {
                     Abort.run[ContainerException](ContainerImage.pullWithProgress(img).run).map {
@@ -2726,11 +2718,8 @@ class ContainerItTest extends BasePodTest:
                     _ <- c.stop
                     r <- Abort.run[ContainerException](c.exec("echo", "hello"))
                 yield r match
-                    // retryOnTransientUnavailable re-attempts only the transient ContainerBackendUnavailableException
-                    // (the SSH-bridge multiplex hiccup on macOS podman machines). A stopped container is a
-                    // deterministic NotFound/AlreadyStopped failure, a class that path excludes; this pins that
-                    // classification. The attempt count is not witnessed: the meter wraps the whole retry rather than
-                    // each attempt, so a widened predicate would change no signal the test surface can observe.
+                    // retryOnTransientUnavailable re-attempts only the transient ContainerBackendUnavailableException (macOS podman SSH-bridge
+                    // hiccup); a stopped container is a deterministic NotFound/AlreadyStopped failure that path excludes, which this pins.
                     case Result.Failure(_: ContainerBackendUnavailableException) =>
                         fail(
                             "exec on a stopped container surfaced the transient-retryable failure class; a " +
@@ -3376,10 +3365,8 @@ class ContainerItTest extends BasePodTest:
             Scope.run {
                 Container.initUnscoped(config).map { c =>
                     ensureCleanup(c).andThen {
-                        // `echo done` runs and exits almost immediately. Poll the container to a terminal
-                        // state instead of assuming it has exited after a fixed wait, so logStream is opened
-                        // against a genuinely-stopped container: the stream must then terminate with at most
-                        // the single buffered line.
+                        // `echo done` exits almost immediately. Poll to a terminal state instead of a fixed wait, so logStream
+                        // opens against a genuinely-stopped container and must terminate with at most the single buffered line.
                         assertEventually(
                             c.state.map(s => s == Container.State.Stopped || s == Container.State.Dead)
                         ).andThen {
@@ -3568,10 +3555,8 @@ class ContainerItTest extends BasePodTest:
             )
             .stopTimeout(0.seconds)
         Container.init(config).map { c =>
-            // The script emits o1, e1, o2, e2 spaced 0.2s apart, and the daemon flushes each to its log
-            // buffer on its own cadence, so a single read can race the last line's flush. Poll until all
-            // four lines are present, then assert their emission order on that settled snapshot: ordering
-            // is a property of the captured content, not of when the read happened to land.
+            // The daemon flushes o1, e1, o2, e2 on its own cadence, so a single read can race the last flush. Poll until all four
+            // are present, then assert emission order on that snapshot: ordering is a property of the content, not of when the read landed.
             Retry[AssertionError](Schedule.fixed(50.millis).take(40)) {
                 c.logs(stdout = true, stderr = true).map { entries =>
                     val contents = entries.map(_.content).toSeq

@@ -3,9 +3,8 @@ package kyo
 import kyo.Browser.*
 import kyo.UI.*
 
-// Non-blank iframe srcs here are fast-refused loopback URLs, not reachable external domains. An unreachable external
-// src stays pending while the harness page loads and blocks the window `load` event, which times out withUI's
-// navigation settle on slow-DNS CI (observed on Windows). Loopback port 1 refuses instantly, so the load event fires.
+// Non-blank iframe srcs here are fast-refused loopback URLs, not reachable external domains: an unreachable src stays
+// pending, blocks the window `load` event, and times out withUI's settle on slow-DNS CI. Loopback port 1 refuses at once.
 class IframeTest extends UITest:
 
     "iframe renders as an iframe element" in {

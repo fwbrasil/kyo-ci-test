@@ -819,11 +819,9 @@ class AeronTransportTest extends Test:
     // closing the client unmaps. Running the JVM on the Java client instead is what made this leaf crash:
     // that path re-derived the guard as a per-handle gate whose drain could miss a publication registered
     // concurrently, so an offer wrote into a term buffer the close had already unmapped.
-    // 100 full Topic.run lifecycles (add + fork pub/sub + close) is intrinsically heavy and, on the
-    // slow single-threaded windows JS runner, runs right at the 120s default leaf budget. The iteration
-    // count is the regression sensitivity (the pre-fix UAF reproduced ~once per run at 100), so give the
-    // leaf explicit headroom rather than reduce it; fast platforms still finish in seconds since this is
-    // a ceiling, not a wait.
+    // 100 full Topic.run lifecycles (add + fork pub/sub + close) is heavy and on the slow single-threaded windows JS
+    // runner runs near the 120s default budget. The count is the regression sensitivity (pre-fix UAF reproduced ~once
+    // per run at 100), so give the leaf headroom rather than reduce it; fast platforms still finish in seconds (ceiling).
     "UAF-loop: a high-iteration forked-then-close loop does not use-after-free".timeout(5.minutes) in {
         val iterations = 100
         val messages   = Seq(1, 2, 3)

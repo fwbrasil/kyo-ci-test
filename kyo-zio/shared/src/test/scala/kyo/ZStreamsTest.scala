@@ -84,9 +84,8 @@ class ZStreamsTest extends kyo.test.Test[Any]:
                         if n == 0 then
                             ZIO.succeed(started.unsafe.release()) *> ZIO.succeed(Some((n, n + 1)))
                         else
-                            // Park until interrupted: after the first element the stream stays
-                            // genuinely running (not a paced sleep), so it can only end via the
-                            // interruption this test drives.
+                            // Park until interrupted: after the first element the stream stays genuinely running (not a
+                            // paced sleep), so it can only end via this test's interruption.
                             ZIO.never
                     }.ensuring(ZIO.succeed(finalized.unsafe.release()))
 
@@ -249,10 +248,8 @@ class ZStreamsTest extends kyo.test.Test[Any]:
                         streamFinalized.set(true)
                     }.andThen {
                         Stream.unfold(0, chunkSize = 1) { n =>
-                            // Emit one element (as its own chunk), then park until interrupted
-                            // (not a paced sleep), so the stream is genuinely in flight when the
-                            // interrupt arrives. chunkSize = 1 keeps the parking pull for the
-                            // second element from swallowing the first into an unfinished chunk.
+                            // Emit one element (its own chunk) then park until interrupted, so the stream is in flight when the
+                            // interrupt arrives. chunkSize = 1 stops the parking second pull from swallowing the first.
                             if n == 0 then Maybe((n, n + 1))
                             else Async.never[Unit].andThen(Maybe((n, n + 1)))
                         }.emit
@@ -264,15 +261,14 @@ class ZStreamsTest extends kyo.test.Test[Any]:
 
             for
                 started <- zio.Promise.make[Nothing, Unit]
-                // `started` completes on the ZIO side when the first element flows through, i.e.
-                // after the kyo stream has entered its Scope and registered the finalizer, so the
-                // interrupt cannot land before the finalizer is in place.
+                // `started` completes when the first element flows through, i.e. after the kyo stream registered its Scope
+                // finalizer, so the interrupt cannot land before the finalizer is in place.
                 fiber <- zioStream.tap(_ => started.succeed(())).take(5).runCollect.fork
                 // Verify initial state is false
                 _ = assert(!streamFinalized.get())
                 _ <- started.await
-                // fiber.interrupt awaits the fiber's teardown, and ZIOs.run interrupt-and-awaits
-                // the bridged kyo computation, so the kyo Scope finalizer has run once it returns.
+                // fiber.interrupt awaits teardown and ZIOs.run interrupt-and-awaits the bridged kyo computation, so the
+                // kyo Scope finalizer has run once it returns.
                 result <- fiber.interrupt
             yield
                 // Verify ZIO interruption was received

@@ -5,9 +5,8 @@ import kyo.Clock.Stopwatch
 
 class ClockTest extends kyo.test.Test[Any]:
 
-    // The `now`/`nowWith`/`unsafe now` leaves assert live `Clock.now` stays within a sub-millisecond
-    // window of `java.time.Instant.now()`, which cannot tolerate being preempted by concurrent leaves,
-    // so run this suite's leaves sequentially.
+    // The `now`/`nowWith`/`unsafe now` leaves assert live `Clock.now` stays within a sub-millisecond window of
+    // `java.time.Instant.now()`, which cannot tolerate preemption by concurrent leaves, so run this suite sequentially.
     override def config = super.config.sequential
 
     "Clock" - {
@@ -392,10 +391,8 @@ class ClockTest extends kyo.test.Test[Any]:
                 for
                     queue <- Queue.Unbounded.init[Instant]()
                     task  <- Clock.repeatAtInterval(5.millis)(Clock.now.map(queue.add))
-                    // startAfter is zero, so the first execution fires at Epoch during startup. Fence on the
-                    // fiber arming its next sleep, then advance exactly one interval per tick, each time waiting
-                    // for the fiber to re-arm before advancing again. With no interleaving slack the fiber fires
-                    // once per advance, so the fire at Epoch plus one fire per tick makes the count exact.
+                    // startAfter is zero, so the first execution fires at Epoch during startup. Fence on the fiber re-arming its next sleep
+                    // before each advance, so it fires exactly once per interval: the Epoch fire plus one per tick makes the count exact.
                     _        <- control.awaitPendingSleepers(1)
                     _        <- Loop.repeat(ticks)(control.advance(5.millis).andThen(control.awaitPendingSleepers(1)))
                     _        <- task.interrupt

@@ -98,10 +98,8 @@ class BrowserCaptureTest extends BrowserTest:
     // ---- hold-still converges on a static page.
     //
     // A fully static page with no animation, no JS timers, fonts loaded. Two consecutive captures
-    // of the same static page will be hash-identical. Assert: the hash of the result equals the hash
-    // of a second immediate screenshot (the page did not change during or after the hold-still). The
-    // hold-still timeout is set effectively-infinite so a convergence regression hangs into the leaf
-    // timeout instead of passing on a lucky wall-clock read.
+    // of the same static page will be hash-identical. Assert: the result's hash equals a second immediate screenshot (the page did not
+    // change). The hold-still timeout is effectively-infinite so a convergence regression hangs into the leaf timeout.
 
     "hold-still converges on a static page" in {
         val html = """<!DOCTYPE html><html><body>

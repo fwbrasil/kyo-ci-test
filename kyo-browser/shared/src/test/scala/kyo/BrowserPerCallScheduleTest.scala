@@ -5,9 +5,8 @@ package kyo
   *   - `schedule = Present(s)`: the method uses `s` instead of `cfg.retrySchedule`.
   *   - `schedule = Absent`: the method falls back to `cfg.retrySchedule`.
   *
-  * "honours per-call budget" tests install a fixture that never satisfies, pass a short `schedule`, and set the fallback `cfg.retrySchedule`
-  * effectively-infinite (`neverSchedule`); the call aborts iff the short per-call schedule won, otherwise it hangs the suite timeout. This
-  * makes "which schedule was used" an outcome, not a wall-clock window. "uses cfg.retrySchedule" tests omit the per-call schedule.
+  * "honours per-call budget" tests install a never-satisfying fixture, a short per-call `schedule`, and an effectively-infinite fallback
+  * (`neverSchedule`): the call aborts iff the short schedule won, else hangs the suite timeout. "uses cfg.retrySchedule" tests omit the per-call schedule.
   */
 class BrowserPerCallScheduleTest extends BrowserTest:
 
@@ -15,8 +14,8 @@ class BrowserPerCallScheduleTest extends BrowserTest:
 
     // Short schedule that exhausts quickly, so the override under test aborts promptly.
     private val shortSchedule: Schedule = Schedule.fixed(10.millis).maxDuration(100.millis)
-    // Effectively-infinite retry delay (1 hour vs the 90s suite timeout). A call that wrongly falls back to
-    // this schedule instead of the short per-call/inner one hangs and trips the suite timeout.
+    // Effectively-infinite retry delay (1h vs the 90s suite timeout): a call that wrongly falls back to it instead of
+    // the short per-call/inner schedule hangs the suite timeout.
     private val neverSchedule: Schedule = Schedule.fixed(1.hour)
 
     // ── waitForRequestUrl with schedule honours per-call budget ──────────
@@ -598,9 +597,8 @@ class BrowserPerCallScheduleTest extends BrowserTest:
     // Per-call `Present(s)` returns `s` verbatim, bypassing whatever `cfg.retrySchedule` holds (including the value set by `withConfig`
     // or capped by `withTimeout`). Inner `withConfig` wins over outer via `configLocal.let` shadowing.
 
-    /** Empirical property: a per-call `Present(shortSchedule)` wins over an enclosing `Browser.withConfig(_.retrySchedule(neverSchedule))`.
-      * The per-call value is returned verbatim by the `schedule.getOrElse(cfg.retrySchedule)` law, so the call aborts on the short
-      * per-call schedule; were the outer cfg used instead, the never-ending schedule would hang and trip the suite timeout.
+    /** A per-call `Present(shortSchedule)` wins over an enclosing `withConfig(_.retrySchedule(neverSchedule))`: `schedule.getOrElse(cfg.retrySchedule)`
+      * returns the per-call value verbatim, so the call aborts on the short schedule; the outer never-ending cfg would instead hang the suite timeout.
       */
     "retry-schedule precedence: per-call schedule wins over enclosing withConfig" in {
         withBrowser {
@@ -623,9 +621,8 @@ class BrowserPerCallScheduleTest extends BrowserTest:
         }
     }
 
-    /** Empirical property: an inner `withConfig(_.retrySchedule(100ms))` shadows an outer `withConfig(_.retrySchedule(neverSchedule))`
-      * via `configLocal.let`. With no per-call schedule, the effective schedule is the inner cfg's, so the call aborts on the inner
-      * short schedule; were the outer cfg used instead, the never-ending schedule would hang and trip the suite timeout.
+    /** An inner `withConfig(_.retrySchedule(100ms))` shadows an outer `withConfig(_.retrySchedule(neverSchedule))` via `configLocal.let`.
+      * With no per-call schedule the inner cfg wins, so the call aborts on it; the outer never-ending cfg would instead hang the suite timeout.
       */
     "retry-schedule precedence: innermost withConfig wins over outer withConfig" in {
         withBrowser {
@@ -647,17 +644,15 @@ class BrowserPerCallScheduleTest extends BrowserTest:
         }
     }
 
-    /** Empirical property: `withTimeout` mutates `cfg.retrySchedule` via `cfg.retrySchedule.maxDuration(timeout)`, but a per-call
-      * `Present(shortSchedule)` returns the per-call value verbatim and bypasses `cfg.retrySchedule` entirely. Therefore `withTimeout`
-      * CANNOT cap a per-call override; the call aborts on the short per-call schedule even though the enclosing cfg schedule never ends.
+    /** `withTimeout` caps `cfg.retrySchedule` via `.maxDuration(timeout)`, but a per-call `Present(shortSchedule)` bypasses `cfg.retrySchedule`
+      * entirely, so `withTimeout` cannot cap a per-call override: the call aborts on the short schedule though the enclosing cfg never ends.
       */
     "retry-schedule precedence: withTimeout cannot cap a per-call schedule override" in {
         withBrowser {
             Browser.withConfig(_.retrySchedule(neverSchedule)) {
                 onPage("<html><body><h1>no match</h1></body></html>") {
-                    // withTimeout budget (2h) strictly exceeds neverSchedule's 1h step, so the
-                    // wrong path (cfg capped by withTimeout) would wait ~1h and trip the suite
-                    // timeout: unambiguously a hang, not an instant maxDuration exhaustion.
+                    // The withTimeout budget (2h) exceeds neverSchedule's 1h step, so the wrong path (cfg capped by
+                    // withTimeout) would wait ~1h and trip the suite timeout: unambiguously a hang, not instant exhaustion.
                     Browser.withTimeout(2.hours) {
                         Abort.run[BrowserReadException] {
                             Browser.assertExists(

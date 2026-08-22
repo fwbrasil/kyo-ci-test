@@ -575,14 +575,12 @@ class BrowserCookieTest extends BrowserTest:
     "tryAcceptCookies no-ops without a banner" in {
         withBrowser {
             onPage("<div><p>No cookie banner here</p></div>") {
-                // loadSchedule is set effectively-infinite: the no-op path returns Absent from the in-page IIFE
-                // before consulting the deadline, so a broken short-circuit that fell into the poll loop would
-                // hang against this schedule instead of returning fast.
+                // loadSchedule is set effectively-infinite: the no-op path returns Absent from the in-page IIFE before
+                // consulting the deadline, so a broken short-circuit into the poll loop would hang instead of returning.
                 Browser.withConfig(_.loadSchedule(Schedule.fixed(1.hour))) {
                     for
                         result <- Browser.tryAcceptCookies
-                        // Behavior: when no banner is present, the no-op path must (a) return Absent and (b) leave the DOM untouched.
-                        // No spurious banner element should be created or remain.
+                        // No banner present: the no-op path must return Absent and leave the DOM untouched (no spurious banner).
                         bannerAbsent <- Browser.eval("String(document.querySelector('#cookie-banner') === null)")
                     yield
                         assert(result.isEmpty, s"Expected tryAcceptCookies to return Absent but got $result")

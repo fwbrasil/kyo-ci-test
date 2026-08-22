@@ -264,9 +264,8 @@ class WorkflowSchemaTest extends kyo.test.Test[Any]:
                         WorkflowSchema.structuralHash(flowV1) // v1 hash
                     )
                     _ <- store.putField[Int](stuckEid, "x", 10)
-                    // Engine now has v2 registered but this execution has v1 hash. It must be reconciled to Failed,
-                    // not released forever. The execution starts Running, so the pump has to wait for a terminal status:
-                    // stopping on Running would race the async fail-on-mismatch transition and read the pre-transition state.
+                    // The engine has v2 but this execution has the v1 hash, so it must reconcile to Failed, not release forever. The pump
+                    // must wait for a terminal status: stopping on the starting Running would race the async fail-on-mismatch transition.
                     _     <- pump(tc, store, stuckEid, _.isTerminal)
                     state <- store.getExecution(stuckEid)
                 yield assert(

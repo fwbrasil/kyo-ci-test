@@ -21,13 +21,10 @@ import scala.quoted.*
   */
 object AssertMacro:
 
-    /** Whether the power-assert instrumentation is compiled in, read once at macro-expansion time (i.e. in the compiler JVM).
+    /** Whether the power-assert instrumentation is compiled in, read once at macro-expansion time.
       *
-      * Instrumenting every `assert` (recursively rewriting the boolean expression tree to record each subexpression's value for the failure
-      * diagram) is a large share of test-compilation time. It is OFF by default: `assert(cond)` then compiles to a plain `if !cond` check
-      * that reports the assertion's source text on failure, without the value diagram. Set the env var `KYO_TEST_POWER_ASSERT` (or the system
-      * property `kyo.test.powerAssert`) to `1`/`true`/`on`/`yes` to compile the full diagram back in when a failure needs it. Because Zinc does
-      * not track this input, flip it on a clean test compile.
+      * Instrumenting every `assert` for the failure diagram costs significant test-compilation time, so it is OFF by default (`assert(cond)` becomes
+      * a plain `if !cond`). Set `KYO_TEST_POWER_ASSERT`/`-Dkyo.test.powerAssert` to `1`/`true`/`on`/`yes` to compile it back in; Zinc does not track it, flip on a clean compile.
       */
     private val powerAssertEnabled: Boolean =
         def truthy(v: String): Boolean = Set("1", "true", "on", "yes").contains(v.trim.toLowerCase)

@@ -53,9 +53,8 @@ class GuardDrainTimeoutConfigTest extends Test:
 
             closerThread.start()
 
-            // The bounded latch await IS the timing bound: close() must finish within 500ms (the
-            // configured short drain timeout), not the default 5s. If it took longer, await(500ms)
-            // returns false and this assertion fails; no separate elapsed measurement needed.
+            // The bounded latch await IS the timing bound: close() must finish within 500ms (the configured drain
+            // timeout), not the default 5s. A longer close makes await(500ms) return false and fail here.
             assert(closedLatch.await(500, TimeUnit.MILLISECONDS) == true)
             // Drain timed out with one callback still in flight → TimedOut outcome.
             assert(closeResult == CloseOutcome.TimedOut)

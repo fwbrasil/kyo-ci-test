@@ -57,8 +57,8 @@ class CoreTest extends kyo.test.Test[Any]:
 
     "clock operations" - {
         "sleep and timeout" in {
-            // A direct-style Async.sleep suspends until the clock passes its deadline: under a controlled
-            // clock the post-sleep instant is strictly after the pre-sleep instant, with no wall-clock skew.
+            // Async.sleep suspends until the clock passes its deadline, so under a controlled clock the post-sleep
+            // instant is strictly after the pre-sleep instant, no wall-clock skew.
             Clock.withTimeControl { control =>
                 for
                     fiber <- Fiber.initUnscoped(direct {

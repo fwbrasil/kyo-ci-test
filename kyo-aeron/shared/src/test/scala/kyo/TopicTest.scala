@@ -89,12 +89,10 @@ class TopicTest extends Test:
         }
     }
 
-    // started.await only proves both subscriber fibers started, not that both aeron images are
-    // receiving; a one-shot publish can close before a fan-out subscriber's image connects, and aeron
-    // never redelivers to a late image, so that subscriber hangs. As in TopicRoundTripTest, a leading
-    // probe phase emits sentinel Message(-1) values until both subscribers signal first receipt, then
-    // the real batch follows in the SAME publication. Each subscriber taps readiness on first receipt
-    // and filters the sentinels out before taking its quota.
+    // started.await only proves both subscriber fibers started, not that both aeron images are receiving; a one-shot
+    // publish can close before a fan-out subscriber's image connects, and aeron never redelivers to a late image, so it
+    // hangs. As in TopicRoundTripTest, a leading probe phase emits sentinel Message(-1) until both subscribers signal
+    // first receipt, then the real batch follows in the SAME publication; each filters the sentinels before its quota.
     val fanOutProbe        = Message(-1)
     val fanOutProbeBackoff = 5.millis
     val fanOutMaxProbes    = 2000 // bounded: ~10 s ceiling at 5 ms; stops if an image never connects

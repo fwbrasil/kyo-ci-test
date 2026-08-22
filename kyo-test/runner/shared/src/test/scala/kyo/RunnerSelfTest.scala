@@ -31,16 +31,14 @@ private object RunnerSelfFixtures:
         "y" in Async.sleep(1.millis).andThen(assert(2 + 2 == 4))
     end MultiAsyncSuite
 
-    // Process-global in-flight/peak counters for the parallelism-bound suite. The deterministic
-    // assertion is peak <= globalK: a pool worker holds its leaf until the body completes, so at most globalK
-    // leaves are in-flight across the process at once.
+    // Process-global in-flight/peak counters. The deterministic assertion is peak <= globalK: a pool worker
+    // holds its leaf until the body completes, so at most globalK leaves are in-flight at once.
     val parallelActive: AtomicInteger  = new AtomicInteger(0)
     val parallelMaxSeen: AtomicInteger = new AtomicInteger(0)
 
     class ParallelSuite extends TestBase[Any]:
-        // Each leaf raises the in-flight count, records the peak, yields once across an async boundary (fork-and-join a
-        // trivial fiber, NOT a sleep and NOT a cross-leaf barrier so nothing can deadlock under competition for the
-        // shared global pool), then lowers the count.
+        // Each leaf raises the in-flight count, records the peak, yields across a trivial fork-join (NOT a sleep or
+        // cross-leaf barrier, which could deadlock under contention for the shared pool), then lowers the count.
         private def track(using kyo.test.AssertScope): Unit < (Async & Abort[Throwable] & Scope) =
             Sync.defer {
                 val now = parallelActive.incrementAndGet()
@@ -187,12 +185,8 @@ class RunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     "parallelism enabled: all leaves run, bounded by the process-global pool" in {
-        // The parallelism config drives 8 leaves through the process-global LeafPool. The deterministic assertions are
-        // completeness (all 8 leaves ran and passed) and the global bound peak <= globalK. Real concurrency cannot be
-        // observed deterministically through the shared global pool without a sleep or a barrier through the pool
-        // (which deadlocks under cross-suite competition), so peak > 1 is intentionally NOT asserted here; the
-        // concurrency-reaches-k proof lives in LeafPoolTest. globalK is computed in-test from the public formula
-        // (identical to LeafPool.globalK), no reflection.
+        // 8 leaves through the process-global LeafPool. Deterministic assertions: completeness (all 8 passed) and peak <=
+        // globalK. peak > 1 is NOT asserted (needs a sleep/barrier that risks deadlock); that proof lives in LeafPoolTest.
         val globalK = if Platform.isNative then 1 else math.max(1, Async.defaultConcurrency)
         RunnerSelfFixtures.parallelActive.set(0)
         RunnerSelfFixtures.parallelMaxSeen.set(0)

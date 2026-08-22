@@ -449,7 +449,6 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
                 directSend(url, route, HttpRequest.getRaw(HttpUrl.fromUri("/host-check"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
                     val hostHeader = resp.fields.body
-                    // Should contain "127.0.0.1" at minimum
                     assert(hostHeader.contains("127.0.0.1"))
                 }
             }

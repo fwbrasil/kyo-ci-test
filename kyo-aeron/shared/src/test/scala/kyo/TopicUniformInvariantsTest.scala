@@ -152,11 +152,8 @@ class TopicUniformInvariantsTest extends Test:
     // The second round-trip succeeding proves the first run(aeronDir) closed only its own client,
     // never the caller's driver. The distinct chunks keep the two round-trips distinguishable.
     "run(aeronDir) closes only the client: a second round-trip on the same driver succeeds" in {
-        // Each round-trip uses its own stream id: aeron keeps a closed publication's image lingering on
-        // the shared driver for a few seconds, so reusing one stream id would let the first run's a,b
-        // still be readable when the second run subscribes. Distinct ids isolate the runs while still
-        // proving the invariant, that the second Topic.run(dir) connects at all means the first run
-        // closed only its client and left the driver alive.
+        // Each round-trip uses its own stream id: aeron keeps a closed publication's image lingering for a few seconds, so reusing
+        // one id would let the first run's a,b still be readable when the second subscribes. Distinct ids isolate the runs but still prove that the second Topic.run(dir) connecting means the first closed only its client.
         def roundTrip(dir: Path, payload: Seq[String], streamId: Int) =
             Topic.run(dir) {
                 for

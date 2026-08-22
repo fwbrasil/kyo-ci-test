@@ -50,8 +50,8 @@ class NioIoDriverTest extends Test:
         end try
     end withDriverAndHandle
 
-    /** How many times a standing grace probe is read while its peer is open. The count is what the "stays false" leaves assert over: each read
-      * re-checks the armed probe, so a latch on any of them is the regression, and no reading of a clock decides the outcome.
+    /** How many times a standing grace probe is read while its peer is open. Each read re-checks the armed probe, so a latch on any is the
+      * regression; the "stays false" leaves assert over the reads, not over a clock.
       */
     private val liveWatchReads = 25
 
@@ -282,8 +282,8 @@ class NioIoDriverTest extends Test:
         driver.registerChannel(handle)
         discard(driver.start())
 
-        // The peer stays open and sends nothing: the probe reads n == 0 and stays armed as a standing FIN watch, never latching. The watch is
-        // read repeatedly, a fixed count of reads rather than a stretch of wall-clock time, and every one of them must report false.
+        // The peer stays open and sends nothing: the probe reads n == 0 and stays armed as a standing FIN watch. It is read a fixed count of
+        // times rather than over a wall-clock window, and every read must report false.
         assert(!driver.isPeerClosed(handle), "the first isPeerClosed arms the probe and returns false")
         Loop(0) { i =>
             if i >= liveWatchReads then Loop.done(true)
@@ -292,8 +292,8 @@ class NioIoDriverTest extends Test:
         }.map { stayedOpen =>
             assert(stayedOpen, "isPeerClosed must stay false for a live peer that has not sent a FIN")
         }.andThen {
-            // The watch was armed, not dead: closing the peer now latches it. Without this a probe that never ran at all would report false
-            // just as happily, and the reads above would prove nothing about the standing FIN watch.
+            // The watch was armed, not dead: closing the peer now latches it. Without this, a probe that never ran would report false just as
+            // happily and the reads above would prove nothing.
             sv.close()
             awaitCondition(5.seconds)(driver.isPeerClosed(handle)).map { latched =>
                 driver.closeHandle(handle)
@@ -779,10 +779,8 @@ class NioIoDriverTest extends Test:
             handle.upgrading = true
             val p = new IOPromise[Closed, ReadOutcome]
             driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
-            // A second registered handle whose peer writes is the barrier that exposes the arm above to the poll carrier. Its read completes in
-            // dispatchReadyKeys, the LAST step of a cycle body, so the completion proves one full cycle (deferred-arm drains, interest reassert
-            // over every pending entry, dispatch) ran with the pre-CAS arm registered. That is the state to assert on: any poll-carrier path
-            // that would spuriously fail the arm has run by then.
+            // A second registered handle whose peer writes exposes the arm to the poll carrier: its read completes in dispatchReadyKeys, the LAST
+            // step of a cycle body, so its completion proves one full cycle ran with the pre-CAS arm registered, past any path that could spuriously fail it.
             val (barrierClient, barrierPeer) = openLoopbackPair()
             val barrier                      = NioHandle.init(barrierClient, 4096, Duration.Infinity, Frame.internal)
             driver.registerChannel(barrier)

@@ -100,11 +100,8 @@ class AsyncTest extends kyo.test.Test[Any]:
     }
 
     "Async.timeout arms the deadline before the guarded body starts (deterministic under time control)".notJs in {
-        // Regression: the timeout must arm its deadline before the guarded body can run, so a body that
-        // starts and suspends cannot outrun the timer. Under a controlled clock this is observable:
-        // advancing past the deadline after the body has started must still fire the timeout. If the
-        // body forked before the sleep armed, advance would find no pending sleep and the deadline would
-        // land in the already-elapsed past, hanging forever.
+        // The timeout must arm its deadline before the guarded body runs, so a body that starts and suspends cannot outrun the
+        // timer. If the body forked before the sleep armed, advancing past the deadline would find no pending sleep and land in the past, hanging.
         Clock.withTimeControl { control =>
             for
                 started <- Latch.init(1)
@@ -197,9 +194,8 @@ class AsyncTest extends kyo.test.Test[Any]:
                 if n <= 0 then ()
                 else once.andThen(repeat(n - 1))
             repeat(200).andThen {
-                // Every child was interrupted and awaited, so the shared counter is settled: two
-                // reads taken a scheduling gap apart agree. An orphaned child left running would keep
-                // incrementing it and never let the reads converge before the leaf timeout.
+                // Every child was interrupted and awaited, so the counter is settled: two reads a scheduling gap apart
+                // agree. An orphaned child still running would keep incrementing it and never let them converge.
                 assertEventually {
                     for
                         before <- Sync.defer(progress.get())

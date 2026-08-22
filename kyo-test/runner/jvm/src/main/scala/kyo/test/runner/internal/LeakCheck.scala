@@ -213,8 +213,8 @@ private[runner] object LeakCheck:
         now: () => Long = () => System.nanoTime(),
         park: Long => Unit = LockSupport.parkNanos(_)
     ): IdleResult =
-        // now/park are the loop's only real-time dependencies. They default to the monotonic clock and a real inter-poll park; a test
-        // overrides them with a virtual clock (park advances the clock instead of sleeping) to drive the settle/budget logic deterministically.
+        // now/park are the loop's only real-time dependencies, defaulting to the monotonic clock and a real park; a test overrides them with a
+        // virtual clock (park advances the clock instead of sleeping) to drive the settle/budget logic deterministically.
         val deadline                  = now() + budgetNanos
         var quietSince: Long          = -1L
         var lastAccountedAt: Long     = 0L

@@ -241,10 +241,9 @@ class CommitBufferTest extends kyo.test.Test[Any]:
     "CommitBuffer buffer lifecycle" - {
 
         "withBuffer clears the thread-local buffer after each use (no cross-cycle TRef retention)" in {
-            // The CommitBuffer is a reused thread-local ArrayList; withBuffer must clear it after each use so a
-            // prior commit's TRef entries cannot survive into the next one. Fill the buffer, let withBuffer clear
-            // it on exit, then re-enter on the same thread and append a fresh ref. Had clear() not run, the stale
-            // pair would still hold index 0 and push the fresh ref to a later slot, so ref(0) would not be the fresh ref.
+            // The CommitBuffer is a reused thread-local ArrayList; withBuffer must clear it on exit so a prior commit's
+            // TRef entries cannot survive into the next. Fill it, let withBuffer clear on exit, re-enter on the same
+            // thread, append a fresh ref: without clear() the stale pair would hold index 0, so ref(0) would not be it.
             import CommitBuffer.*
             Sync.Unsafe.defer {
                 val tick     = STM.Tick.next()

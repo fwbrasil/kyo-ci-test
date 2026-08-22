@@ -329,9 +329,8 @@ class BrowserSettlementTest extends BrowserTest:
                 )
                 outcome match
                     case Result.Failure(e: BrowserAssertionTimedOutException) =>
-                        // The document-body observer times out because the never-quiescing chatter never settles. The claim is that
-                        // the configured 500ms mutationSettlementTimeout is the deadline that fired: notQuiesced embeds the exhausted
-                        // deadline (nanos) in `actual`, so read it directly rather than measuring elapsed time.
+                        // Never-quiescing chatter always times out; assert the 500ms deadline the exception carries
+                        // (notQuiesced embeds exhausted-deadline nanos in `actual`), not elapsed time.
                         assert(
                             e.actual.contains(s"deadline ${500.millis.toNanos}"),
                             s"expected the 500ms mutationSettlementTimeout to be the exhausted deadline, but the exception reported: ${e.actual}"
@@ -395,9 +394,8 @@ class BrowserSettlementTest extends BrowserTest:
                         )
                         result match
                             case Result.Failure(e: BrowserAssertionTimedOutException) =>
-                                // The page never quiesces, so settlement raises on the default mutationSettlementTimeout. Read the
-                                // exhausted deadline the exception carries (nanos) and assert it is the configured default, rather than
-                                // measuring how long the wait took.
+                                // Never quiesces, so settlement raises on the default timeout; assert the exhausted deadline the
+                                // exception carries equals that default, not elapsed time.
                                 assert(
                                     e.actual.contains(s"deadline ${Browser.SessionConfig.default.mutationSettlementTimeout.toNanos}"),
                                     s"expected the default mutationSettlementTimeout to be the exhausted deadline, but the exception reported: ${e.actual}"
@@ -523,9 +521,8 @@ class BrowserSettlementTest extends BrowserTest:
                         Browser.waitForText(Browser.Selector.css("#target"), _ == "never")
                     }
                 }.map { result =>
-                    // The typed timeout is the whole contract: the bounded retrySchedule must make waitForText give up. If the
-                    // maxDuration were ignored (e.g. an Infinity schedule), waitForText would hang into the 90s leaf timeout instead
-                    // of failing here, so reaching this typed failure at all proves the configured bound was honored.
+                    // Reaching a typed timeout at all proves the bound was honored: if maxDuration were ignored,
+                    // waitForText would hang into the 90s leaf timeout instead.
                     result match
                         case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
                         case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
@@ -547,9 +544,8 @@ class BrowserSettlementTest extends BrowserTest:
                     }.map { result =>
                         result match
                             case Result.Failure(_: BrowserAssertionTimedOutException) =>
-                                // The failure shape is the deterministic contract: the inner 50ms config produced the
-                                // timeout. If the inner were ignored, the outer effectively-infinite schedule would hang
-                                // into the leaf timeout.
+                                // A typed timeout proves the inner 50ms config won: if it were ignored, the outer
+                                // effectively-infinite schedule would hang into the leaf timeout.
                                 succeed
                             case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                         end match
@@ -594,8 +590,8 @@ class BrowserSettlementTest extends BrowserTest:
     "waitForText and assertExists honor withConfig retrySchedule" in {
         withBrowser {
             onPage("<div id='anchor'>anchor</div>") {
-                // Outer schedule is effectively-infinite: an op that ignores the inner short config would fall back to it
-                // and hang into the leaf timeout. Each op's typed Failure is the deterministic contract.
+                // Outer schedule is effectively-infinite: an op that ignored the inner short config would fall back to it
+                // and hang. Each op's typed Failure is the proof it did not.
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour))) {
                     Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).maxDuration(100.millis))) {
                         Abort.run[BrowserElementException | BrowserAssertionException] {
@@ -653,10 +649,8 @@ class BrowserSettlementTest extends BrowserTest:
         withBrowser {
             Browser.isolate.fresh.use {
                 Async.zip(
-                    // Effectively-infinite maxDuration (not an infinite POLL interval): the 50ms poll is
-                    // unchanged, so the sibling still matches #slow at 700ms and its positive assertion is
-                    // intact; the 1-hour cap only matters to a fiber that never matches. That makes this a
-                    // clean detectable-hang discriminator for the tight fiber below, with no wall-clock ceiling.
+                    // Effectively-infinite maxDuration, not an infinite poll: the 50ms poll still matches #slow at
+                    // 700ms; the 1-hour cap only bites a fiber that never matches, discriminating the hang below.
                     Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).maxDuration(1.hour))) {
                         Browser.goto(slowPage).andThen {
                             Browser.waitForText(Browser.Selector.css("#slow"), _ == "arrived").map { result =>
@@ -665,11 +659,8 @@ class BrowserSettlementTest extends BrowserTest:
                             }
                         }
                     },
-                    // Tight config: #fast never matches, so with its own 100ms budget this fiber aborts fast.
-                    // If withConfig leaked the sibling's config across the Async.zip boundary, this fiber would
-                    // inherit maxDuration(1.hour) on a never-matching predicate and retry for an hour, hanging
-                    // the zip into the 90s leaf timeout. So the typed abort alone discriminates isolation
-                    // (fast BrowserAssertionTimedOutException) from a leak (hang), with no elapsed ceiling needed.
+                    // #fast never matches, so on its own 100ms budget it aborts fast. If withConfig leaked the sibling's
+                    // 1-hour cap across the Async.zip, it would retry for an hour and hang; the typed abort proves it did not.
                     Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).maxDuration(100.millis))) {
                         Browser.goto(fastPage).andThen {
                             Abort.run[BrowserElementException | BrowserAssertionException] {
@@ -929,9 +920,8 @@ class BrowserSettlementTest extends BrowserTest:
                         _    <- Browser.goto(s"http://$host:$port/", Browser.Settle.NetworkIdle)
                         done <- Browser.eval("String(window.__done)")
                     yield
-                        // The claim is a state read, not a stopwatch: NetworkIdle must not return on Load alone, so all three deferred
-                        // fetches (100/200/300ms) must have COMPLETED by the time goto returns. On correct behaviour the completion
-                        // counter is a stable 3 at return (the fetches are done, nothing increments it further), so no clock is involved.
+                        // NetworkIdle must not return on Load alone: all three deferred fetches (100/200/300ms) must have
+                        // completed, so the completion counter is a stable 3 at return. A state read, not a stopwatch.
                         assert(
                             done.trim == "3",
                             s"Settle.NetworkIdle must wait for the 3-fetch burst to complete, but window.__done=$done at return"
@@ -1016,9 +1006,8 @@ class BrowserSettlementTest extends BrowserTest:
                     _        <- Browser.goto(s"http://$host:$port/", Browser.Settle.Load)
                     complete <- Browser.eval("String(document.images[0].complete && document.images[0].naturalWidth > 0)")
                 yield
-                    // The load event fires only after every subresource finishes, so at return the slow <img> must be fully decoded.
-                    // Read that as state (stable true once loaded, no clock): an early return on DOMContentLoaded would leave
-                    // complete === false, which is exactly the regression this test targets.
+                    // Load fires only after every subresource finishes, so the slow <img> must be fully decoded at return.
+                    // An early return on DOMContentLoaded leaves complete === false (the regression this targets).
                     assert(
                         complete.trim == "true",
                         s"Settle.Load must wait for the slow <img> subresource to finish, but images[0].complete=$complete at return"
@@ -1051,12 +1040,8 @@ class BrowserSettlementTest extends BrowserTest:
             </script>
         </body>"""
 
-    /** Property: with a tight `mutationQuiescenceWindow(10.millis)` and 30ms-spaced fixture mutations (gaps exceed the window),
-      * settlement releases in the first inter-mutation gap and does NOT wait for the later mutations to quiesce. The claim is a DOM
-      * contrast, not a stopwatch: the synchronous `root.textContent='init'` is observed at the click instant, the first timed mutation
-      * ('a') lands 50ms later, and a 10ms window quiesces in that gap, so `#root` still shows an EARLY token (never the final 'e') when
-      * click returns. The 500ms-window foil below asserts the opposite ('e'); the two outcomes differing under the two windows is the
-      * whole claim.
+    /** A tight `mutationQuiescenceWindow(10.millis)` releases in the first gap of 30ms-spaced mutations, so `#root` shows an early token
+      * (never the final 'e') at click return; the 500ms-window foil below asserts the opposite. The contrast is the claim, no clock.
       */
     "mutationQuiescenceWindow(10ms) lets 30ms-spaced mutations resolve in the first window" in {
         val p = page(quiescenceMatrixHtml)
@@ -1066,9 +1051,8 @@ class BrowserSettlementTest extends BrowserTest:
                 _         <- Browser.withConfig(_.mutationQuiescenceWindow(10.millis))(Browser.click(Browser.Selector.id("trigger")))
                 finalText <- Browser.text(Browser.Selector.id("root"))
             yield
-                // A broken tight window would absorb the later mutations and wait for full quiescence, returning only after the last
-                // mutation 'e' had landed and stayed; the early-token read below fails visibly in that case. The foil at :1092 proves
-                // the wide-window 'e' outcome, so the contrast (early token here vs 'e' there) pins the window config with no clock.
+                // A broken tight window would absorb later mutations and return only after 'e' landed; the early-token read fails
+                // then. The wide-window foil at :1092 asserts 'e', so the contrast pins the window config, no clock.
                 assert(
                     finalText != "e",
                     s"mutationQuiescenceWindow(10ms) must release before the final mutation 'e' lands, but observed '$finalText'"
@@ -1089,9 +1073,8 @@ class BrowserSettlementTest extends BrowserTest:
                 _         <- Browser.withConfig(_.mutationQuiescenceWindow(500.millis))(Browser.click(Browser.Selector.id("trigger")))
                 finalText <- Browser.text(Browser.Selector.id("root"))
             yield
-                // A wide 500ms quiescence window absorbs every 30ms-spaced mutation, so settlement returns only after the last one
-                // ('e') has landed and stayed. Paired with the tight-window leaf above (which releases before 'e'), the differing
-                // final text proves the configured window governs when settlement releases, with no dependence on elapsed time.
+                // A wide 500ms window absorbs every 30ms-spaced mutation, so settlement returns only after 'e' lands. Paired with the
+                // tight-window leaf above (releases before 'e'), the differing final text proves the window governs release, no clock.
                 assert(finalText == "e", s"expected the last mutation 'e' to land before settlement returns but got '$finalText'")
             end for
         }
@@ -1108,8 +1091,7 @@ class BrowserSettlementTest extends BrowserTest:
         // BrowserAssertionTimedOutException on chatty pages). Combine a wide mutationQuiescenceWindow(500ms)
         // (so the observer never sees a quiet 500ms gap inside the 5ms-interval churn) with the custom
         // mutationSettlementTimeout(500ms). The default-timeout foil pins the same churn to the default 2s
-        // timeout. Pinning here to 500ms proves the per-call override actually applies: the raised timeout exception
-        // reports the 500ms deadline it exhausted, not the default 2s (asserted below as state, with no clock).
+        // timeout. Pinning to 500ms proves the override applies: the exception reports the 500ms deadline it exhausted, not 2s.
         withBrowser {
             onPage(
                 """<body>
@@ -1134,9 +1116,8 @@ class BrowserSettlementTest extends BrowserTest:
                 }.map { result =>
                     result match
                         case Result.Failure(e: BrowserAssertionTimedOutException) =>
-                            // The never-quiesce page always times out; the CLAIM is that the 500ms override, not the default 2s, was
-                            // the deadline that fired. notQuiesced embeds the exhausted deadline (as nanos) in `actual`, so assert it
-                            // reports the override. This reads which config the code applied, with no dependence on measured elapsed.
+                            // Never-quiesce page always times out; assert the exhausted deadline is the 500ms override, not the
+                            // default 2s (notQuiesced embeds it as nanos in `actual`). Reads which config applied, not elapsed.
                             assert(
                                 e.actual.contains(s"deadline ${500.millis.toNanos}"),
                                 s"mutationSettlementTimeout(500ms) override should be the exhausted deadline, but the exception reported: ${e.actual}"
@@ -1325,9 +1306,8 @@ class BrowserSettlementTest extends BrowserTest:
     }
 
     // Test 3: waitForStable returns () once the DOM quiesces.
-    // A burst of 5 mutations fires at ~20ms intervals then stops; waitForStable must return once the
-    // DOM quiesces. The timeout is effectively-infinite so a broken quiescence detection hangs into the
-    // leaf timeout instead of returning.
+    // A burst of 5 mutations at ~20ms then stops; waitForStable must return once the DOM quiesces. The
+    // effectively-infinite timeout makes a broken quiescence detection hang into the leaf timeout instead.
     "waitForStable returns once the DOM quiesces after a mutation burst" in {
         withBrowser {
             onPage("""<body>

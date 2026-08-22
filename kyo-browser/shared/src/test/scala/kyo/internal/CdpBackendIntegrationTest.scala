@@ -230,8 +230,7 @@ class CdpBackendIntegrationTest extends BrowserTest:
                     for
                         // Nothing is in flight, so close returns immediately (a hang trips the leaf timeout).
                         _ <- backend.close(1.second)
-                        // Assert the close EFFECT, not just that it returned: a subsequent send must raise
-                        // ConnectionLost, proving the connection was actually closed.
+                        // Assert the close effect, not just that it returned: a subsequent send must raise ConnectionLost.
                         afterClose <- Abort.run[BrowserConnectionException](CdpBackend.getTargets(backend))
                     yield afterClose match
                         case Result.Failure(_: BrowserConnectionLostException) => succeed
@@ -248,9 +247,8 @@ class CdpBackendIntegrationTest extends BrowserTest:
             SharedChrome.init.map { wsUrl =>
                 CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
                     for
-                        // Assert the close EFFECT (mirrors the close(grace) sibling above), not elapsed time: after closeNow a
-                        // subsequent send must raise ConnectionLost. Promptness is covered for free by the leaf timeout, which a
-                        // closeNow that blocked would trip.
+                        // Assert the close effect (like the close(grace) sibling), not elapsed time: after closeNow a send must raise
+                        // ConnectionLost. Promptness comes free from the leaf timeout, which a blocking closeNow would trip.
                         _          <- backend.closeNow
                         afterClose <- Abort.run[BrowserConnectionException](CdpBackend.getTargets(backend))
                     yield afterClose match

@@ -160,13 +160,9 @@ class TopicBackpressureReconnectTest extends Test:
         // is undefined in Aeron. The long-lived subscriber is slowed (Async.delay) so the short-lived
         // sibling departs mid-flight.
         //
-        // started.await only proves both fibers started, not that both aeron images are receiving; a
-        // one-shot publish can reach shortSub's image and close before longSub's image connects, and
-        // aeron never redelivers to a late image, so longSub would hang. As in TopicRoundTripTest, a
-        // leading probe phase emits sentinel SubRestartMsgB(0) values until BOTH subscribers signal
-        // first receipt, then the real batch follows in the SAME publication (FIFO/no-loss hold only
-        // within one publication). Each subscriber taps readiness on its first received element and
-        // filters the sentinels out before taking its quota.
+        // started.await proves both fibers started, not that both images receive; a one-shot publish can reach shortSub and close
+        // before longSub's image connects (aeron never redelivers late), so longSub would hang. So a leading probe phase emits
+        // sentinel SubRestartMsgB(0) until both signal first receipt, then the real batch follows in the SAME publication (FIFO within one); each filters sentinels before its quota.
         "7b fan-out continuity after a sibling subscriber stops" in {
             val uri          = "aeron:ipc"
             val all          = Seq(SubRestartMsgB(1), SubRestartMsgB(2), SubRestartMsgB(3), SubRestartMsgB(4))

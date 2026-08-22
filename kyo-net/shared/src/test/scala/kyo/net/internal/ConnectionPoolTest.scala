@@ -115,11 +115,8 @@ class ConnectionPoolTest extends Test:
     }
 
     "idle-timeout eviction during poll" in {
-        // A connection released then polled after the idle timeout has elapsed in VIRTUAL time is evicted and
-        // discarded by poll. The pool reads idle-age from the ambient clock, which withTimeControl rebinds, so
-        // advancing past a positive timeout drives eviction at an exact boundary with no real sleep. (The finite
-        // timeout also spawns a reaper on the same clock; whether poll or a reaper sweep evicts first, each conn is
-        // discarded exactly once, so the counts hold regardless of the interleaving.)
+        // Idle-age reads the withTimeControl-rebound clock, so advancing past the timeout evicts on the next poll, no sleep. The finite
+        // timeout also spawns a reaper, but poll or reaper each discards a conn exactly once, so the counts hold regardless of interleaving.
         Clock.withTimeControl { tc =>
             val discardCount = new AtomicInteger(0)
             for
@@ -142,11 +139,8 @@ class ConnectionPoolTest extends Test:
     }
 
     "reaper expires an idle connection with no further poll" in {
-        // The lazy-on-poll defect: without a background reaper a connection released and never polled again is
-        // never inspected, so its socket is never closed (the process-lifetime default client leaks it). A finite
-        // idle timeout spawns a reaper that closes an idle connection with no poll. Driven by VIRTUAL time: the
-        // reaper runs on the ambient clock, which withTimeControl rebinds, so advancing past the timeout wakes it
-        // deterministically; a latch released by the discard callback fences on the eviction, no sleep.
+        // Without a reaper, a connection released and never polled again is never closed (an fd leak); a finite timeout spawns one that
+        // closes it with no poll. On the withTimeControl clock, advancing past the timeout wakes it; a discard-callback latch fences.
         Clock.withTimeControl { tc =>
             val discardCount = AtomicInt.Unsafe.init(0)
             val reaped       = Latch.Unsafe.init(1)
@@ -173,10 +167,8 @@ class ConnectionPoolTest extends Test:
     }
 
     "reaper expires idle connections across multiple host pools" in {
-        // The sweep iterates every host pool, so a connection idle past the timeout is closed regardless of which host
-        // it belongs to. Release one to each of two hosts, never poll, and assert both are closed by the reaper. Driven
-        // by VIRTUAL time (the reaper runs on the withTimeControl-rebound ambient clock); a latch counting both
-        // discards fences on the eviction, no sleep.
+        // The sweep iterates every host pool, so an idle connection is closed regardless of its host. Release one to each
+        // of two hosts, never poll, and assert the reaper closes both. On virtual time; a latch counting both discards fences.
         Clock.withTimeControl { tc =>
             val discardCount = AtomicInt.Unsafe.init(0)
             val reaped       = Latch.Unsafe.init(2)

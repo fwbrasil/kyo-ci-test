@@ -11,13 +11,11 @@ class BrowserSnapshotConfigLocalTest extends kyo.BrowserTest:
     // loadSchedule, so a caller running `Browser.withConfig(_.loadSchedule(faster))` actually gets the
     // faster schedule for its internal waitForLoad.
     //
-    // Test strategy (no wall-clock): the page pins document.readyState to "loading" and counts each read
-    // into window.__probes. waitForLoad polls readyState via Retry(loadSchedule), so it never sees
-    // "complete" and runs exactly as many probes as the schedule permits (~ maxDuration / interval). The
-    // probe count is therefore set by the configured schedule, not by measured time. Restoring under a wider
-    // maxDuration must probe strictly more than under a tighter one; if restoreSnapshot ignored configLocal
-    // and hardcoded a single schedule, the two counts would match. Each restore navigates fresh, re-running
-    // the page script and resetting the counter, so the two reads are independent.
+    // Test strategy (no wall-clock): the page pins document.readyState to "loading" and counts each read into
+    // window.__probes. waitForLoad polls readyState via Retry(loadSchedule), so it never sees "complete" and runs as
+    // many probes as the schedule permits (~ maxDuration / interval), set by the schedule not by time. A wider
+    // maxDuration must probe strictly more than a tighter one; if restoreSnapshot ignored configLocal the counts would
+    // match. Each restore navigates fresh, resetting the counter, so the two reads are independent.
     "restoreSnapshot consults Browser.configLocal.loadSchedule (does not hardcode the default)" in {
         withBrowserOnLocalhost {
             readyStateStuckServer { (host, port) =>
@@ -54,11 +52,10 @@ class BrowserSnapshotConfigLocalTest extends kyo.BrowserTest:
         }
     }
 
-    // ---- Helper: serves a /page that pins document.readyState to "loading" and counts each read into
-    //      window.__probes. Overriding the instance accessor shadows the inherited Document.prototype getter;
-    //      Chrome's own internal load tracking is unaffected, so Page.navigate still commits normally, but
-    //      waitForLoad (which reads the JS readyState) never sees "complete" and exhausts its schedule,
-    //      leaving window.__probes equal to the number of retries the schedule permitted. ----
+    // Helper: serves a /page that pins document.readyState to "loading" and counts each read into window.__probes.
+    // Overriding the instance accessor shadows the inherited Document.prototype getter; Chrome's own load tracking is
+    // unaffected (Page.navigate still commits), but waitForLoad reads the JS readyState, never sees "complete", and
+    // exhausts its schedule, leaving window.__probes equal to the retries the schedule permitted.
     private def readyStateStuckServer[A, S](f: (String, Int) => A < (Browser & S))(using
         Frame
     ): A < (Browser & Scope & Abort[BrowserConnectionException] & Abort[HttpBindException] & Async & S) =

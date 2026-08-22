@@ -1489,21 +1489,14 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
     }
 
     "large input" - {
-        // These parse a large input through the combinators whose per-token cost must stay O(1):
-        // `any`/`readOne` reads via `ParseInput.headMaybe` (a direct index) and `literal` probes via
-        // `ParseInput.startsWith` (bounded by the prefix), neither of which materializes the remaining
-        // tail per token. A regression to per-token tail copying makes `repeat` over an n-token input
-        // O(n^2), so these parses run for minutes instead of finishing well under a second.
+        // These parse a large input through combinators whose per-token cost must stay O(1): `any`/`readOne` via
+        // `ParseInput.headMaybe` (a direct index) and `literal` via `ParseInput.startsWith` (bounded by the prefix),
+        // neither materializing the remaining tail per token. A regression to per-token tail copying makes `repeat`
+        // over n tokens O(n^2), running for minutes instead of well under a second.
         //
-        // There is deliberately no hard O(n^2) threshold assertion here. Catching the quadratic
-        // deterministically means counting per-token element work, and the element-touching methods on
-        // the correct linear path ARE `headMaybe` and `startsWith` themselves (repeat(any) and
-        // repeat(literal/any) never call `ParseInput.remaining`), so a counter that would detect the
-        // regression has to sit on the per-token hot path and therefore charges the production non-test
-        // path per token. Pushing the counter off the hot path onto `remaining` observes nothing for
-        // those two paths, and a truly zero-overhead seam would mean reshaping the public `ParseInput`
-        // type purely for test instrumentation. With no threshold assertion, a quadratic regression
-        // surfaces as the suite timing out.
+        // No hard threshold assertion: the only per-token work on the correct linear path is `headMaybe`/`startsWith`
+        // themselves, so any counter that detects the regression sits on the production hot path. A quadratic
+        // regression therefore surfaces as the suite timing out.
         val largeLen = 500000
 
         "repeat(any) over a large input" in {

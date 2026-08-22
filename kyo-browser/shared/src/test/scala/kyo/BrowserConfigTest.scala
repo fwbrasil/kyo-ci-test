@@ -59,10 +59,8 @@ class BrowserConfigTest extends BrowserTest:
             onPage("<div>nothing here</div>") {
                 val fastSchedule  = Schedule.fixed(50.millis).maxDuration(500.millis)
                 val neverSelector = Browser.Selector.id("nonexistent-element-12345")
-                // The outer config is effectively-infinite: if the inner fastSchedule failed to
-                // apply, assertExists would fall back to it and retry forever (hang -> leaf
-                // timeout). A BrowserElementNotFoundException means the fast budget exhausted and
-                // aborted (the property), with no wall-clock ceiling to distinguish it.
+                // Outer config is effectively-infinite: if the inner fastSchedule didn't apply, assertExists would fall
+                // back and retry forever (leaf timeout). BrowserElementNotFoundException means the fast budget aborted it.
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour))) {
                     Browser.withConfig(_.retrySchedule(fastSchedule)) {
                         Abort.run[BrowserElementException] {
@@ -84,10 +82,8 @@ class BrowserConfigTest extends BrowserTest:
             onPage("<div>nothing here</div>") {
                 val fastSchedule  = Schedule.fixed(50.millis).maxDuration(200.millis)
                 val neverSelector = Browser.Selector.id("nonexistent-xyz-99999")
-                // Outer config is effectively-infinite: if the inner fastSchedule's maxDuration
-                // were not honored, assertExists would fall back to it and retry forever (hang ->
-                // leaf timeout). BrowserElementNotFoundException means the 200ms budget fired and
-                // bounded the retry (the property), with no wall-clock ceiling.
+                // Outer config is effectively-infinite: if the inner maxDuration weren't honored, assertExists would
+                // retry forever (leaf timeout). BrowserElementNotFoundException means the 200ms budget bounded the retry.
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour))) {
                     Browser.withConfig(_.retrySchedule(fastSchedule)) {
                         Abort.run[BrowserElementException] {

@@ -10,11 +10,8 @@ import scala.language.implicitConversions
 
 /** Streaming-response connection-lifecycle tests for HttpClientBackend.
   *
-  * The test plays the server: `TransportConnection.inMemoryPair()` cross-wires two channel-backed `kyo.net.Connection`s, so the client's
-  * request bytes appear on the server side's `inbound` and the test's `outbound.offer(...)` delivers response fragments to the client at
-  * exact byte boundaries. There are no pumps and no sockets; parser callbacks run synchronously inside each offer, while the streaming body
-  * decode runs as a background task on the scheduler, so every cross-task assertion goes through an await (`safe.get`, latch, `onClosing`),
-  * never a sleep.
+  * `TransportConnection.inMemoryPair()` cross-wires two channel-backed `kyo.net.Connection`s so the test plays the server at exact byte
+  * boundaries, no sockets. Parser callbacks run inside each offer; the body decode is a background task, so cross-task assertions await, never sleep.
   */
 class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
 
@@ -57,8 +54,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
                 discard(serverConn.outbound.offer(spanOf(streamHeaders)))
                 discard(serverConn.outbound.offer(spanOf(chunk1)))
                 respFiber.safe.get.map { resp =>
-                    // The only writer of `true` is the terminal chunk; it has not been sent, so this
-                    // negative assertion is race-free regardless of background-task scheduling.
+                    // The terminal chunk is the only writer of `true`, unsent here, so this negative assertion is race-free.
                     assert(bodyOutcome.poll().isEmpty, "bodyOutcome must not complete before the terminal chunk")
                     discard(serverConn.outbound.offer(spanOf(chunk2AndEnd)))
                     bodyOutcome.safe.get.map { reusable =>
@@ -97,9 +93,8 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
                     Latch.init(1).map { firstChunk =>
                         Fiber.init(resp.fields.body.foreachChunk(_ => firstChunk.release)).map { consumer =>
                             firstChunk.await.andThen {
-                                // chunk1 reached the consumer, which is now parked awaiting chunk2. Interrupting it
-                                // unwinds the stream run, whose finalizer closes the decoded channel, so the
-                                // decoder's next delivery must fail and taint the connection.
+                                // Consumer got chunk1 and is parked on chunk2. Interrupting it unwinds the stream run, whose
+                                // finalizer closes the decoded channel, so the decoder's next delivery taints the connection.
                                 consumer.interrupt.unit.andThen {
                                     consumer.getResult.map { _ =>
                                         discard(serverConn.outbound.offer(spanOf(chunk2AndEnd)))
@@ -115,12 +110,8 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             }
         }
 
-        // Stream.take drops the source continuation without unwinding it (Stream.scala take: the continuation is
-        // discarded once n elements are emitted), so the stream-run finalizer does NOT fire on a take-early-stop
-        // and the background decode keeps draining. When the rest of the body fits the decoded channel, the decode
-        // reaches Done with inbound clean: the connection is genuinely reusable and the outcome must be true. This
-        // pins the boundary between "stopped early but drained" (reuse) and "interrupted" (discard, leaf above);
-        // if Stream.take ever starts finalizing eagerly, this leaf flips and the reuse decision needs re-review.
+        // Stream.take discards the continuation without unwinding, so no finalizer fires and the decode drains to Done, leaving the
+        // connection reusable (unlike the interrupted leaf above). If take ever finalizes eagerly, this flips and needs re-review.
         "completes true when the consumer stops early but the body drains in the background" in {
             val (clientConn, serverConn) = TransportConnection.inMemoryPair()
             val http1                    = Http1ClientConnection.init(clientConn.inbound, clientConn.outbound)
@@ -148,11 +139,8 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
 
     "pooled connection with a streaming body in flight" - {
 
-        // The desync reproducer: on the pre-fix client the pool returned the connection at headers time, so the
-        // second request checked it out while the streaming body was still arriving and its response bytes were
-        // consumed by the stale body decoder (or misparsed as framing). Deterministic in outcome pre-fix (the
-        // second request never receives its own body); the failure flavor (timeout vs connection-closed) depends
-        // on taker-arm interleaving.
+        // Regression guard: returning a pooled connection at headers time lets a second request check it out while the
+        // streaming body is still arriving, so its bytes feed the stale decoder and it never gets its own body.
         "a second request must not observe another response's bytes" in {
             val (clientConn1, serverConn1) = TransportConnection.inMemoryPair()
             val (clientConn2, serverConn2) = TransportConnection.inMemoryPair()
@@ -162,11 +150,11 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
                 serveOnce(serverConn1, Seq(streamHeaders, chunk1)).andThen {
                     f1.get.map { resp1 =>
-                        // resp1 was delivered at headers time; its body is provably still in flight (no terminal
-                        // sent). Keep a live partial chunk on the wire so the stale decoder is engaged pre-fix.
+                        // resp1's body is still in flight (no terminal sent). Keep a live partial chunk on the wire so a
+                        // stale decoder would be engaged.
                         Sync.Unsafe.defer(discard(serverConn1.outbound.offer(spanOf("6\r\nch")))).andThen {
-                            // Serve the second request on whichever connection actually carries it: pre-fix reuses
-                            // the poisoned conn1 (serverConn1 sees a second request), fixed opens conn2.
+                            // Serve the second request on whichever connection carries it: a bug reuses poisoned conn1,
+                            // correct opens conn2.
                             Fiber.init(serveOnce(serverConn1, Seq(plainHeaders, plainBody))).map { _ =>
                                 Fiber.init(serveOnce(serverConn2, Seq(plainHeaders, plainBody))).map { _ =>
                                     Abort.run[HttpException](backend.sendWithConfig(plainRoute, plainReq, config)(r => r)).map {
@@ -188,9 +176,8 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             }
         }
 
-        // Anti-overcorrection guard: after the streaming body fully drains, the SAME connection is released and
-        // reused (connectCount stays 1). Fails on a fix that discards or strands streaming connections instead of
-        // releasing them on completion.
+        // Guard against overcorrection: once the streaming body drains, the SAME connection is released and reused
+        // (connectCount stays 1). Fails a fix that discards or strands drained streaming connections.
         "after the body drains, the connection is released and reused" in {
             val (clientConn1, serverConn1) = TransportConnection.inMemoryPair()
             val transport                  = new TestChannelTransport(Seq(clientConn1))
@@ -216,9 +203,8 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             }
         }
 
-        // Interruption variant: the consumer is interrupted mid-stream; the stream-run finalizer must close the
-        // decoded channel so the body decoder's next delivery taints the connection and the pool DISCARDS it
-        // (transport closed), and the next request opens a fresh connection.
+        // Interruption variant: a mid-stream interrupt closes the decoded channel via the finalizer, so the decoder's next
+        // delivery taints the connection, the pool discards it, and the next request opens a fresh one.
         "an interrupted consumer discards the connection instead of pooling it" in {
             val (clientConn1, serverConn1) = TransportConnection.inMemoryPair()
             val (clientConn2, serverConn2) = TransportConnection.inMemoryPair()
@@ -234,8 +220,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
                                     // chunk1 reached the consumer, which is now parked awaiting chunk2.
                                     consumer.interrupt.unit.andThen {
                                         consumer.getResult.map { _ =>
-                                            // Finalizers ran during the interrupt unwind. The next body fragment makes
-                                            // the decoder observe the closed decoded channel -> discard.
+                                            // Finalizers ran; the next body fragment makes the decoder observe the closed channel -> discard.
                                             Sync.Unsafe.defer(discard(serverConn1.outbound.offer(spanOf(chunk2AndEnd)))).andThen {
                                                 clientConn1.onClosing.safe.get.andThen {
                                                     Sync.Unsafe.defer(clientConn1.isOpen).map { open =>

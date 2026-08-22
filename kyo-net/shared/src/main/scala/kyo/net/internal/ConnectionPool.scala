@@ -33,10 +33,8 @@ final private[kyo] class ConnectionPool[K, C](
 
     @volatile private var closed = false
 
-    // The idle-expiry reaper: a background fiber that periodically closes connections idle past the timeout, so an idle
-    // connection's socket is released within the timeout even when the pool is never polled again and its owning client is
-    // never closed (the process-lifetime default client leaks such a connection otherwise). Absent when the idle timeout is
-    // infinite (nothing ever expires) or before init launches it; interrupted by close().
+    // Background fiber that closes connections idle past the timeout, so a socket is released even when the pool is never
+    // polled again and its client never closed. Absent for an infinite timeout; interrupted by close().
     @volatile private var reaper: Maybe[Fiber.Unsafe[Unit, Any]] = Absent
 
     /** True once `close()` has run. For testing the client's close/release path only. */
@@ -111,19 +109,15 @@ final private[kyo] class ConnectionPool[K, C](
     private def getPool(key: K): HostPool =
         pools.computeIfAbsent(key, newHostPool)
 
-    // Launch the idle-expiry reaper. Called by init only for a finite idle timeout, so pools with an infinite timeout
-    // (every Duration.Infinity test pool) spawn nothing. The recurring sweep runs on one scheduler fiber that parks on
-    // Clock.sleep between passes: no thread blocking, no per-request cost, one fiber per pool. close() interrupts it.
+    // Launch the idle-expiry reaper (init calls this only for a finite timeout). One scheduler fiber that parks on
+    // Clock.sleep between passes: no thread blocking, no per-request cost. close() interrupts it.
     private def startReaper(interval: Duration)(using AllowUnsafe): Unit =
         given Frame = frame
         reaper =
             Present(
                 Sync.Unsafe.evalOrThrow(
-                    // Bind the pool's own clock (Clock.live in production), NOT the ambient one: idle expiry is a
-                    // real-time concern, and this pool may be initialized under a controlled clock (the process-lifetime
-                    // default client is built lazily inside whatever computation first touches it), which the ambient
-                    // clock would leave parked forever. A test injects a controlled clock to drive the reaper cadence and
-                    // the idle-age reads together, so eviction is exercised deterministically without a real sleep.
+                    // Bind the pool's own clock, not the ambient one: the pool may be initialized under a controlled clock
+                    // that the ambient clock would leave parked forever, and a test's clock drives cadence and idle-age reads.
                     Clock.let(clock)(Clock.repeatWithDelay(interval, interval)(Sync.Unsafe.defer(sweepExpiredHosts())))
                 ).unsafe
             )
@@ -149,10 +143,8 @@ private[kyo] object ConnectionPool:
         isAlive: C => Boolean,
         discard: C => Unit
     )(using frame: Frame): ConnectionPool[K, C] < Sync =
-        // Capture the ambient clock: Clock.live in production, or a Local-bound clock when the surrounding
-        // computation rebinds it (a test under Clock.withTimeControl). The pool stamps idle-start instants and runs
-        // its reaper against this one clock, so idle-age reads and the reaper cadence stay on whatever clock is in
-        // force, and eviction is exercisable under virtual time with no real sleep.
+        // Capture the ambient clock (Clock.live, or a test's clock under Clock.withTimeControl). The pool stamps
+        // idle-start instants and runs its reaper against it, so eviction is exercisable under virtual time.
         Clock.use { clock =>
             Sync.Unsafe.defer {
                 require(maxConnectionsPerHost >= 2, s"maxConnectionsPerHost must be >= 2: $maxConnectionsPerHost")
@@ -165,9 +157,8 @@ private[kyo] object ConnectionPool:
                     clock,
                     frame
                 )
-                // Only a finite timeout ever expires a connection, so an infinite-timeout pool needs no reaper. The
-                // sweep cadence is half the idle timeout (floored at 50ms so tiny test timeouts still sweep promptly
-                // without busy-spinning), so an idle connection closes within about 1.5x the idle timeout of going idle.
+                // Finite timeout only (an infinite-timeout pool needs no reaper). Sweep cadence is half the idle timeout,
+                // floored at 50ms, so an idle connection closes within about 1.5x the idle timeout.
                 if idleConnectionTimeout != Duration.Infinity then
                     val intervalNanos = math.max(idleConnectionTimeout.toNanos / 2, 50L * 1000000L)
                     pool.startReaper(intervalNanos.nanos)
@@ -194,8 +185,8 @@ private[kyo] object ConnectionPool:
         private val tail        = new AtomicLong(0)
         private val inFlight    = new AtomicInteger(0)
 
-        /** Try to take an idle connection. Discards expired or dead connections and retries. `now` is the caller's
-          * single monotonic reading for this whole poll, so a retry compares idle age against a stable instant.
+        /** Try to take an idle connection. Discards expired or dead connections and retries. `now` is one monotonic
+          * reading for the whole poll, so retries compare idle age against a stable instant.
           */
         final def poll[C](
             now: Long,
@@ -230,19 +221,10 @@ private[kyo] object ConnectionPool:
 
         /** Close every connection idle past the timeout, scanning from the head.
           *
-          * `release` appends to `tail` with a fresh timestamp and `poll` consumes from `head`, so the ring is ordered by
-          * idle age from head to tail (approximately: two `release`s racing on adjacent slots can timestamp out of order by
-          * the interleaving gap). The scan stops at the first non-stale head, treating everything behind it as fresher. A
-          * small inversion can leave a stale connection one slot behind a fresh head unreaped for a cycle; the next sweep
-          * re-reads from the head and catches it, so the worst case is a bounded extra delay, never a stranded connection. A
-          * stale head is claimed with the same `head` CAS `poll` uses, which makes the reaper race-free against a concurrent
-          * `poll` (whichever wins the CAS owns the slot, so no connection is both handed out and closed) and against
-          * `close`'s drain (same exactly-once arbitration). A head slot whose sequence is not yet readable is a just-released,
-          * fresh connection mid-publish: stop and let the next pass catch it.
-          *
-          * A per-connection close failure is logged and the scan continues: a reaper that died on one bad connection would
-          * silently stop expiring every other connection. NonFatal only, so a fatal error still escapes (mirrors kyo-sql's
-          * pool discard, not `ConnectionRegistry.runClose`'s blanket swallow).
+          * The ring is ordered by idle age head to tail, so the scan stops at the first non-stale head (a rare out-of-order
+          * `release` self-heals next sweep, never a leak). A stale head is claimed with the same `head` CAS `poll` uses, so
+          * the reaper is race-free and exactly-once against a concurrent `poll`/`close`; an unreadable sequence is
+          * mid-publish, so stop. A close failure is logged so one bad connection can't stall the rest.
           */
         final def sweepExpired[C](now: Long, idleTimeoutNanos: Long, discardConn: C => Unit)(using AllowUnsafe, Frame): Unit =
             @tailrec def loop(): Unit =
@@ -273,8 +255,8 @@ private[kyo] object ConnectionPool:
             loop()
         end sweepExpired
 
-        /** Return a connection to the ring. If full, discard it. `now` is the monotonic reading stamped as the
-          * connection's idle-start instant, read once by the caller from the pool's clock.
+        /** Return a connection to the ring, or discard it if full. `now` is the idle-start instant stamped on the
+          * connection, read once from the pool's clock.
           */
         final def release[C](now: Long, conn: C, discardConn: C => Unit): Unit =
             val currentTail = tail.get()

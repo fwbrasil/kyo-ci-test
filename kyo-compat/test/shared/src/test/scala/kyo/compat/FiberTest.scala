@@ -154,8 +154,7 @@ class FiberTest extends CompatTest:
             CFiber.init(CIO.defer { 1 }).flatMap { fib =>
                 CPromise.init[Unit].flatMap { entered =>
                     fib.onComplete { _ =>
-                        // Signal that the callback ran, THEN fail: the surrounding
-                        // chain must still progress despite this failure.
+                        // Signal the callback ran, THEN fail: the surrounding chain must still progress.
                         entered.succeed(()).flatMap(_ => CIO.defer { throw new RuntimeException("boom-cb") })
                     }.flatMap { _ =>
                         entered.get.flatMap { _ =>
@@ -188,10 +187,8 @@ class FiberTest extends CompatTest:
     }
 
     "CFiber.get on an already-completed fiber replays the outcome without re-running the body" in run {
-        // "Already completed" is a state, not a latency. The body increments a counter, so a second
-        // get that resolves from the fiber's recorded outcome leaves the counter at 1, while one that
-        // re-ran the body leaves it at 2. A get that never resumes (completion callback registered too
-        // late) surfaces through CompatTest's testTimeout.
+        // "Already completed" is a state, not a latency. The body increments a counter: a replayed outcome leaves it
+        // at 1, a re-run at 2; a get that never resumes surfaces through testTimeout.
         val runs = new AtomicInteger(0)
         val c = CFiber.init(CIO.defer { runs.incrementAndGet() }).flatMap { fiber =>
             fiber.get.flatMap { first =>

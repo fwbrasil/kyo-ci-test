@@ -75,11 +75,10 @@ private[internal] object DaemonErrorPhrases:
     /** Phrases matching the "container is not in the running state" condition shared by both backends.
       *
       * The daemon refuses a state-dependent operation (exec-create, top) on a non-running container with one of these. Podman's
-      * docker-compat shim reports them as HTTP 500 with `container state improper`, which the wire status and `response` field both fail
-      * to pin down; matching the body text is the only reliable signal. The HTTP backend maps this family to
-      * [[ContainerAlreadyStoppedException]] so callers can distinguish a not-running condition (recoverable if the container is in fact
-      * running, real otherwise) from an opaque operation failure. The shell backend already classifies the same strings via
-      * `ShellBackend.isDockerDaemonError` and `ErrorPatterns.AlreadyStopped`.
+      * docker-compat shim reports them as HTTP 500 `container state improper`, which the wire status and `response` field fail to pin
+      * down, so matching the body text is the only reliable signal. The HTTP backend maps this family to
+      * [[ContainerAlreadyStoppedException]] so callers can tell a not-running condition from an opaque failure. The shell backend
+      * classifies the same strings via `ShellBackend.isDockerDaemonError` and `ErrorPatterns.AlreadyStopped`.
       */
     val NotRunning: Seq[String] = Seq(
         "container state improper",

@@ -214,10 +214,8 @@ object Connection:
 
     /** One lease's connection custody, so a connection is owned by a finalizer from the instant it exists.
       *
-      * The producer calls [[claim]] the moment the connection is built ([[openSocket]] for a fresh connect, the ring poll for a pooled one) with
-      * the close for the fd owner it holds; the acquire calls [[take]] as it registers the lease's own exit finalizer; the pool's orphan finalizer
-      * closes a connection [[claim]]ed but never [[take]]n, one an interrupt dropped between the two. [[take]]
-      * and [[orphan]] read one flag, so exactly one of the lease's exit and the orphan close fires.
+      * The producer [[claim]]s when the connection is built and the acquire [[take]]s as it registers the lease's exit finalizer; the pool's
+      * orphan finalizer closes one [[claim]]ed but never [[take]]n. [[take]] and [[orphan]] share one flag, so exactly one close fires.
       */
     final private[kyo] class Custody(using AllowUnsafe):
         private val ref   = AtomicRef.Unsafe.init(Maybe.empty[() => Unit < (Async & Abort[Throwable])])
@@ -234,8 +232,8 @@ object Connection:
             if taken.get() then Absent else ref.get()
     end Custody
 
-    /** The current lease's [[Custody]], bound by the acquire across the connect so the [[Factory]] claims into it. Inheritable, so it reaches a
-      * factory the connect budget runs in a `timeoutWithError` child fiber.
+    /** The current lease's [[Custody]], bound by the acquire so the [[Factory]] claims into it. Inheritable, so it reaches a factory the
+      * connect budget runs in a `timeoutWithError` child fiber.
       */
     private[kyo] val custodyLocal: Local[Maybe[Custody]] = Local.init(Maybe.empty)
 
@@ -383,12 +381,8 @@ object Connection:
     )(
         body: kyo.net.Connection => A < (Async & Abort[SqlException])
     )(using Frame): A < (Async & Abort[SqlException]) =
-        // Owns the connection across the connect join and the acquire->lease handover above this call. A finalizer on
-        // the connect fiber closes a connection an interrupt drops before `body` runs. Once `body` has built the engine
-        // connection it is claimed into the lease's `custodyLocal` custody, whose orphan finalizer closes it if the
-        // handover above openSocket is dropped. The claim closes the engine
-        // connection `a`, the current fd owner: a TLS upgrade leaves the raw socket in a state whose close is a no-op,
-        // so claiming the raw socket would leak the upgraded fd. On the success edge the value owns the socket.
+        // A finalizer on the connect fiber closes a connection an interrupt drops before `body` runs; after `body`, engine `a` is claimed
+        // into `custodyLocal` (orphan finalizer closes it if the handover drops). Claim `a`, not the raw socket, whose close a TLS upgrade no-ops.
         Scope.run {
             Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(host, port).safe).map { connFiber =>
                 Scope.ensure { error =>

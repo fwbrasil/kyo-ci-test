@@ -2,9 +2,8 @@ package kyo
 
 /** Regression for silent response drop under writer backpressure.
   *
-  * An endpoint's outbound `writerChannel` is bounded. When it fills (a progress flood or a stalled transport
-  * outpacing the drain), a required response must backpressure onto it, never be dropped: a dropped response
-  * leaves the caller waiting forever under the default `requestTimeout = Infinity`.
+  * The bounded outbound `writerChannel` can fill (a progress flood outpacing the drain); a required response must
+  * backpressure onto it, not drop, or the caller waits forever under the default `requestTimeout = Infinity`.
   */
 class JsonRpcHandlerBackpressureTest extends JsonRpcTest:
 

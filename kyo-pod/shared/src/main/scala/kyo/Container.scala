@@ -477,9 +477,8 @@ object Container:
                     b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config))
                 }
             }.map { cid =>
-                // Capture the HttpClient bound at registration: by finalizer time the fiber-local has
-                // unwound to the default client, and tearing down through a different client leaves the
-                // creating client's pooled connections open.
+                // Capture the HttpClient bound at registration: by finalizer time the fiber-local has unwound to the
+                // default client, and tearing down through a different client leaves the creating client's pool open.
                 HttpClient.use { boundClient =>
                     Scope.ensure {
                         HttpClient.let(boundClient) {
@@ -510,10 +509,8 @@ object Container:
                                 // suite of scope-managed containers leaks daemon-side state until inspect/start latency
                                 // exceeds the test wrapper. Named volumes are unaffected.
                                 //
-                                // Under residual daemon load a force-remove can hit a transient transport failure
-                                // (ContainerBackendException); it would leak the container daemon-side, so retry the
-                                // removal a few times. A genuinely-absent container surfaces as ContainerMissingException,
-                                // which Retry leaves to propagate and logFailure treats as the desired end state.
+                                // A force-remove can hit a transient ContainerBackendException under load and leak the container, so
+                                // retry; a genuinely-absent container surfaces as ContainerMissingException, which logFailure treats as done.
                                 val removeSchedule =
                                     Schedule.exponentialBackoff(initial = 50.millis, factor = 2, maxBackoff = 500.millis).take(3)
                                 Abort.run[ContainerException] {
@@ -815,11 +812,8 @@ object Container:
         interactive: Boolean,
         allocateTty: Boolean,
         autoRemove: Boolean,
-        /** Run the container's entrypoint under a minimal init process (Docker's `--init`, backed by tini/catatonit) that becomes PID 1.
-          * The init forwards signals to the entrypoint and reaps orphaned zombie children. Enable it for images whose main process is not
-          * init-aware (most database and application servers, e.g. `mysqld`): as PID 1 such a process neither reaps the zombies its helper
-          * subprocesses leave nor dies promptly on the daemon's stop signal, so under a loaded host the container wedges in `stopping` and
-          * the daemon reports "given PID did not die within timeout", leaking it.
+        /** Run the entrypoint under a minimal init process (Docker's `--init`, tini/catatonit) as PID 1, which forwards
+          * signals and reaps zombies. Enable it for non-init-aware images (e.g. `mysqld`), which otherwise wedge in `stopping` and leak.
           */
         initProcess: Boolean,
         restartPolicy: Config.RestartPolicy,

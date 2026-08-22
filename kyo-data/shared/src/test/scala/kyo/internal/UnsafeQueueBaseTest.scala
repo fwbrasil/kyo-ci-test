@@ -524,11 +524,8 @@ abstract class UnsafeQueueBaseTest extends kyo.test.Test[Any]:
 
     // ---- Concurrency helpers (JVM + Native only, not linked on JS) ----
 
-    // Each worker runs a FIXED op count and self-terminates, so the soak is bounded by operations, never by
-    // wall-clock time. `check` runs AFTER every thread is joined, so it reads the invariant on state the join
-    // has published (Thread.join establishes happens-before), not vacuously before the threads run. The join
-    // ceiling is a catastrophic-only hang canary: a correct worker finishes its budget well under it, and the
-    // following `!isAlive` assert fails loudly if one genuinely hung.
+    // Each worker runs a FIXED op count and self-terminates, so the soak is bounded by operations, not wall time. `check` runs after every
+    // thread is joined (Thread.join is happens-before), and the join ceiling is only a hang canary the following `!isAlive` assert catches.
     protected val iterationsPerThread = 100000
     protected val joinTimeoutMs       = 10000L
 

@@ -1655,9 +1655,8 @@ class ResolverTest extends BaseCalibanTest:
                 for
                     _ <- ws.put(HttpWebSocket.Payload.Text("""{"type":"connection_init"}"""))
                     _ <- expectMessage(ws, _.contains("connection_ack"))
-                    // The afterInit hook increments the counter; wait for that observable side
-                    // effect (its own counter) rather than a fixed settle, then hold the
-                    // connection open so the assertion below runs against the observed state.
+                    // The afterInit hook increments the counter; wait for that observable side effect, not a fixed settle,
+                    // then hold the connection open so the assertion below runs against the observed state.
                     _ <- assertEventually(counter.get() == 1)
                 yield ()
             }

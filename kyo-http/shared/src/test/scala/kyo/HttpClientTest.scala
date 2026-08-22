@@ -84,10 +84,8 @@ class HttpClientTest extends BaseHttpTest:
                     }
                 }
             }
-        // Retry a transient connect failure. On Windows/Node a connect to the test's own localhost server can fail
-        // intermittently (loopback IPv4/IPv6 resolution race, transient refused) while the server is up and other
-        // requests to it succeed. Only the connect is retried: a HttpConnectException means the request never went
-        // out, so a genuine request-level failure is re-raised unchanged.
+        // Retry a transient connect failure: on Windows/Node a connect to the test's own localhost server can fail intermittently
+        // (loopback IPv4/IPv6 race) while it is up. Only the connect is retried (HttpConnectException = request never went out); a request-level failure is re-raised unchanged.
         def retrying(remaining: Int): HttpResponse[Out] < (Async & Abort[HttpException]) =
             Abort.run[HttpException](once).map {
                 case Result.Success(resp)                                     => resp
@@ -1303,17 +1301,14 @@ class HttpClientTest extends BaseHttpTest:
                 else HttpResponse.ok("done")
             }
             withServer(ep) { url =>
-                // The backoff is read off the client's own clock instead of the wall-clock gaps between server hits.
-                // With time frozen, a retry reaches the server only because the test advanced past the delay the
-                // schedule computed, so connection setup, JIT warmup and runner load cannot stand in for the backoff,
-                // and each delay is pinned to its own value rather than only to being no shorter than the previous one.
+                // Backoff is read off the client's own clock, not wall-clock gaps between server hits: with time frozen a retry
+                // reaches the server only because the test advanced past the schedule's delay, so setup/JIT/load cannot stand in and each delay is pinned to its own value.
                 Clock.withTimeControl { tc =>
                     HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.exponential(base, 2.0).take(5)))) {
                         withClient { client =>
                             val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow", Absent))
-                            // Advances a full delay at a time until the next attempt lands. The check precedes each
-                            // advance, so once an attempt is seen no further time is added, and the delay the client
-                            // then arms is measured from where this stopped.
+                            // Advances a full delay at a time until the next attempt lands. The check precedes each advance,
+                            // so once an attempt is seen no further time is added and the next delay is measured from here.
                             def releaseInto(n: Int) =
                                 Loop.indexed { i =>
                                     if attempts.get() >= n then Loop.done(true)

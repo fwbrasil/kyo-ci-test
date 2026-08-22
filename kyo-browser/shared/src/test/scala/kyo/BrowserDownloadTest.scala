@@ -456,12 +456,9 @@ class BrowserDownloadTest extends BrowserTest:
 
     // ── download-event capture records every WillBegin in click order ──
     //
-    // The capture path is a single per-session dispatcher draining one channel through one fiber into an
-    // append-only chunk, so events land in arrival (click) order. `recordDownloads` is the thin wrapper over
-    // this exact path (an AtomicRef plus an `onDownload` append handler), so this exercises it directly
-    // through `onDownload`. The handler signals a Promise once the third distinct WillBegin guid has arrived,
-    // so the body returns exactly when all three have been captured, gated on the events rather than a
-    // wall-clock wait.
+    // The capture path is one per-session dispatcher draining a channel through one fiber into an append-only chunk, so events
+    // land in arrival (click) order; `recordDownloads` is the thin wrapper, so exercising `onDownload` covers it. The handler
+    // signals a Promise on the third distinct WillBegin guid, so the body returns event-gated when all three are captured.
     "download-event capture records every WillBegin in click order" in {
         withBrowser {
             for

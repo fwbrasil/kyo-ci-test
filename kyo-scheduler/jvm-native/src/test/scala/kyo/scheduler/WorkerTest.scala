@@ -22,10 +22,8 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
     implicit override val patienceConfig: PatienceConfig =
         PatienceConfig(timeout = Span(15, Seconds), interval = Span(50, Millis))
 
-    // A worker mounts by submitting ITSELF (a Runnable) to this executor, so wrapping it lets afterEach count how
-    // many worker run() invocations are in flight and wait for exactly that to reach zero, instead of guessing a
-    // fixed settle. The InternalClock each worker builds also uses this executor for its ticker; that runnable is
-    // not a Worker, so the isInstanceOf filter keeps it out of the count.
+    // A worker mounts by submitting ITSELF here, so wrapping the executor lets afterEach count in-flight run() invocations and
+    // wait for zero, not a fixed settle. The InternalClock ticker also runs here but is not a Worker, so the isInstanceOf filter excludes it.
     private val activeWorkers = new AtomicInteger(0)
     val executor: Executor = command =>
         TestExecutors.cached.execute { () =>
@@ -965,12 +963,8 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
     }
 
     "run clears a stale interrupt left on the reused thread" in {
-        // A thread can come back to the worker still carrying an interrupt set by unrelated work,
-        // and Worker.run clears it on mount so the task it mounts never observes it. The executor
-        // here hands its single thread back with the flag intact and takes work without blocking:
-        // java.util.concurrent pools clear the flag before every dispatch, which hides the
-        // hand-back this guards against, and a single thread makes the reuse exact rather than
-        // something the test hopes for.
+        // A reused thread can come back still carrying an interrupt from unrelated work; Worker.run clears it on mount. This
+        // executor hands its single thread back with the flag intact (j.u.c pools clear it before dispatch, hiding the hand-back; one thread makes the reuse exact).
         val pending = new ConcurrentLinkedQueue[Runnable]()
         val stopped = new AtomicBoolean(false)
         val pool: Executor = r => {
@@ -1052,10 +1046,8 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         eventually {
             assert(fatalTask.executions == 1, "fatal task should have been executed once before the thread died")
         }
-        // The fatal Throwable unwinds run()'s finally, which republishes the worker as Idle, and
-        // then kills the pool thread. Waiting for that thread to die is the teardown signal: an
-        // enqueue that lands inside the death window is lost outright rather than delayed, so
-        // the eventually below could never recover it.
+        // The fatal Throwable unwinds run()'s finally (republishing the worker Idle), then kills the pool thread. Wait for that
+        // thread to die: an enqueue landing in the death window is lost outright, so the eventually below could never recover it.
         eventually {
             val thread = mountThread.get()
             assert((thread ne null) && !thread.isAlive(), "the worker's thread should have died from the fatal Throwable")
@@ -1063,9 +1055,8 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
 
         // Now enqueue a trivial second task. A healthy Worker re-arms via wakeup() ->
         // exec.execute(this) and runs it. A wedged Worker has state stuck at Running,
-        // so the CAS Idle->Running in wakeup() fails and the task never runs. `eventually`
-        // is the barrier: a recovered worker runs task2 and it passes; a wedged worker never
-        // runs it and this fails at eventually's own timeout.
+        // so the CAS Idle->Running in wakeup() fails and the task never runs. `eventually` is the
+        // barrier: a wedged worker never runs task2 and fails at its own timeout.
         val task2 = TestTask()
         worker.enqueue(task2)
 

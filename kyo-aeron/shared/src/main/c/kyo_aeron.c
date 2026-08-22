@@ -396,24 +396,20 @@ void* kyo_aeron_driver_start(const char* dir, int64_t client_liveness_ns, int64_
      * failed to launch or whose close did not complete. */
     aeron_driver_context_set_dir_delete_on_start(ctx, true);
     aeron_driver_context_set_dir_delete_on_shutdown(ctx, true);
-    /* Run all driver agents (conductor/sender/receiver) in ONE thread (SHARED) rather than the
-     * DEDICATED default of three. The zero-config embedded driver that Topic.run starts must be
-     * frugal on whatever host it lands on: three DEDICATED agent threads whose idle strategies
-     * busy-spin under load, plus the client conductor thread, starve the kyo scheduler carriers and
-     * the client conductor on a few-core or emulated CI runner. Under that starvation a second
-     * same-(channel,streamId) IPC subscription's image is never observed connected within the
-     * connect-wait window, so a fan-out consumer livelocks (the TopicInvariantsTest two-consumer
-     * hang). One shared agent thread leaves CPU for the client conductor that flips is_connected and
-     * for the carriers. Callers needing DEDICATED low-latency drive an external driver via
-     * Topic.run(aeronDir). */
+    /* Run all driver agents (conductor/sender/receiver) in ONE thread (SHARED), not the DEDICATED default of three.
+     * The zero-config embedded driver Topic.run starts must be frugal: three DEDICATED agent threads busy-spinning
+     * under load, plus the client conductor, starve the kyo carriers and the conductor on a few-core or emulated CI
+     * runner. Under that starvation a second same-(channel,streamId) IPC subscription's image is never seen connected
+     * in the connect-wait window, so a fan-out consumer livelocks (the TopicInvariantsTest two-consumer hang). One
+     * shared thread leaves CPU for the conductor (which flips is_connected) and carriers. For DEDICATED low-latency,
+     * drive an external driver via Topic.run(aeronDir). */
     aeron_driver_context_set_threading_mode(ctx, AERON_THREADING_MODE_SHARED);
     aeron_driver_t* driver = NULL;
     if (aeron_driver_init(&driver, ctx) < 0) {
         aeron_driver_context_close(ctx);
         return NULL;
     }
-    /* false = no manual pump; the driver spawns its agent thread(s) per the threading mode set above
-     * (SHARED = one shared agent thread). */
+    /* false = no manual pump; the driver spawns agent thread(s) per the threading mode above (SHARED = one thread). */
     if (aeron_driver_start(driver, false) < 0) {
         aeron_driver_close(driver);
         aeron_driver_context_close(ctx);

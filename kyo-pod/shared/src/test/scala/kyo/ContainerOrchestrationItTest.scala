@@ -402,9 +402,8 @@ class ContainerOrchestrationItTest extends BasePodTest:
             Abort.run[ContainerException] {
                 Scope.run {
                     Container.initWith(config) { c =>
-                        // The command exits with code 1 immediately. Poll until the daemon reports a terminal
-                        // state so scope cleanup runs against a genuinely-crashed container rather than one
-                        // still mid-exit; the load-bearing assertion is the post-cleanup removal check below.
+                        // Poll until the daemon reports a terminal state so scope cleanup runs against a crashed container,
+                        // not one mid-exit; the load-bearing assertion is the post-cleanup removal check below.
                         assertEventually(c.state.map(s => s == Container.State.Stopped || s == Container.State.Dead))
                     }
                 }
@@ -456,13 +455,8 @@ class ContainerOrchestrationItTest extends BasePodTest:
     }
 
     "init short-circuits the healthcheck retry once the container is gone mid-retry" - runBackend {
-        // The container lives ~300ms then auto-removes; the healthcheck always fails, so runHealthCheck
-        // keeps retrying. Once the container is gone, its isContainerAlive check must stop the loop instead
-        // of running the schedule to exhaustion. A counting healthcheck asserts the short-circuit
-        // deterministically: the loop runs only the handful of attempts that fit before the container
-        // disappears, never the full 30-attempt schedule. A zero count (the container already gone before
-        // the first check, so runHealthCheck's outer isContainerAlive guard returns immediately) is an
-        // accepted degenerate pass: it still proves the schedule never ran to exhaustion.
+        // The container auto-removes ~300ms in while the healthcheck always fails; once gone, isContainerAlive must stop the loop. The
+        // counter asserts it: fewer than the full 30 attempts run (zero is an accepted degenerate pass), proving the schedule never exhausted.
         val attempts = new java.util.concurrent.atomic.AtomicInteger(0)
         val config = Container.Config("alpine")
             .command("sh", "-c", "sleep 0.3; exit 0")
@@ -482,12 +476,8 @@ class ContainerOrchestrationItTest extends BasePodTest:
     }
 
     "scope cleanup delivers stopSignal before force-removing when stopSignal is Present" - runBackend {
-        // The container traps its stopSignal and writes a marker into a host bind mount before delaying
-        // past the stopTimeout. The graceful-stop protocol (send the signal, waitForExit up to
-        // stopTimeout, then force-remove) must deliver the signal for the trap to run at all, so the
-        // marker on the host filesystem is a deterministic, clock-free witness that the signal reached
-        // the container before the force-remove. The Async.timeout is the completion valve: a kill path
-        // that hung on waitForExit instead of force-removing after the stopTimeout would trip it.
+        // The container traps its stopSignal to write a host marker before delaying past stopTimeout, so the marker is a clock-free witness
+        // the signal arrived. Async.timeout is the completion valve: a kill path that hung on waitForExit instead of force-removing trips it.
         val hostDir = Path("/tmp/" + uniqueName("kyo-stopsig"))
         val marker  = hostDir / "sig"
         val config = Container.Config("alpine")

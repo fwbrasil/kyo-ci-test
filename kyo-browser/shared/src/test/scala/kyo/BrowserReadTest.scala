@@ -1138,9 +1138,8 @@ class BrowserReadTest extends BrowserTest:
 
     "textAll returns Chunk.empty without retrying when no elements match" in {
         withBrowser {
-            // A one-hour retry delay makes any single retry an effective hang (caught by the
-            // suite timeout). The empty-match fast path must skip retrying and return at once, so
-            // that it returns at all is the proof it did not retry, with no elapsed threshold.
+            // A one-hour retry delay makes any retry a hang (caught by the suite timeout), so the empty-match fast path
+            // returning at all proves it did not retry.
             Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour).take(20))) {
                 onPage("<div>No items</div>") {
                     Browser.textAll(Browser.Selector.css("li.item")).map { texts =>
@@ -1170,8 +1169,7 @@ class BrowserReadTest extends BrowserTest:
 
     "attributeAll returns Chunk.empty without retrying when no elements match" in {
         withBrowser {
-            // One-hour retry delay: any retry hangs (caught by the suite timeout), so returning
-            // at all proves the empty-match fast path skipped retrying. No elapsed threshold.
+            // One-hour retry delay: any retry hangs (caught by the suite timeout), so returning at all proves the fast path skipped retrying.
             Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour).take(20))) {
                 onPage("<div>No links</div>") {
                     Browser.attributeAll(Browser.Selector.css("a"), "href").map { hrefs =>

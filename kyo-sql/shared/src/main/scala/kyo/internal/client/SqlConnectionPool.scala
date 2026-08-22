@@ -65,11 +65,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
     val metrics: SqlClient.Metrics
 ):
 
-    // Connections quarantined by an interrupt reclaim in [[decideExit]]. The reclaim runs on a detached,
-    // unreferenced carrier that becomes the connection's only owner, so [[closeAll]] cannot reach it through the
-    // idle ring [[pool.close]] extracts. Held here from quarantine until resolved and claimed by exactly one
-    // resolver via `remove` (the reclaim's own release/destroy, its carrier's unresolved-exit finalizer, or
-    // closeAll's grace-expiry sweep), so no interrupted-statement connection outlives the client that owned it.
+    // Connections a [[decideExit]] interrupt reclaim owns on a detached carrier, unreachable through the idle ring [[closeAll]]
+    // drains. Registered here so exactly one resolver claims each via `remove`, so no interrupted connection outlives the client.
     private val quarantined = ConcurrentHashMap.newKeySet[C]()
 
     // --- Leases ---
@@ -157,10 +154,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         if n <= 0 then ()
         else
             val netKey = SqlConnectionPool.Endpoint(address, config)
-            // Each child owns its connection through a custody across the connect->release handover and releases it to
-            // the ring in its own continuation, so an interrupt of the fill join cannot strand a completed child's
-            // connection: it is in the ring (the pool's init error-edge closeAll owns it) or its interrupted connect
-            // closed it. A child failure still fails the whole warm-up, and that same error edge closes the ring.
+            // Each child owns its connection via custody across connect->release, so an interrupt of the fill join cannot strand it:
+            // it is in the ring or its connect closed it. A child failure fails the whole warm-up, whose error edge closes the ring.
             Async.fill(n, concurrency = n) {
                 Scope.run {
                     withCustody { custody =>
@@ -211,11 +206,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                         }
                         slotChans.clear()
                         idleConns.foreach(_.closeNow)
-                        // Any connection a reclaim left quarantined and unresolved at grace expiry is destroyed here:
-                        // its detached carrier is the only other owner, and destroying it both frees the socket (the
-                        // carrier's in-flight read then fails and the reclaim ends) and counts the discard the reclaim
-                        // would have. `remove` is the atomic claim, so a reclaim resolving in the same instant sees
-                        // Absent and does not double-close or re-pool a dead session.
+                        // Destroy any connection a reclaim left quarantined at grace expiry (its detached carrier is the only other
+                        // owner). `remove` is the atomic claim, so a reclaim resolving at the same instant sees Absent, not a double-close.
                         quarantined.forEach { conn =>
                             if quarantined.remove(conn) then destroyAndFreeSlot(conn, logger)
                         }
@@ -410,11 +402,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
 
     // --- Layer 3: lease ---
 
-    /** Threads one lease's [[Connection.Custody]] through the acquire so a connection is owned from the instant it exists: allocates it,
-      * registers the orphan finalizer that closes a connection the acquire->lease handover dropped, and binds `custodyLocal` so the ring poll and
-      * the factory claim into it. `body` registers the lease's own exit finalizer and calls `custody.take()` in the same continuation; `take` and
-      * `orphan` keep exactly one of the two closes. The finalizers run on the ambient scope, supplied by the caller: [[acquireAndRun]] via its own
-      * `Scope.run`, [[acquireScoped]] via the stream's scope.
+    /** Threads one lease's [[Connection.Custody]] so the connection is owned from creation: an orphan finalizer closes one the acquire->lease
+      * handover dropped, `custodyLocal` lets the ring poll and factory claim into it, and `body`'s `take()` and `orphan` keep exactly one close.
       */
     private def withCustody[A, S](
         body: Connection.Custody => A < (S & Async & Abort[SqlException] & Scope)
@@ -447,9 +436,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                                 .andThen(op(conn))
                         }
                     case Absent =>
-                        // Release the in-flight reservation per attempt. Under Retry the body re-runs per attempt while a finalizer on the
-                        // outer computation fires once, so without this the pool's in-flight count would reach maxConnections and the next
-                        // acquireOrReserve would spin poll-Absent/tryReserve-false forever. The original failure is re-raised for Retry.
+                        // Release the reservation per attempt: under Retry the body re-runs but an outer finalizer fires once, so without this
+                        // the in-flight count reaches maxConnections and acquireOrReserve spins poll-Absent/tryReserve-false forever.
                         // Unsafe: pool.unreserve CASes the ring's in-flight count, an AllowUnsafe pool operation.
                         resolvingOnce(_ => Sync.Unsafe.defer(pool.unreserve(netKey)))(
                             connectAndRun(address, password, netKey, config, leaseClock, custody)(op)
@@ -467,8 +455,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         leaseClock: Clock.Stopwatch,
         custody: Connection.Custody
     )(op: C => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
-        // The connection's custody is owned by [[acquireAndRun]] (orphan finalizer + `custodyLocal`), and the factory
-        // has already claimed the connection into it. onLease's `take` hands ownership to decideExit on the success edge.
+        // Custody is owned by [[acquireAndRun]] and the factory has already claimed the connection into it; onLease's
+        // `take` hands ownership to decideExit on the success edge.
         connect(address, password, config).flatMap { conn =>
             onLease(netKey, conn, config) {
                 Sync.Unsafe.defer(custody.take())
@@ -515,11 +503,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
     private def acquireOrReserve(netKey: SqlConnectionPool.Endpoint, config: SqlConfig)(using
         Frame
     ): Maybe[C] < (Async & Abort[SqlException]) =
-        // The lease's custody, if the acquire path set one. A connection the ring hands over is claimed into it in the
-        // SAME unsafe block that polls it, with no suspension between: the poll has already vacated the ring's slot, so
-        // an interrupt landing after the poll but before this returns (the healthy probe suspends, and so does every
-        // step up to onLease) would otherwise strand the connection with nothing owning it. Claiming at the poll keeps
-        // the orphan finalizer able to close it on that edge.
+        // Claim a polled connection into the lease's custody in the SAME unsafe block that polls it: the poll vacated the ring
+        // slot, so an interrupt before onLease would strand it with no owner. Claiming at the poll lets the orphan finalizer close it.
         Connection.custodyLocal.use { maybeCustody =>
             Clock.stopwatch.flatMap { transitClock =>
                 Loop(()) { _ =>
@@ -747,39 +732,29 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             val reclaimable = Sync.Unsafe.evalOrThrow(conn.isOpen)
             error match
                 case Present(_) if reclaimable && (conn.inFlight || conn.inOpenTransaction) =>
-                    // Quarantine. The connection is in neither the idle ring nor closed until the chain spawned
-                    // below decides which, and cancelsInFlight is what makes that visible to closeAll. Registering
-                    // it in `quarantined` gives closeAll a handle on it: the reclaim carrier is detached and
-                    // unreferenced, so without this the connection has no owner closeAll can reach at grace expiry.
+                    // Quarantine: neither in the ring nor closed until the chain below decides. `quarantined` gives closeAll a handle
+                    // on the detached reclaim carrier; cancelsInFlight makes the pending reclaim visible to closeAll.
                     discard(cancelsInFlight.incrementAndGet())
                     discard(quarantined.add(conn))
                     discard(Sync.Unsafe.evalOrThrow(metrics.recordCancelFired))
                     logger.unsafe.debug(s"kyo.sql: cancelling connection id=${conn.id}")
-                    // Put-then-recheck against closeAll's one-shot grace-expiry sweep (the same idiom the driver's
-                    // closeHandle uses for pendingCloses). pool.close() sets isClosed BEFORE that sweep runs, so if the
-                    // pool is already closing this `add` may have landed after the sweep passed, leaving an entry
-                    // nothing would ever sweep. Whichever of this recheck and the sweep wins the remove resolves the
-                    // connection; the loser sees Absent. Resolving inline here also spares a closing pool a reclaim it
-                    // would only destroy anyway (releaseToPool destroys once isClosed) and that could otherwise hang
-                    // holding the socket. If the pool is not closing, the sweep is not in play and the reclaim runs.
+                    // Put-then-recheck against closeAll's one-shot grace sweep: pool.close() sets isClosed before the sweep, so an `add`
+                    // on a closing pool can land after it and be stranded. Whichever of the recheck and sweep wins `remove` resolves it; the loser sees Absent.
                     if pool.isClosed && quarantined.remove(conn) then
                         destroyAndFreeSlot(conn, logger)
                         discard(cancelsInFlight.decrementAndGet())
                     else
                         val supervised: Unit < Async =
-                            // Claim the connection on EVERY exit edge. A reclaim that ran to a decision has already
-                            // removed and resolved it (release or destroy), so this remove returns false and only the
-                            // decrement runs; a carrier interrupted or abandoned before that decision still holds the
-                            // entry, so this claim wins and destroys the socket here rather than leaving it open.
+                            // Claim on EVERY exit edge: a reclaim that decided already removed and resolved it (so this remove is false,
+                            // only the decrement runs); a carrier interrupted before deciding still holds the entry, so this destroys the socket.
                             Sync.ensure { _ =>
                                 Sync.Unsafe.defer {
                                     if quarantined.remove(conn) then destroyAndFreeSlot(conn, logger)
                                     discard(cancelsInFlight.decrementAndGet())
                                 }
                             }(cancelAndReclaim(netKey, conn, config, logger))
-                        // Unsafe: the reclaim has to outlive the fiber that is already unwinding, so it goes to a fresh
-                        // unsupervised carrier. Handing it to the interrupted fiber would make the interrupt wait on
-                        // cancel wire work, which is the thing the interrupt asked to stop.
+                        // Unsafe: the reclaim must outlive the unwinding fiber, so it goes to a fresh unsupervised carrier;
+                        // handing it to the interrupted fiber would make the interrupt wait on the cancel work it asked to stop.
                         discard(Fiber.Unsafe.init(supervised))
                     end if
                 case _ =>
@@ -823,17 +798,15 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                 // Unsafe: the pool operations below require AllowUnsafe, and this runs on a carrier of its own
                 // rather than inside any caller's fiber.
                 Sync.Unsafe.defer {
-                    // The timeout metric records that the cancel budget was exceeded, which is true whether this
-                    // reclaim or closeAll's sweep ends up closing the connection, so it is recorded before the claim
-                    // rather than inside the branch only the winning resolver takes.
+                    // Record the timeout metric before the claim, not in the winner-only branch: the cancel budget was
+                    // exceeded whether this reclaim or closeAll's sweep closes the connection.
                     outcome match
                         case Result.Failure(_: SqlConnectionCancelTimeoutException) =>
                             discard(Sync.Unsafe.evalOrThrow(metrics.recordCancelTimedOut))
                         case _ => ()
                     end match
-                    // Claim the connection before resolving it. If closeAll's grace-expiry sweep already removed and
-                    // closed it, this remove returns false and the reclaim must not re-pool or re-destroy a socket the
-                    // closing pool has already reclaimed; the carrier's exit finalizer then also no-ops.
+                    // Claim before resolving: if closeAll's grace sweep already removed and closed it, this remove is false and
+                    // the reclaim must not re-pool or re-destroy the socket (the carrier's exit finalizer then also no-ops).
                     if quarantined.remove(conn) then
                         outcome match
                             case Result.Success(true) => releaseToPool(netKey, conn, logger)
@@ -871,10 +844,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         config: SqlConfig,
         leaseClock: Clock.Stopwatch
     )(using Frame): C < (Async & Abort[SqlException] & Scope) =
-        // The permit is owned by the outer Scope.ensure in leaseScoped; the per-connection finalizer here owns only the
-        // connection's fate, through the same decideExit a statement's lease uses. `withCustody` owns the acquire->lease
-        // handover exactly as on the statement path, so a stream interrupted at the connect handover closes its
-        // connection rather than stranding it.
+        // The permit is owned by the outer Scope.ensure in leaseScoped; the finalizer here owns only the connection's fate via the same
+        // decideExit the statement path uses. `withCustody` owns the acquire->lease handover, so a stream interrupted there closes its connection.
         Log.use { logger =>
             // Metrics owed once a connection is in hand: decideExit decrements leases_in_flight on every exit, so this
             // path must do the increment or N streams drive the gauge to -N.
@@ -887,9 +858,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                             .andThen(Sync.Unsafe.defer(custody.take()))
                             .andThen(held).andThen(conn)
                     case Absent =>
-                        // Reservation and connection have two lifetimes: `resolvingOnce` releases the reservation on
-                        // every exit edge, while the connection's exit registers on the caller's scope, outside it, so it
-                        // is not fired the moment the connection is produced.
+                        // Two lifetimes: `resolvingOnce` releases the reservation on every exit, while the connection's exit
+                        // registers on the caller's scope (outside it), so it does not fire the moment the connection is produced.
                         // Unsafe: pool.unreserve CASes the ring's in-flight count, an AllowUnsafe pool operation.
                         resolvingOnce(_ => Sync.Unsafe.defer(pool.unreserve(netKey)))(
                             connect(address, password, config)

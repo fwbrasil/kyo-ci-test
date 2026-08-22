@@ -149,9 +149,8 @@ class SqlConnectionCancelTest extends kyo.Test:
                     }
             }
 
-        /** Models a real drain read: it does not return on its own, it ends when the socket is closed under it and
-          * fails the way a torn-down read does. This makes `closeAll`'s force-close the only thing that can end the
-          * reclaim within a short grace, which is what the quarantine-sweep regression pins.
+        /** A drain read that never returns on its own, ending only when the socket is closed under it: so `closeAll`'s
+          * force-close is the only thing that ends the reclaim, which is what the quarantine-sweep regression pins.
           */
         private def drainUntilClosed(using Frame): Boolean < (Async & Abort[SqlException]) =
             Sync.Unsafe.defer(socketOpen.get()).flatMap {
@@ -338,11 +337,8 @@ class SqlConnectionCancelTest extends kyo.Test:
     "Async.timeout on a statement in flight fires the wire cancel" in {
         val config = baseConfig("timeout")
         withProbePool("timeout") { (pool, events) =>
-            // Deterministic per this suite's contract (no wall-clock assumption): freeze time and run the timed lease in
-            // a child fiber, wait for the statement to reach the wire so the interrupt lands IN FLIGHT rather than during
-            // connect, then advance the clock to fire Async.timeout's own sleep as the interruption source. A bare
-            // Async.timeout(100.millis) here races the timer against lease-acquire plus the statement reaching the wire,
-            // which a loaded runner loses: the timeout fires pre-flight, no cancel is owed, and report blocks forever.
+            // Freeze time, wait for the statement in flight, then advance so Async.timeout (not connect latency) fires the
+            // interrupt. A bare wall-clock timeout races lease-acquire and can fire pre-flight: no cancel owed, report hangs.
             Clock.withTimeControl { control =>
                 Fiber.initUnscoped(
                     Abort.run[Timeout](Async.timeout(100.millis)(lease(pool, config)(_.simpleQuery(Sql.hang))))
@@ -711,11 +707,8 @@ class SqlConnectionCancelTest extends kyo.Test:
     }
 
     "closeAll force-closes a connection whose reclaim never completes on its own" in {
-        // The reclaim parks in a drain that only ends when the socket is closed under it, and the grace is zero so
-        // the close does not wait for it. The connection's only owner is the detached reclaim carrier, which is not
-        // in the idle ring `pool.close` extracts, so the ONLY thing that can free this socket is closeAll's sweep of
-        // the quarantined connections. Before that sweep existed the connection leaked here: the exact CI failure
-        // (an interrupted statement's pooled socket outliving the client that owned it).
+        // The reclaim parks in a drain that ends only on socket close (grace zero), and its only owner is the detached reclaim
+        // carrier (not the idle ring `pool.close` extracts), so closeAll's quarantine sweep alone frees the socket; else it leaks (the CI failure).
         val config = baseConfig("closeall-quarantine")
         withProbePool("closeall-quarantine", Script(drainUntilSocketClosed = true), config) { (pool, events) =>
             Fiber.initUnscoped(Abort.run[SqlException](lease(pool, config)(_.simpleQuery(Sql.hang)))).flatMap { fiber =>
@@ -743,12 +736,8 @@ class SqlConnectionCancelTest extends kyo.Test:
     }
 
     "an interrupt landing after the pool has closed destroys the connection inline" in {
-        // The add-after-sweep window: closeAll's grace-expiry sweep runs exactly once, so a decideExit whose
-        // quarantine registration lands after it would register an entry nothing sweeps, and if that reclaim then
-        // hangs (drainUntilSocketClosed here, which without a close never ends) the socket leaks with the same
-        // signature. Here the pool closes with zero grace while a statement is still in flight, so its sweep runs
-        // over an empty registry; interrupting the statement now must still close the connection, via decideExit's
-        // put-then-recheck (it sees the pool closed and destroys inline) rather than a carrier nothing collects.
+        // closeAll's sweep runs once, so a quarantine registration landing after it is swept by nothing and leaks if its reclaim
+        // hangs. So the interrupt (pool already closed, zero grace) must destroy inline via decideExit's put-then-recheck, not register a stray carrier.
         val config = baseConfig("closed-then-interrupt")
         withProbePool("closed-then-interrupt", Script(drainUntilSocketClosed = true), config) { (pool, events) =>
             Fiber.initUnscoped(Abort.run[SqlException](lease(pool, config)(_.simpleQuery(Sql.hang)))).flatMap { fiber =>
@@ -757,12 +746,8 @@ class SqlConnectionCancelTest extends kyo.Test:
                     pool.closeAll(Duration.Zero).andThen {
                         fiber.interrupt.flatMap { interrupted =>
                             assert(interrupted, "interrupting the fiber running a statement must stop it")
-                            // Wait for the resolution event rather than draining what is already queued. The
-                            // put-then-recheck destroy runs on the interrupted fiber's exit, which on a single event
-                            // loop has not necessarily run when interrupt returns, and its inline path leaves
-                            // cancelsInFlight net-zero so untilCancelsSettled would return before it runs. The first
-                            // event it emits is "closed"; a regression that spawned a reclaim would emit "cancel"
-                            // here, failing the assert rather than draining nothing.
+                            // Wait for the resolution event, not the queue: the destroy runs on the fiber's exit (cancelsInFlight
+                            // net-zero, so untilCancelsSettled returns early). It emits "closed"; a spawned reclaim would emit "cancel", failing the assert.
                             report(events, 1).map { after =>
                                 assert(
                                     after == Chunk("closed"),
@@ -858,9 +843,8 @@ class SqlConnectionCancelTest extends kyo.Test:
         // connection and owes the server a cancel exactly as any other interrupt does.
         val config = baseConfig("querytimeout").copy(queryTimeout = 100.millis)
         withProbePool("querytimeout", Script(), config) { (pool, events) =>
-            // Deterministic per this suite's contract: the per-statement timeout timer arms before the statement reaches
-            // the wire, so a bare wall-clock 100ms races connect the same way. Freeze time, wait for the statement in
-            // flight, then advance the clock so the query timeout, not connect latency, is what interrupts.
+            // The per-statement timer arms before the statement reaches the wire, so a bare wall-clock 100ms races
+            // connect. Freeze time, wait for the statement in flight, then advance so the query timeout interrupts.
             Clock.withTimeControl { control =>
                 Fiber.initUnscoped(
                     Abort.run[SqlException](pool.leaseStatement(address, Absent, config)(_.simpleQuery(Sql.hang)))
@@ -883,22 +867,9 @@ class SqlConnectionCancelTest extends kyo.Test:
         }
     }
 
-    /** Reproduces the fd leak at the pool boundary rather than in the io_uring driver: `open` produces
-      * a live connection and hands it back across an async join (connect -> the lease's exit finalizer, and the connect
-      * budget's timeoutWithError). An interrupt landing after `open` completes but before the exit finalizer registers
-      * drops the delivered connection with the continuation that would have owned it, so without a custody it is never
-      * reclaimed and never closed.
-      *
-      * Driven without a driver by gating `open`'s completion on a latch and interrupting the lease fiber back-to-back with
-      * the release, so the interrupt races the delivery; looped so the race is hit. Every probe carries a socketOpen flag
-      * its close lowers; after closing the pool, any probe still open is a connection the pool leaked. A finite
-      * acquireTimeout keeps connect wrapping `open` in timeoutWithError, so the budget's own handover join is exercised.
-      * The probe's drain reports non-reusable, so a post-take interrupt destroys rather than pools: the pool stays empty
-      * and every iteration takes the connect path (a reusable drain would pool the probe, the next iteration would re-poll
-      * it without re-entering the factory, and the gate handshake would deadlock).
-      *
-      * `hold` is how the leaf takes and holds a lease, a statement lease or a stream lease, so both acquire paths get the
-      * same handover-drop test.
+    /** Reproduces the fd leak at the pool boundary: an interrupt landing after `open` delivers a live connection but before the exit
+      * finalizer registers drops it, so without a custody it is never reclaimed or closed. Driven without a driver: gate `open` on a latch,
+      * interrupt the lease fiber racing the delivery, looped; a probe still open (socketOpen flag) after the pool closes is the leak. Its drain is non-reusable so every iteration re-enters connect (a reusable one would deadlock the gate).
       */
     private def handoverLeakTest(scope: String)(
         hold: (SqlConnectionPool[Probe], SqlConfig) => Any < (Async & Abort[SqlException])
@@ -914,8 +885,8 @@ class SqlConnectionCancelTest extends kyo.Test:
                                     case true  => Sync.Unsafe.defer(p.closeNow)
                                     case false => ()
                                 }
-                            // Construct, claim, and track the probe in one synchronous step: the probe stands in for the
-                            // connection openSocket builds and claims into the lease's custody the instant it exists.
+                            // Build, claim, and track the probe synchronously: it stands in for the connection openSocket
+                            // claims into the lease's custody at creation.
                             def createAndClaim(id: Long)(using Frame): Probe < (Async & Abort[SqlException]) =
                                 Connection.custodyLocal.use { maybeCustody =>
                                     Sync.Unsafe.defer {
@@ -939,11 +910,8 @@ class SqlConnectionCancelTest extends kyo.Test:
                                 def open(a: SqlConfig.Address, password: Maybe[String], c: SqlConfig)(using
                                     Frame
                                 ): Probe < (Async & Abort[SqlException]) =
-                                    // Gate AFTER the probe is built and claimed, then signal and block, so the leaf's
-                                    // interrupt lands at the connect->onLease handover with the claim already done, the way
-                                    // a real connect finishes its suspending handshake before the handover. Gating before
-                                    // the claim instead would race the parent's custody orphan against this synchronous
-                                    // claim, a race a real slow handshake never produces.
+                                    // Gate after the claim so the interrupt lands at the connect->onLease handover with the claim
+                                    // done, as a real connect does; gating before it would race the custody orphan against the claim, which a real handshake never does.
                                     ids.incrementAndGet.flatMap { id =>
                                         createAndClaim(id).flatMap { probe =>
                                             gateRef.get.flatMap {
@@ -969,11 +937,8 @@ class SqlConnectionCancelTest extends kyo.Test:
                                                         entered.await
                                                             .andThen(gate.release)
                                                             .andThen(fiber.interrupt)
-                                                            // Wait for the lease fiber to finish unwinding so its exit
-                                                            // finalizer has run. untilCancelsSettled gates the statement
-                                                            // path's detached reclaim; the stream path closes inline via
-                                                            // decideExit/orphan and has no reclaim to wait on, so without
-                                                            // this the loop and closeAll can race a still-unwinding lease.
+                                                            // Wait for the lease fiber to finish unwinding: untilCancelsSettled
+                                                            // gates only the statement path's reclaim, so without this the loop can race a still-unwinding stream lease.
                                                             .andThen(fiber.getResult)
                                                             .andThen(untilCancelsSettled(pool))
                                                             .andThen(Loop.continue(i + 1))
@@ -982,13 +947,11 @@ class SqlConnectionCancelTest extends kyo.Test:
                                             }
                                         }
                                 }.andThen {
-                                    // Stop gating so the close path is not held, then close the pool: every reclaimed or
-                                    // pooled connection is closed here, so a probe still open afterwards was leaked.
+                                    // Stop gating, then close the pool: it closes every reclaimed or pooled connection, so
+                                    // a probe still open afterwards was leaked.
                                     gateRef.set(Absent).andThen(pool.closeAll(1.second)).andThen {
-                                        // Poll until every probe is closed, up to a generous budget. An interrupted lease
-                                        // closes its connection on its own unwind (orphan or decideExit) and, for a
-                                        // statement, on a detached reclaim, so a connection can still be closing when the
-                                        // loop ends under load. A real leak never settles and trips the assertion.
+                                        // Poll until every probe closes: an interrupted lease closes on its own unwind (and,
+                                        // for a statement, a detached reclaim), so one can still be closing here; a real leak never settles.
                                         Loop(0) { attempt =>
                                             Sync.Unsafe.defer {
                                                 var leaked = 0
@@ -1024,8 +987,8 @@ class SqlConnectionCancelTest extends kyo.Test:
     }
 
     "a stream lease interrupted at the connect handover closes the connection, never leaks it" in {
-        // The stream path (leaseScoped -> acquireScoped) owns the handover through the same withCustody the statement
-        // path uses; before that fix this path leaked while the statement path did not.
+        // The stream path (leaseScoped -> acquireScoped) owns the handover via the same withCustody as the statement
+        // path; it was the leaking one, so it gets its own coverage.
         handoverLeakTest("handover-stream")((pool, config) =>
             Scope.run(pool.leaseScoped(address, Absent, config).andThen(Async.never))
         )

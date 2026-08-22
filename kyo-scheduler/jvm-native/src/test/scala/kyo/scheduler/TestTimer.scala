@@ -10,9 +10,8 @@ case class TestTimer() extends InternalTimer {
     private val tasks = new PriorityQueue[TestTimerTask]
 
     override def schedule(interval: Duration)(f: => Unit): TestTimerTask = {
-        // A recurring schedule enqueues a fresh occurrence per run, so cancellation is held in a
-        // flag shared by the whole chain: the handle the caller keeps stays valid for every
-        // occurrence, including ones enqueued after the handle was returned.
+        // A recurring schedule enqueues a fresh occurrence per run, so cancellation lives in a flag shared
+        // by the whole chain: the caller's handle stays valid for every occurrence, even later ones.
         val cancelled = new AtomicBoolean(false)
         def enqueue(): TestTimerTask = {
             val task = () => {

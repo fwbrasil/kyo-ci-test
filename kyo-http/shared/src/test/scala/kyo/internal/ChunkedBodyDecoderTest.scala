@@ -424,12 +424,9 @@ class ChunkedBodyDecoderTest extends kyo.BaseHttpTest:
             }
         }
 
-        // Arrival-after-arm: readBufferedUnsafe is started FIRST (arming a taker via takeFiber), and the fragments
-        // are offered afterwards, so every span travels through the channel's registered-taker delivery path
-        // (flush -> promise.complete) instead of the pre-staged poll path the tests above use. Each offer runs the
-        // decode callbacks synchronously on the offering thread, so the sequence is deterministic on every platform.
-        // The postcondition is the pool-reuse invariant: a completed body leaves the inbound channel empty with
-        // zero registered takers.
+        // Arrival-after-arm: readBufferedUnsafe starts FIRST (arming a taker), fragments are offered after, so every span travels
+        // the registered-taker delivery path (flush -> promise.complete), not the pre-staged poll path. Each offer runs the decode
+        // callbacks synchronously (deterministic on every platform). Postcondition: a completed body leaves the inbound channel empty, zero takers.
         "readBufferedUnsafe arrival-after-arm" - {
 
             def armThenOffer(initial: String, fragments: Seq[String], expected: String)(using kyo.test.AssertScope): Unit =

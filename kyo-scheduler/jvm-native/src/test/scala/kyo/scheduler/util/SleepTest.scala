@@ -14,35 +14,21 @@ import org.scalatest.time.Span
 
 /** Covers what Sleep owes a caller: it suspends, and it comes back.
   *
-  * That the Native implementation keeps using nanosleep rather than the pipe-based Thread.sleep is
-  * covered as well, by SleepDescriptorTest: a thread parked in Thread.sleep holds two pipe
-  * descriptors where one in nanosleep holds none, and Linux publishes that difference live in
-  * /proc/self/fd, so the choice does read back as state. It reads back only there, which is why the
-  * probe sits in the Native sources rather than here.
-  *
-  * Out of scope here: the magnitude of the suspension. An arithmetic mistake in the conversion
-  * handed to nanosleep, a tv_nsec off by a factor of ten say, leaves both properties below intact.
-  * Racing a short call against a long one does not reach it either, since a uniform scaling error
-  * preserves their order, and Sleep takes a plain Int carrying no unit for a test to key on.
-  * Catching magnitude takes a clock, and this suite reads none. The regulator's use of the real
-  * probe stays covered by ConcurrencyTest.
+  * The nanosleep-vs-Thread.sleep choice is covered by SleepDescriptorTest (pipe descriptors in /proc/self/fd), and
+  * magnitude by ConcurrencyTest; magnitude is out of scope here since this suite reads no clock.
   */
 class SleepTest extends AnyFreeSpec with NonImplicitAssertions {
 
     "suspends the calling thread" in {
-        // What Sleep owes its caller is suspension. The scheduler's own detector reports a thread
-        // as blocked once its user CPU time stops advancing, which holds for a thread parked
-        // inside Sleep and not for one that returned from it or is spinning, so the detector
-        // states the property as thread state rather than as elapsed time. The duration passed to
-        // Sleep is an input, not a bound: nothing here reads how much of it goes by.
+        // The detector reports a thread blocked once its user CPU time stops advancing: true for a thread parked in
+        // Sleep, false for one spinning or returned. The property is thread state, not elapsed time.
         val entered  = new CountDownLatch(1)
         val returned = new AtomicBoolean(false)
         val threadId = new AtomicLong(0L)
         val thread = new Thread((() => {
             threadId.set(ThreadUserTime.currentThreadId())
             entered.countDown()
-            // The interrupt at the end of the test is how this thread is released on platforms
-            // where Sleep is interruptible; catching it keeps the release quiet.
+            // The test's final interrupt releases this thread where Sleep is interruptible; catching it keeps it quiet.
             try {
                 Sleep(30000)
                 returned.set(true)
@@ -56,10 +42,8 @@ class SleepTest extends AnyFreeSpec with NonImplicitAssertions {
             assert(entered.await(30, TimeUnit.SECONDS), "the sleeping thread should have started")
             val detector = new BlockingMonitor(1)
             val ids      = Array(threadId.get())
-            // The interval outruns the coarsest CPU-time counter in the matrix. Windows advances
-            // per-thread time on a 15.6ms tick, close enough to eventually's own default poll that
-            // a Sleep that spun instead of suspending could read as flat between two samples that
-            // landed inside one tick, and repeatedly enough to pass.
+            // The 200ms interval outruns the coarsest CPU-time counter (Windows' 15.6ms per-thread
+            // tick): a spinning Sleep must not read as flat between two samples that landed in one tick.
             eventually(timeout(scaled(Span(30, Seconds))), interval(Span(200, Millis))) {
                 detector.sample(ids, 1)
                 assert(detector.isBlocked(0), "a thread inside Sleep should read as blocked")
@@ -77,11 +61,8 @@ class SleepTest extends AnyFreeSpec with NonImplicitAssertions {
         "for a positive duration" in assertReturns(50)
     }
 
-    /** Runs `Sleep(ms)` on its own thread and asserts it hands control back.
-      *
-      * Completion is the whole observable of a Sleep that returns: how long it took is a property
-      * of the host's timer and scheduler, not of Sleep. The await bound is the give-up valve for a
-      * Sleep that never returns at all, which is the only failure there is to catch here.
+    /** Runs `Sleep(ms)` on its own thread and asserts it hands control back. Completion is the whole observable; the
+      * await bound only catches a Sleep that never returns.
       */
     private def assertReturns(ms: Int): Unit = {
         val returned = new CountDownLatch(1)

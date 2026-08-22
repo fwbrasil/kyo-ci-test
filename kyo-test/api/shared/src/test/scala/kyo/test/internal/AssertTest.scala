@@ -55,9 +55,8 @@ class AssertTest extends AsyncFreeSpec with NonImplicitAssertions:
     // class-body code via the private[kyo] ctor (this test is under package kyo).
     private given AssertScope = new AssertScope(Chunk.empty)
 
-    // Power-assert instrumentation (the recorded subexpression value diagram) is compiled in only when KYO_TEST_POWER_ASSERT (or
-    // -Dkyo.test.powerAssert) is set; see AssertMacro. Tests that assert on those recorded values only make sense then, so gate them on
-    // the same flag, read here at runtime (compile and test run share the process env under sbt / CI).
+    // Power-assert instrumentation is compiled in only when KYO_TEST_POWER_ASSERT (or -Dkyo.test.powerAssert) is set (see
+    // AssertMacro). Tests asserting on it gate on the same flag, read at runtime since compile and run share the env.
     private val powerAssertOn: Boolean =
         sys.props.get("kyo.test.powerAssert").orElse(sys.env.get("KYO_TEST_POWER_ASSERT"))
             .exists(v => Set("1", "true", "on", "yes").contains(v.trim.toLowerCase))

@@ -224,11 +224,8 @@ You must not use an intersection type, yet have provided scala.Int & scala.Doubl
                     end for
                 }
 
-                // TODO(kyo-zio): re-enable once the residual interrupt-orphan race in ZIOs.run is closed.
-                // A ZIO interrupt can still race the bridge's interruption wiring in a narrow window the
-                // onInterrupt/interruptAndAwait design does not fully close, so a bridged kyo fiber is
-                // occasionally orphaned (progress keeps advancing after interrupt+await) and this assertion
-                // fails intermittently on CI.
+                // TODO(kyo-zio): re-enable once the interrupt-orphan race in ZIOs.run is closed. A ZIO interrupt can still race the
+                // bridge's wiring in a window onInterrupt/interruptAndAwait leaves open, orphaning a bridged kyo fiber (progress advances after interrupt+await), failing intermittently on CI.
                 "interrupt racing acquisition never orphans the bridged kyo fiber".ignore(
                     "flaky: residual interrupt-orphan race in ZIOs.run bridge, pending a fix"
                 ) in runZIO {

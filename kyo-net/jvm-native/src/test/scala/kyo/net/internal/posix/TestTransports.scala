@@ -16,8 +16,7 @@ object TestTransports:
       * a fake/recording [[kyo.net.internal.TlsEngine]] for the handshake engine (`buildEngine`, defaulting to the real
       * [[PosixTransport.realEngineFactory]]) where a test needs to observe or script the engine the transport is otherwise the sole builder of.
       *
-      * `onAcceptResourceBackoff` fires once per accept-loop re-arm under descriptor exhaustion (`EMFILE`/`ENFILE`), so a test observes the
-      * re-arm cadence as a count of events rather than as elapsed time.
+      * `onAcceptResourceBackoff` fires once per accept-loop re-arm under descriptor exhaustion (`EMFILE`/`ENFILE`), letting a test count re-arms as events, not time.
       */
     def forTesting(
         ioDriver: IoDriver[PosixHandle],

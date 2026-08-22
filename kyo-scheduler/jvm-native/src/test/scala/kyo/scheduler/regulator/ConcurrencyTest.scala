@@ -44,9 +44,8 @@ class ConcurrencyTest extends AnyFreeSpec with NonImplicitAssertions {
         val probes           = new AtomicInteger(0)
         var jitterAtDecision = -1.0
 
-        // The regulator reads the jitter and then the load average, both on this thread and with
-        // no probe able to land between them, so the load supplier is where the jitter that
-        // decided this cycle can be captured exactly.
+        // The regulator reads jitter then load on this thread with no probe between, so the load supplier
+        // is where this cycle's deciding jitter can be captured exactly.
         val running = new AtomicReference[Concurrency](null)
         val concurrency = new Concurrency(
             () => {
@@ -64,11 +63,8 @@ class ConcurrencyTest extends AnyFreeSpec with NonImplicitAssertions {
         )
         running.set(concurrency)
 
-        // Virtual scheduling around a real probe: advanceAndRun fires the collect and regulate
-        // tasks on this thread, so every host runs the same number of real Sleep probes and
-        // reaches exactly one regulation decision, and only the measurement comes from the real
-        // clock. Wall time cannot drive this: a host slow enough to stretch the wait into an
-        // extra regulation cycle moves the decision budget the outcome is judged against.
+        // Virtual scheduling around a real probe: advanceAndRun fires collect and regulate on this thread, so every host runs the same
+        // probe count and one regulation decision, only the measurement real. Wall time would let a slow host stretch into an extra cycle.
         timer.advanceAndRun(config.regulateInterval)
         concurrency.stop()
 
@@ -78,11 +74,8 @@ class ConcurrencyTest extends AnyFreeSpec with NonImplicitAssertions {
         assert(status.probesCompleted == expectedProbes.toLong, "every probe should have completed")
         assert(status.adjustments == 1L, s"expected one regulation cycle, got ${status.adjustments}")
 
-        // The decision has to follow the jitter the probe actually produced. Asserting the
-        // outcome directly instead (workers grew, or shrank by no more than a fixed amount)
-        // asserts that the host was quiet, which a shared or oversubscribed one is not: real
-        // contention raises real probe jitter, and shedding workers is then the correct answer.
-        // The first step in either direction is 1, so the expected diff is exact.
+        // The decision must follow the probe's actual jitter; asserting the outcome directly (workers grew) assumes a quiet host, but a
+        // contended one sheds workers correctly. The first step in either direction is 1, so the expected diff is exact.
         val expectedDiff =
             if (jitterAtDecision > config.jitterUpperThreshold) -1
             else if (jitterAtDecision < config.jitterLowerThreshold) 1

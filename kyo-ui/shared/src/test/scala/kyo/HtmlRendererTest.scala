@@ -757,8 +757,8 @@ class HtmlRendererTest extends UITest:
     }
 
     "ImgSrc.Absolute renders full URL" in {
-        // Fast-refused loopback URL, not a reachable external domain: an unreachable external img src stays pending
-        // while the harness page loads and blocks the window `load` event, timing out withUI's settle on slow-DNS CI.
+        // Fast-refused loopback URL, not an external domain: an unreachable external img src stays pending, blocks the
+        // window `load` event, and times out withUI's settle on slow-DNS CI.
         withUI(UI.div(UI.img(ImgSrc.Absolute(HttpUrl.parse("http://127.0.0.1:1/logo.png").getOrThrow), "logo").id("i"))) {
             Browser.assertAttributeSatisfies(
                 Selector.id("i"),

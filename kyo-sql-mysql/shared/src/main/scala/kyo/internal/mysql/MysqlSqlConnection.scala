@@ -175,9 +175,8 @@ final private[kyo] class MysqlSqlConnection private[mysql] (
             // terminator (killing the statement itself if that was faster). No sidecar is worth opening for either.
             case false => ()
             case true  =>
-                // Own the sidecar across the connect->closingOnce handover, the way the pool owns a lease. The reclaim
-                // carrier's cancel budget can interrupt here; a local custody (openSocket claims into it via custodyLocal)
-                // has its orphan finalizer close a sidecar an interrupt drops before closingOnce registers.
+                // Own the sidecar across the connect->closingOnce handover: the reclaim carrier can interrupt here, so a
+                // local custody (openSocket claims into it via custodyLocal) closes a sidecar an interrupt drops first.
                 Sync.Unsafe.defer(new kyo.db.Connection.Custody).map { custody =>
                     Scope.run {
                         Scope.ensure { _ =>

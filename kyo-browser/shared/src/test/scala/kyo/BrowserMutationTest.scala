@@ -1331,9 +1331,8 @@ class BrowserMutationTest extends BrowserTest:
             ) {
                 for
                     _ <- Browser.fill(Browser.Selector.id("q"), "hello")
-                    // Deterministic guard: the inline script sets window.__replaced_input_ready after
-                    // the 50ms re-render calls replacement.focus(); waiting on it is the real barrier,
-                    // so no settle sleep is needed before it.
+                    // Deterministic guard: the inline script sets window.__replaced_input_ready after the 50ms re-render
+                    // calls replacement.focus(); waiting on it is the real barrier, so no settle sleep is needed.
                     _ <- Browser.waitFor("window.__replaced_input_ready === true")
                     // Original #q no longer exists, but the new input is focused. The no-selector press dispatches there.
                     _         <- Browser.press(Browser.Key.Enter)

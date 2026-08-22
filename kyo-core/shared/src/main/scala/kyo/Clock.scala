@@ -304,14 +304,8 @@ object Clock:
 
         /** Suspends until at least `count` sleep operations are registered and not yet triggered.
           *
-          * A periodic task re-arms its next sleep only after it wakes and runs its body, which happens on another fiber once `advance`
-          * triggers the current sleep. Fencing on the re-armed sleeper lets a test advance exactly one interval per tick, so the observed
-          * tick count is exact rather than dependent on how the advancing fiber and the periodic fiber interleave.
-          *
-          * @param count
-          *   The number of pending sleepers to wait for
-          * @return
-          *   Unit effect that completes once the queue holds at least `count` pending sleepers
+          * A periodic task re-arms its next sleep only after `advance` triggers the current one and its body runs on another fiber. Fencing on
+          * the re-armed sleeper lets a test advance exactly one interval per tick, so the tick count is exact regardless of fiber interleaving.
           */
         private[kyo] def awaitPendingSleepers(count: Int): Unit < Async
 

@@ -227,9 +227,8 @@ class JsTransportTlsTest extends Test:
             sniHostname = Present("localhost")
         )
         for
-            // Listen on "localhost" (not 127.0.0.1): the verifying client must connect by NAME for hostname verification, and Node resolves
-            // "localhost" to ::1 first on some hosts (verbatim DNS result order). Binding and connecting through the same name makes both
-            // sides share one resolution, so the leaf does not depend on which address family the host lists first.
+            // Bind and connect on the 127.0.0.1 literal so both sides pin IPv4 with no DNS lookup: localhost can resolve ::1-first and a
+            // split family would miss the server's ephemeral port. Verification checks sniHostname "localhost" against the cert SAN, not the connect host.
             listener <- transport.listenTls("127.0.0.1", 0, 128, serverTls) { serverConn =>
                 discard(Sync.Unsafe.evalOrThrow {
                     Fiber.initUnscoped {
@@ -254,9 +253,8 @@ class JsTransportTlsTest extends Test:
         privateKeyPath = Present(localhostKeyPath)
     )
 
-    /** The finite deadline the Infinity leaf's pacer listener carries. It bounds what that leaf can catch: a deadline wrongly armed for an
-      * Infinity config is caught when it would have fired within this duration of the subject's accept, and the subject is accepted before the
-      * pacer, so the reach is a little wider than the value itself.
+    /** The finite deadline the Infinity leaf's pacer listener carries. It bounds what the leaf catches: a deadline wrongly armed for an
+      * Infinity config is caught if it would fire within this duration of the subject's accept.
       */
     private val pacerDeadline = 400.millis
 
@@ -327,11 +325,8 @@ class JsTransportTlsTest extends Test:
     }
 
     "a stalled server TLS handshake is not reaped when handshakeTimeout is Infinity" in {
-        // With handshakeTimeout = Infinity the server arms no deadline timer at all, so a stalled handshake parks forever. Proving that
-        // non-event takes a point known to be past any deadline the subject could have been given: a second, identically stalled client on a
-        // listener of the SAME transport whose deadline IS finite. It is accepted after the subject, so a subject timer of at most the pacer's
-        // duration would have destroyed the subject's socket before the pacer's own reap lands. The pacer's reap is therefore the event this
-        // leaf settles on, and it also proves the reap machinery is alive: a window in which nothing happens proves nothing on its own.
+        // With handshakeTimeout = Infinity the server arms no deadline timer, so a stalled handshake parks forever. A second stalled client (the
+        // pacer) on a finite-deadline listener of the SAME transport, accepted AFTER the subject, settles on its own reap: proves the machinery is alive, not an empty window.
         import AllowUnsafe.embrace.danger
         val transport =
             JsTransport.init(poolSize = 1)

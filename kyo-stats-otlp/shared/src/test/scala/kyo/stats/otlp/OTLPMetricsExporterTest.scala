@@ -158,11 +158,8 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
                 val gauge                = Stat.initScope("test", "export").initGauge(uniqueName, "test gauge")(gaugeValue)
                 for
                     _ <- OTLPMetricsExporter.run(config)
-                    // Same Loop+reachability pattern as the counter/histogram tests: the first export may fire
-                    // before the gauge is fully registered, so take up to 10 exports. The registry holds only a
-                    // WeakReference to the gauge, so capture it inside the Loop closure to keep it strongly
-                    // reachable until the Loop completes (otherwise the JVM may GC it mid-test and it vanishes
-                    // from every exported batch). Works on all platforms, unlike Reference.reachabilityFence.
+                    // The first export may fire before the gauge is registered, so take up to 10 exports. The registry holds only a WeakReference,
+                    // so `discard(gauge)` in the Loop keeps it strongly reachable (else the JVM may GC it mid-test); works on all platforms, unlike Reference.reachabilityFence.
                     found <- Loop.indexed { i =>
                         discard(gauge)
                         metricCh.take.map { received =>

@@ -27,10 +27,8 @@ import kyo.net.Test
   * one `acceptNow` per re-arm. The decorator stops injecting once the spin threshold is crossed so a regressed (spinning) build still
   * tears down cleanly (the real accept then succeeds).
   *
-  * Completion: nothing here reads a clock. The accept loop settles the leaf with whichever event lands first, and the assertion reads which:
-  * a resource-backoff re-arm (reported through the `onAcceptResourceBackoff` hook), or the spy's spin cap of `spinThreshold` `acceptNow` calls
-  * for ONE pending connection, which only a spinning loop reaches. A slow or loaded machine changes how long the leaf runs, nothing else.
-  * `Async.timeout` is only the deadlock ceiling for an accept loop that does neither (a wedged listener), never the pass condition.
+  * Completion: no clock is read. The leaf settles on whichever event lands first and the assertion reads which: a resource-backoff re-arm
+  * (the `onAcceptResourceBackoff` hook) or the spy's `spinThreshold` spin cap, which only a spinning loop reaches. `Async.timeout` is only the deadlock ceiling.
   */
 class PosixTransportAcceptEmfileTest extends Test:
 
@@ -40,16 +38,13 @@ class PosixTransportAcceptEmfileTest extends Test:
     // branch for it), so it is spelled out here.
     private val EMFILE = 24
 
-    // The accept loop's response to a persistent EMFILE settles the leaf with one of two events, and the assertion reads which one landed,
-    // never a count or an elapsed time. A resource-backoff re-arm (the fix) reports BackedOff; a loop that never backs off spins the acceptNow
-    // spy up to its cap and reports Spun. Reporting the event rather than counting re-arms makes the leaf platform-independent: epoll re-arms a
-    // still-ready listen fd fewer times than kqueue, but taking the backoff PATH even once is the whole anti-spin property.
+    // Two outcomes: a resource-backoff re-arm (the fix) reports BackedOff; a loop that never backs off spins the spy to its cap and reports Spun.
+    // Reporting the event, not a re-arm count, keeps the leaf platform-independent: taking the backoff PATH even once is the whole anti-spin property.
     private enum AcceptGuard derives CanEqual:
         case BackedOff, Spun
 
-    // Spin cap. A spinning loop never backs off, so the spy recognizes the spin once acceptNow has been called this many times for ONE pending
-    // connection (a bounded-backoff loop issues only a small handful), settles the leaf with Spun, and stops injecting EMFILE so a regressed
-    // build's real accept drains the backlog and the test tears down cleanly. This is the cap the spy acts on, not a bound the assertion reads.
+    // Spin cap: once acceptNow is called this many times for ONE pending connection (a bounded-backoff loop issues only a handful), the spy
+    // settles the leaf with Spun and stops injecting EMFILE so a regressed build's real accept drains the backlog and teardown is clean.
     private val spinThreshold = 200
 
     // Deadlock ceiling, not a pass condition: the assertion reads which event settled the leaf, never elapsed time. This turns an accept loop
@@ -60,10 +55,8 @@ class PosixTransportAcceptEmfileTest extends Test:
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
             cancel("PosixTransport accept-loop tests need epoll (Linux) or kqueue (macOS/BSD)")
 
-    /** A delegating [[SocketBindings]] that injects `EMFILE` on `acceptNow` while a bounded budget is unspent, counting every call. At the spin
-      * threshold it settles `settled` with `Spun` (the only way a spinning loop, which never reaches a backoff re-arm, terminates this
-      * test) and stops injecting, delegating to the real `acceptNow` so the backlog drains and teardown is clean. Every other method delegates to
-      * the real bindings (the single controlled injection pattern: one syscall's result is overridden, the rest are real).
+    /** A delegating [[SocketBindings]] that injects `EMFILE` on `acceptNow` up to the spin threshold, then settles `settled` with `Spun` (the only
+      * way a spinning loop ends this test) and delegates to the real `acceptNow` so the backlog drains; every other method delegates to the real bindings.
       */
     final private class EmfileAcceptSockets(real: SocketBindings, settled: Promise.Unsafe[AcceptGuard, Any]) extends SocketBindings:
         val acceptNowCalls: AtomicInteger = new AtomicInteger(0)
@@ -71,9 +64,8 @@ class PosixTransportAcceptEmfileTest extends Test:
         def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
             val n = acceptNowCalls.incrementAndGet()
             if n >= spinThreshold then
-                // Settle from the spin side: a spinning loop never reaches a backoff re-arm, so this is the only event that ends the leaf for
-                // it. The promise's own gate makes this idempotent, so whichever of the spin cap and the first backoff lands first owns the
-                // outcome, and the real accept below drains the backlog so teardown is clean.
+                // Settle from the spin side: a spinning loop never reaches a backoff re-arm, so this is the only event that ends its leaf. The
+                // promise gate makes it idempotent, so whichever of the spin cap and the first backoff lands first owns the outcome.
                 discard(settled.complete(Result.succeed(AcceptGuard.Spun)))
                 real.acceptNow(fd, addr, addrlen)
             else
@@ -133,9 +125,8 @@ class PosixTransportAcceptEmfileTest extends Test:
                 driver,
                 spy,
                 backendIsEpoll = false,
-                // The first time the accept loop classifies EMFILE as resource exhaustion and schedules a backoff re-arm, it has taken the
-                // anti-spin path: settle BackedOff. The promise gate makes this idempotent, so the first backoff (or the spin cap, whichever
-                // the loop reaches) owns the outcome.
+                // First backoff re-arm means the loop took the anti-spin path: settle BackedOff. The promise gate makes it idempotent, so the
+                // first backoff (or the spin cap, whichever the loop reaches) owns the outcome.
                 onAcceptResourceBackoff = () => discard(settled.complete(Result.succeed(AcceptGuard.BackedOff)))
             )
             discard(driver.start())

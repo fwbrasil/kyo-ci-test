@@ -161,8 +161,8 @@ class GuardCloseStressTest extends Test:
             closeThread.setDaemon(true)
             closeThread.start()
 
-            // Spin until the close thread transitions state out of StateOpen; a genuine failure to transition
-            // hangs into the suite timeout rather than being masked by a wall-clock deadline.
+            // Spin until the close thread transitions state out of StateOpen; a genuine failure to transition hangs
+            // into the suite timeout, not a masked wall-clock deadline.
             while core.state.get() == GuardCore.StateOpen do
                 Thread.onSpinWait()
             end while

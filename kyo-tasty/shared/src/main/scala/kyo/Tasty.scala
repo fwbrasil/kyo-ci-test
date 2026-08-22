@@ -4257,14 +4257,8 @@ object Tasty:
                     val n          = cur.name.asString
                     val nextAcc    = if n.nonEmpty then n :: acc else acc
                     val ownerIdCur = cur.ownerId
-                    // A package whose flat Name is already compound (contains a dot, e.g. "scala.annotation")
-                    // carries its entire dotted prefix from root, so its owner chain must not be re-walked.
-                    // scala-library pickles such a package nested under a same-prefix package (scala.annotation
-                    // under scala), and the merge writes that owner last-write-wins over the files that declare the
-                    // package, in decode-arrival order; re-prepending the owner's already-complete flat name would
-                    // double the prefix ("scala.scala.annotation.tailrec") and make the computed name
-                    // order-dependent. Stop at a compound-named package. Simple-named packages (e.g. Java's nested
-                    // java > lang, which do not carry the prefix) still walk their owner chain.
+                    // A compound flat package name (e.g. "scala.annotation") already carries its full dotted prefix, so stop rather than
+                    // re-walk: re-prepending a same-prefix owner would double it ("scala.scala.annotation"). Simple names still walk their chain.
                     if (cur.isInstanceOf[Symbol.Package] && n.indexOf('.') >= 0) || ownerIdCur == cur.id || ownerIdCur.value == -1 then
                         nextAcc
                     else

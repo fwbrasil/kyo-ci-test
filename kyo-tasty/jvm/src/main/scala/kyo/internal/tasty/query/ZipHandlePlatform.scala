@@ -14,17 +14,15 @@ private[kyo] object ZipHandlePlatform:
 
     /** The active JarMappedReaderPool for the current classpath-load scope, or Absent when none is installed.
       *
-      * Fiber-scoped (inheritable Local) rather than a process-global: concurrent `withClasspath` scopes each bind
-      * their own pool, so one scope's install or teardown never clobbers a pool another scope is still loading
-      * through. The binding propagates into the Async.foreach decoder fibers that call `readJarEntry`.
+      * A fiber-scoped Local, not a process-global, so concurrent `withClasspath` scopes each bind their own pool
+      * without clobbering another's. The binding propagates into the Async.foreach decoder fibers that call `readJarEntry`.
       */
     private val activePool: Local[Maybe[JarMappedReaderPool]] = Local.init(Maybe.Absent)
 
     /** Install a fresh JarMappedReaderPool for the duration of `body`, bound to this scope alone.
       *
-      * The pool is acquired in a Scope so its closeAll() (dropping all cached MappedByteBuffer references) runs on
-      * any exit (success, Abort, interrupt); the Scope effect is consumed by the enclosing Scope.run in
-      * ClasspathOrchestrator. `activePool.let` scopes the pool to `body` and every fiber it forks.
+      * Acquired in a Scope so its closeAll() (dropping cached MappedByteBuffers) runs on any exit; `activePool.let`
+      * scopes the pool to `body` and every fiber it forks.
       */
     def withPool[A, S](body: A < S)(using Frame): A < (S & Sync & Scope) =
         Scope.acquireRelease(

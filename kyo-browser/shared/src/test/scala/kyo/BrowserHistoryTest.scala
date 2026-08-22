@@ -400,9 +400,8 @@ class BrowserHistoryTest extends BrowserTest:
         val htmlHandler = HttpRoute.getRaw("/").response(_.bodyBinary).handler { _ =>
             HttpResponse.ok(htmlBytes).addHeader("Content-Type", "text/html; charset=utf-8")
         }
-        // The /slow fetch (kicked off after the load event) never completes, so a reload that
-        // wrongly waited for network idle would hang and trip the per-leaf timeout; a correct
-        // Settle.Load returns on the load event regardless. "reload returns" is the whole proof.
+        // The /slow fetch (after the load event) never completes, so a reload that wrongly waited for network idle would
+        // hang the leaf timeout; a correct Settle.Load returns on the load event regardless. "reload returns" is the proof.
         val slowHandler = HttpRoute.getRaw("/slow").response(_.bodyBinary).handler { _ =>
             Async.sleep(1.hour).andThen(
                 HttpResponse.ok(Span.fromUnsafe("ok".getBytes("UTF-8")))

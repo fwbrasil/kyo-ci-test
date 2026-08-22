@@ -10,10 +10,8 @@ import org.scalatest.freespec.AnyFreeSpec
 class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions {
 
     "stop" in {
-        // The update loop exits once it observes the stop flag, so a terminated executor is the
-        // exact signal that no further update can be published and the reported time is frozen.
-        // The clock runs on its own executor here because that termination is what proves it,
-        // and the shared pool never terminates.
+        // The update loop exits on the stop flag, so a terminated executor is the exact signal that no further update
+        // can be published and the reported time is frozen. Uses its own executor because the shared pool never terminates.
         val executor = Executors.newSingleThreadExecutor(Threads("test-internal-clock"))
         val clock    = new InternalClock(executor)
         try {
@@ -32,12 +30,8 @@ class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions {
     }
 
     "currentMillis" in {
-        // The clock publishes whatever its time source returns, so a source the test controls pins
-        // the reported value exactly, with no reference to real time. `source` is an AtomicLong the
-        // test moves; `currentMillis()` must catch up to each value it is set to, which also proves
-        // the update loop keeps resampling rather than latching the first reading. Moving the source
-        // forward and seeing the report follow is the monotonic property stated as an exact target
-        // rather than a bracket against the system clock.
+        // A `source` AtomicLong the test moves pins the reported value exactly, with no reference to real time. `currentMillis()`
+        // catching up to each set value proves the loop keeps resampling rather than latching, and gives monotonicity an exact target.
         val source   = new AtomicLong(1_000L)
         val executor = Executors.newSingleThreadExecutor(Threads("test-internal-clock"))
         val clock    = new InternalClock(executor, () => source.get())
@@ -54,10 +48,8 @@ class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
-    /** Reads the clock until it publishes a value other than `previous`.
-      *
-      * The deadline is a give-up valve for an update thread that died, not a bound anything is
-      * asserted against.
+    /** Reads the clock until it publishes a value other than `previous`. The deadline is a give-up valve for a dead update
+      * thread, not a bound anything is asserted against.
       */
     private def awaitTick(clock: InternalClock, previous: Long): Long = {
         val deadline = System.nanoTime() + 30L * 1000 * 1000 * 1000
@@ -70,10 +62,8 @@ class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions {
         current
     }
 
-    /** Reads the clock until it publishes exactly `target`.
-      *
-      * The deadline is a give-up valve for an update thread that never reaches the value, not a
-      * bound anything is asserted against.
+    /** Reads the clock until it publishes exactly `target`. The deadline is a give-up valve for a thread that never reaches
+      * the value, not a bound anything is asserted against.
       */
     private def awaitValue(clock: InternalClock, target: Long): Long = {
         val deadline = System.nanoTime() + 30L * 1000 * 1000 * 1000

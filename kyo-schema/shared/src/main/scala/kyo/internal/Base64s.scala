@@ -1,14 +1,11 @@
 package kyo.internal
 
-/** Base64 decoding that bounds its result to the byte length implied by the input text instead of trusting the length of the array the
-  * decoder returns.
+/** Base64 decoding that bounds its result to the byte length implied by the input text, not the length of the array the decoder returns.
   *
   * On scala-native 0.5.12 a concurrent heap-corruption defect can clobber a small array's length-header word between allocation and first
-  * read (see NATIVE_HEAP_CORRUPTION_DIAGNOSIS.md). When the clobber lands on the decoder's output array, a genuinely 3-byte decode reads
-  * back as hundreds of bytes of adjacent heap; the over-read then propagates faithfully through any length-driven copy. The decoded length
-  * of any string the basic decoder accepts is fully determined by the text (each non-pad character carries 6 bits), so recompute it and
-  * trim when the returned array disagrees. On the JVM and JS, where the decoder is well-behaved, the trim branch is never taken and behavior
-  * is identical.
+  * read (see NATIVE_HEAP_CORRUPTION_DIAGNOSIS.md); when it lands on the decoder's output array, a 3-byte decode reads back as hundreds of
+  * bytes of adjacent heap, and the over-read propagates through any length-driven copy. The decoded length is fully determined by the text
+  * (each non-pad character carries 6 bits), so recompute and trim when the returned array disagrees. On JVM and JS the trim never fires.
   */
 private[kyo] object Base64s:
 
@@ -22,9 +19,7 @@ private[kyo] object Base64s:
         else java.util.Arrays.copyOf(decoded, expected)
     end decodeExact
 
-    /** The decoded byte length implied by a base64 string the basic decoder accepts: `(chars - padding) * 6 / 8`. Exact for padded,
-      * partially padded, unpadded, and empty inputs.
-      */
+    /** Decoded byte length implied by a base64 string the basic decoder accepts: `(chars - padding) * 6 / 8`. Exact for all pad forms. */
     private def decodedLength(value: String): Int =
         val len = value.length
         val pad =

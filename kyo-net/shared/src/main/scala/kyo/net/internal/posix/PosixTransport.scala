@@ -69,9 +69,8 @@ final private[net] class PosixTransport private[posix] (
     engineFactory: PosixTransport.TlsEngineFactory,
     // Claim flag for the process-global stdio handle, so stdio is claimed at most once.
     stdioClaimed: AtomicBoolean.Unsafe,
-    // Called once per resource-exhaustion re-arm of an accept loop, on the carrier that observed the exhaustion, immediately before the backoff
-    // timer is scheduled. Production supplies a no-op; the test tree supplies a counter through this same `private[posix]` constructor so the
-    // re-arm cadence is observable as a count of events rather than as elapsed wall-clock time.
+    // Called once per resource-exhaustion re-arm of an accept loop, just before the backoff timer is scheduled. Production is a no-op;
+    // the test tree passes a counter so the re-arm cadence is observable as an event count, not elapsed wall-clock time.
     onAcceptResourceBackoff: () => Unit,
     // Count of accept loops that have started but not yet exited. Each loop increments it on start and decrements it on exit (every path), so a
     // caller that closed the listeners can observe via [[activeAcceptLoops]] when every blocking `accept` has actually returned and its loop has

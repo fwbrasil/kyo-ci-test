@@ -272,12 +272,8 @@ class BrowserScreencastTest extends BrowserTest:
                         assert(ex.operation == "screenshotFrames", s"unexpected operation ${ex.operation}")
                         // The duration cap reports BOTH numbers in milliseconds: limit == maxDurationMs, reached == elapsed ms.
                         assert(ex.limit == 300, s"expected limit 300 (duration cap ms) but got ${ex.limit}")
-                        // reached > limit is the definitional relationship: the duration cap fires precisely because the elapsed-at-cap
-                        // passed the configured limit. It compares two values the exception itself carries (no wall-clock band) and rules
-                        // out reached being a frame count, since only a handful of frames land within the 300ms limit and none exceed it.
-                        // Not covered here: a wrong-unit regression that reports reached in a larger unit (nanos, so 300000000 > 300
-                        // still holds). Any guard against that would be a flaky magnitude band, so the unit is instead pinned at the
-                        // throw site, where reached and limit are both taken from the same millisecond clock.
+                        // reached > limit is definitional (the cap fires because elapsed passed the limit) and compares two values
+                        // the exception carries, ruling out a frame count; a wrong-unit (nanos) regression is instead pinned at the throw site.
                         assert(
                             ex.reached > ex.limit,
                             s"expected reached (elapsed ms) to exceed the configured limit (${ex.limit}) but got ${ex.reached}"

@@ -230,10 +230,8 @@ private[kyo] object UnsafeServerDispatch:
                     val cl  = request.contentLength
                     val max = config.maxContentLength
 
-                    // Content-Length enforcement: reject before routing if the declared body exceeds the limit. A request carrying both
-                    // Content-Length and Transfer-Encoding is refused as unframeable by the parser (answered 400 before this point per RFC
-                    // 9112 section 9.5), so Content-Length stands alone here; the `!request.isChunked` guard skips enforcement for a chunked
-                    // body, whose length is not declared by a header.
+                    // Reject before routing if the declared body exceeds the limit. Both Content-Length and Transfer-Encoding is already
+                    // 400'd upstream (RFC 9112 section 9.5); the `!request.isChunked` guard skips a chunked body, whose length no header declares.
                     if cl > max && !request.isChunked then
                         // The over-limit body is never consumed (417 withholds it, 413 declined it), so the connection
                         // cannot be reused: answerAndContinue closes it (RFC 9112 section 9.3). The 417-vs-413
@@ -285,10 +283,8 @@ private[kyo] object UnsafeServerDispatch:
                 // Answering is only half of it. Not restarting keep-alive is not the same as closing, and answering
                 // without closing is worse than staying silent: the peer sees a complete, well-framed 400, keeps a
                 // connection it believes is healthy, and sends its next request into a socket nothing is reading. So the
-                // answer carries Connection: close (RFC 9112 section 9.6) and the connection is actually torn down
-                // through the same teardown every other answer-then-close path uses, which delivers the queued 400
-                // instead of discarding it and reclaims the fd the idle timer can no longer reclaim for us, because
-                // onClosed has just cancelled it.
+                // answer carries Connection: close (RFC 9112 section 9.6) and the connection is torn down through the same
+                // answer-then-close teardown, which delivers the queued 400 and reclaims the fd onClosed's cancel left behind.
                 writeBadRequest(streamCtx, connectionClose = true)
                 closeConnectionNow()
         )

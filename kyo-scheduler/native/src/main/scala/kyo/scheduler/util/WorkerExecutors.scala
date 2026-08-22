@@ -10,21 +10,17 @@ import java.util.concurrent.ThreadFactory
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
-/** Native worker/clock/timer executors that keep the scheduler's OS-thread population static and serialize thread initialization.
+/** Native worker/clock/timer executors that keep the scheduler's OS-thread population static and serialize thread init.
   *
-  * scala-native 0.5.12 has a GC race in `MutatorThread_init`: a thread that begins while a collection is in flight can claim a heap block
-  * the collector is concurrently reclaiming, and the newcomer's freshly written object then overlaps another thread's live object. The window
-  * opens only when a thread starts DURING allocation load; it surfaces as intermittent silent heap corruption (an array's length-header word
-  * overwritten by a pointer, observed on CI as a `YamlEventReader` bytes over-read) and native SIGSEGVs. Eliminate the geometry: pre-start the
-  * core worker threads while the main thread is still the only allocator, never reap them, and route every scheduler thread creation through
-  * one shared latch so at most one `MutatorThread_init` is ever in flight (including the growth path). The JVM keeps the historical
-  * cached-pool behavior (see the jvm variant); this is a native-only workaround for the upstream defect, whose fix is promised but unreleased.
+  * scala-native 0.5.12 has a GC race in `MutatorThread_init`: a thread starting during a collection can claim a block the collector is
+  * reclaiming, silently corrupting the heap (seen on CI as a `YamlEventReader` over-read) and crashing with SIGSEGVs. Fix: pre-start the
+  * core workers while the main thread is the only allocator, never reap them, and gate every scheduler thread creation through one latch
+  * so at most one `MutatorThread_init` runs at a time. Native-only workaround for the unreleased upstream fix.
   */
 private[scheduler] object WorkerExecutors {
 
-    // One shared init gate across worker, clock, and timer threads. Each `newThread` waits (bounded) for the previously created scheduler
-    // thread to reach `run()`, which happens after its `MutatorThread_init` at OS-thread entry, so no two scheduler threads initialize
-    // concurrently. `MALLOC`-cheap: a latch handoff per thread creation, and creation is rare (pre-start, then only blocked-carrier growth).
+    // One shared init gate across worker, clock, and timer threads. Each `newThread` waits (bounded) for the previous scheduler
+    // thread to reach `run()` (after its `MutatorThread_init`), so no two initialize concurrently. Creation is rare and cheap.
     private val gateLock                     = new Object
     private var previousInit: CountDownLatch = new CountDownLatch(0)
 

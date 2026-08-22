@@ -46,9 +46,8 @@ object TestKyo {
     def command: Command = Command.args("testKyo", "") { (state, args) =>
         val isAll           = args.contains("--all")
         val isDryRun        = args.contains("--dry-run")
-        // --quick emits `testQuick` per module instead of `test`, so a re-invocation re-runs only the
-        // tests sbt did not record as passed. The native crash-retry loop (ci-test.sh) uses it on retry
-        // attempts so a crashed suite's re-run stays scoped to what failed, not the whole module set.
+        // --quick emits `testQuick` per module, so a re-invocation re-runs only the tests sbt did not record as
+        // passed. The native crash-retry loop (ci-test.sh) uses it so a crashed suite's re-run stays scoped to failures.
         val isQuick         = args.contains("--quick")
         val scalaIdx        = args.indexOf("--scala")
         val scalaVersionArg = if (scalaIdx >= 0 && scalaIdx + 1 < args.length) Some(args(scalaIdx + 1)) else None
@@ -58,10 +57,9 @@ object TestKyo {
         val phaseIdx = args.indexOf("--phase")
         val phase    = if (phaseIdx >= 0 && phaseIdx + 1 < args.length) args(phaseIdx + 1) else "test"
 
-        // --exclude <base>[,<base>...] drops modules by cross-project base name (platform suffix stripped);
-        // --only <base>[,<base>...] keeps only those modules. They are complements: CI's Native pass runs
-        // the heavy module in an isolated driver via --only and the rest via --exclude, so each module is
-        // linked and run exactly once across the two passes. Both honor the diff/scala/platform scoping.
+        // --exclude <base>[,...] drops modules by cross-project base name (platform suffix stripped); --only keeps
+        // only those. Complements: CI's Native pass runs the heavy module in an isolated driver via --only and the
+        // rest via --exclude, so each is linked and run exactly once. Both honor the diff/scala/platform scoping.
         val excludeIdx = args.indexOf("--exclude")
         val excludeBases: Set[String] =
             (if (excludeIdx >= 0 && excludeIdx + 1 < args.length) args(excludeIdx + 1) else "")
@@ -99,13 +97,10 @@ object TestKyo {
             if (isAll || scalaVersionOpt.isDefined) runAll(state, platform, sv, phase, excludeBases, onlyBases, isQuick)
             else runDiff(state, baseRef, platform, sv, phase, excludeBases, onlyBases, isQuick)
 
-        // Assemble the whole run as ONE ordered command string. sbt's Command.process queues a command
-        // onto the state's remaining commands rather than running it inline, so issuing each Scala-version
-        // pass as its own Command.process call drains them out of order and at the wrong version: the ++
-        // switches run first and the batches after, leaving each batch to execute under whatever version
-        // was switched to last. Queuing one ordered string instead runs each batch under the version its
-        // preceding ++ switch selected. Module selection reads crossScalaVersions (version-independent),
-        // so every batch is computed from the current state without switching first.
+        // Assemble the whole run as ONE ordered command string. sbt's Command.process queues onto the state's remaining
+        // commands rather than running inline, so a separate call per Scala-version pass drains out of order: the ++
+        // switches run first, then all batches under whatever version was switched to last. One ordered string runs
+        // each batch under its preceding ++. Module selection reads crossScalaVersions, computed without switching.
         val parts = scala.collection.mutable.ListBuffer.empty[String]
         scalaVersionOpt.foreach(v => if (v != scala3) parts += s"++$v")
         val primary = commandForScala(targetScala)
@@ -271,9 +266,8 @@ object TestKyo {
             case _        => false
         }
 
-    /** Strip the platform suffix to the cross-project base name, so `--exclude` can name a module
-      * once (e.g. `kyo-schema-tests`) and match every platform variant (`kyo-schema-testsNative`).
-      * Suffix-less JVM-only projects (kyo-compat-plugin) return unchanged.
+    /** Strip the platform suffix to the cross-project base name, so `--exclude` names a module once
+      * (`kyo-schema-tests`) and matches every platform variant. JVM-only projects (kyo-compat-plugin) return unchanged.
       */
     private def baseName(name: String): String =
         platformNames.find(p => name.endsWith(p)).map(p => name.dropRight(p.length)).getOrElse(name)

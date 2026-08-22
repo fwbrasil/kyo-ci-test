@@ -233,14 +233,9 @@ class TopicInvariantsTest extends Test:
                 started    <- Latch.init(2)
                 receiving1 <- Latch.init(1)
                 receiving2 <- Latch.init(1)
-                // started.await only proves both consumer fibers started, not that both aeron images
-                // are receiving; a one-shot publish can close before a late image connects, and aeron
-                // never redelivers, so that consumer would hang. Probe with sentinel -1 until both
-                // signal first receipt, then the real batch follows in the SAME publication. The probe
-                // has no step cap on purpose: a fixed ceiling that fired before a slow image connected
-                // (seen on the emulated arm64 and windows CI runners) published the batch into a
-                // half-connected state and hung anyway, so the test-level timeout is the only backstop
-                // for a genuinely unconnectable image.
+                // started.await only proves the fibers started, not that both aeron images are receiving, and a one-shot publish can close before a
+                // late image connects (aeron never redelivers), hanging that consumer. Probe with sentinel -1 until both receive, then send the real
+                // batch in the SAME publication. No step cap: a fixed ceiling that fired before a slow image connected (emulated arm64, windows CI) hung anyway.
                 consumer1 <- Fiber.initUnscoped(using Topic.isolate)(
                     started.release.andThen(
                         Topic.stream[Int]("aeron:ipc").tap(_ => receiving1.release).filterPure(_ >= 0).take(messages.size).run

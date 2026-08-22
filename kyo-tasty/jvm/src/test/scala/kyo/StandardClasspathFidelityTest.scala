@@ -19,11 +19,9 @@ class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
     // jrt:/ cold loads can still be slow on a contended runner; keep a generous per-leaf budget.
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(3))
 
-    // Given-enumeration fidelity is pinned to scala-library, the one classpath root with a fixed external version (scala 3.8.4). The full
-    // `standard` classpath also carries kyo-tasty, kyo-data, and the fixtures, whose given count shifts with every unrelated kyo change, so
-    // a baseline measured there needs re-tuning constantly; measured against scala-library alone it is deterministic and only moves on a
-    // deliberate scala-library bump, where re-pinning it re-validates the decoder against the new stdlib. The leaves below still exercise
-    // the full corpus for symbol count, cold-init stability, and JPMS modules.
+    // Given-enumeration fidelity is pinned to scala-library, the one root with a fixed external version (scala 3.8.4). The full `standard`
+    // classpath also carries kyo-tasty/kyo-data/fixtures, whose given count shifts with every kyo change; measured against scala-library
+    // alone it only moves on a deliberate stdlib bump (where re-pinning re-validates the decoder). The leaves below still use the full corpus.
     "given-instance count on scala-library is exactly 409 (scala 3.8.4)" in {
         TestClasspaths.withClasspath(TestClasspaths.scalaLibrary)(Tasty.classpath).map { classpath =>
             val count = classpath.symbols.count(_.isGiven)
@@ -64,9 +62,8 @@ class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
         val roots = TestClasspaths2.standardRoots
         def load: Int < (Async & Abort[TastyError]) =
             TestClasspaths.withClasspath(roots)(Tasty.classpath).map { classpath =>
-                // >= 80,000: the standard classpath measures ~80,321 after finalizeMerge's package dedup
-                // removes the per-file duplicate Package partials (was ~81,569 with duplicates). Real classes/members are
-                // unaffected (unioned into the canonical package); only duplicate Package headers are collapsed.
+                // >= 80,000: the standard classpath measures ~80,321 after finalizeMerge's package dedup collapses
+                // duplicate Package headers. Real classes/members are unaffected (unioned into the canonical package).
                 assert(classpath.symbols.size >= 80000, s"Expected >= 80,000 symbols; got ${classpath.symbols.size}")
                 classpath.symbols.size
             }

@@ -88,9 +88,8 @@ class AssertMacroPathDepTest extends AsyncFreeSpec with NonImplicitAssertions:
     // (PathDepHelper1..5) get their scope from the `in` leaf. Constructed via the private[kyo] ctor.
     private given AssertScope = new AssertScope(Chunk.empty)
 
-    // Power-assert instrumentation (the recorded subexpression value diagram) is compiled in only when KYO_TEST_POWER_ASSERT (or
-    // -Dkyo.test.powerAssert) is set; see AssertMacro. Tests that assert on those recorded values are gated on the same flag, read at
-    // runtime (compile and test run share the process env under sbt / CI).
+    // Power-assert instrumentation (the recorded value diagram) is compiled in only when KYO_TEST_POWER_ASSERT / -Dkyo.test.powerAssert
+    // is set (see AssertMacro); tests asserting on those values gate on the same flag, read at runtime (compile and test share the env under sbt/CI).
     private val powerAssertOn: Boolean =
         sys.props.get("kyo.test.powerAssert").orElse(sys.env.get("KYO_TEST_POWER_ASSERT"))
             .exists(v => Set("1", "true", "on", "yes").contains(v.trim.toLowerCase))

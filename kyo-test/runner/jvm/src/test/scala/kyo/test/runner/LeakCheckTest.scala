@@ -138,9 +138,8 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
 
     test("awaitSchedulerIdle returns Accounted without spending the budget when every busy worker is allowlisted") {
         // The process-lifetime transport case: load never reaches zero, but the only carrier holding it is allowlisted. Before quiescence
-        // accounted for the allowlist, such a fork parked for the whole budget and was then excused anyway, once per forked JVM. The loop runs
-        // on a virtual clock (park advances it), so "settles without spending the budget" is an exact, load-independent fact rather than a
-        // measured wall-clock ceiling.
+        // accounted for the allowlist, such a fork parked for the whole budget and was then excused anyway. The loop runs on a virtual clock
+        // (park advances it), so "settles without spending the budget" is an exact, load-independent fact, not a wall-clock ceiling.
         val budget = 2_000_000_000L
         val clock  = new java.util.concurrent.atomic.AtomicLong(0L)
         val verdict = LeakCheck.awaitSchedulerIdle(
@@ -265,10 +264,8 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         // Tear the spinner down BEFORE asserting so a failed assertion never leaves it pegging a worker.
         stop.set(true)
         val _ = Sync.Unsafe.evalOrThrow(fiber.interrupt)
-        // Poll until the interrupted spinner's load drains back to ambient rather than sleeping a
-        // fixed window and hoping the interrupt has propagated: this converges as soon as the worker
-        // goes idle and only fails through the bound if the load never returns, which is the leak
-        // itself. Mirrors the awaitTrue wait used above for the busy side.
+        // Poll until the interrupted spinner's load drains back to ambient, not a fixed sleep hoping the interrupt
+        // propagated: converges when the worker goes idle, fails the bound only if load never returns (the leak itself).
         val drainedToAmbient = awaitTrue(2000)(LeakCheck.loadAvg() <= ambient + 0.5)
 
         assert(observed, s"the spinner should be observed as busy load within 2s (ambient=$ambient)")

@@ -20,9 +20,8 @@ class AssertScopeTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     implicit override val executionContext: ExecutionContext = scala.concurrent.ExecutionContext.global
 
-    // Power-assert instrumentation (the recorded value diagram, incl. the `|` marker line) is compiled in only when
-    // KYO_TEST_POWER_ASSERT (or -Dkyo.test.powerAssert) is set; see AssertMacro. The marker-alignment case below is gated on the
-    // same flag, read at runtime.
+    // Power-assert instrumentation (the recorded value diagram, incl. the `|` marker line) compiles in only when
+    // KYO_TEST_POWER_ASSERT (or -Dkyo.test.powerAssert) is set (see AssertMacro); the marker case below is gated on it.
     private val powerAssertOn: Boolean =
         sys.props.get("kyo.test.powerAssert").orElse(sys.env.get("KYO_TEST_POWER_ASSERT"))
             .exists(v => Set("1", "true", "on", "yes").contains(v.trim.toLowerCase))
