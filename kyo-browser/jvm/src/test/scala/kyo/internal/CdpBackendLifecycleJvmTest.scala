@@ -44,8 +44,8 @@ private[kyo] object CdpBackendFixtureServer:
                 (_: HttpRequest[Any], ws: HttpWebSocket) =>
                     wsRef.set(Present(ws)).andThen(runBehavior(behavior, ws))
             }
-            HttpServer.init(0, "127.0.0.1")(handler).map { server =>
-                val wsUrl = s"ws://127.0.0.1:${server.port}/devtools/browser/fixture"
+            HttpServer.init(0, "localhost")(handler).map { server =>
+                val wsUrl = s"ws://localhost:${server.port}/devtools/browser/fixture"
                 FixtureHandle(
                     wsUrl = wsUrl,
                     triggerDialog = () => emitDialog(wsRef),

@@ -15,7 +15,7 @@ import kyo.internal.SharedChrome
 //       Universal entry. Boots Chrome (shared) and runs `body` inside a fresh
 //       tab. The default for any test that needs a working `Browser` effect.
 //   - withBrowserOnLocalhost(body)
-//       Same as withBrowser, but first navigates to `http://127.0.0.1:$port/json/version`.
+//       Same as withBrowser, but first navigates to `http://localhost:$port/json/version`.
 //       Cookie / storage tests need a real http://localhost origin; data: URLs
 //       won't carry cookies. Use this when the test reads or writes cookies.
 //   - withBrowserOnLocalhostIframe(outerHtml, innerHtml)(body)
@@ -123,7 +123,7 @@ abstract class BrowserTest extends BaseBrowserTest:
         cancelOnUnsupportedPlatform {
             SharedChrome.withUrl { url =>
                 val port    = url.split(":")(2).split("/")(0)
-                val httpUrl = s"http://127.0.0.1:$port/json/version"
+                val httpUrl = s"http://localhost:$port/json/version"
                 Browser.run(url)(warmupGate(Browser.goto(httpUrl).andThen(f)))
             }
         }
@@ -240,7 +240,7 @@ abstract class BrowserTest extends BaseBrowserTest:
     def srcdocPage(outer: String, srcdoc: String): String =
         page(outer.replace("{srcdoc}", BrowserTest.htmlAttributeEscape(srcdoc)))
 
-    /** Boots a 127.0.0.1 HTTP server serving `parent.html` at `/parent` (with `{iframe-src}` substituted to `http://127.0.0.1:$port/child`)
+    /** Boots a localhost HTTP server serving `parent.html` at `/parent` (with `{iframe-src}` substituted to `http://localhost:$port/child`)
       * and `child.html` at `/child`, opens a browser tab on the parent page, then runs `f`. The two-page setup is what the spec §7.2
       * fixture sketch describes; useful for tests that need a real same-origin iframe (e.g. lifecycle scenarios where srcdoc would not
       * trigger the same `Page.frameAttached` events).
@@ -249,7 +249,7 @@ abstract class BrowserTest extends BaseBrowserTest:
         Frame
     ): A < (Async & Scope & Abort[BrowserReadException | BrowserSetupException | HttpException] & S) =
         val parentBytes = (port: Int) =>
-            Span.fromUnsafe(outerHtml.replace("{iframe-src}", s"http://127.0.0.1:$port/child").getBytes("UTF-8"))
+            Span.fromUnsafe(outerHtml.replace("{iframe-src}", s"http://localhost:$port/child").getBytes("UTF-8"))
         val childBytes = Span.fromUnsafe(innerHtml.getBytes("UTF-8"))
         Promise.init[Int, Any].map { portRef =>
             val parentHandler = HttpRoute.getRaw("/parent").response(_.bodyBinary).handler { _ =>
@@ -258,10 +258,10 @@ abstract class BrowserTest extends BaseBrowserTest:
             val childHandler = HttpRoute.getRaw("/child").response(_.bodyBinary).handler { _ =>
                 HttpResponse.ok(childBytes).addHeader("Content-Type", "text/html; charset=utf-8")
             }
-            HttpServer.init(0, "127.0.0.1")(parentHandler, childHandler).map { server =>
+            HttpServer.init(0, "localhost")(parentHandler, childHandler).map { server =>
                 portRef.completeDiscard(Result.succeed(server.port)).andThen {
                     withBrowser {
-                        Browser.goto(s"http://127.0.0.1:${server.port}/parent").andThen(f)
+                        Browser.goto(s"http://localhost:${server.port}/parent").andThen(f)
                     }
                 }
             }
