@@ -133,10 +133,41 @@ one of the two IPC subscription Images never reaches connected. Slow-runner-spec
   timeout is the only backstop for a genuinely unconnectable image"); the recurrence shows the
   test-level approach is exhausted (a prior test-side fix, task #34, already landed here).
 
-### Status / open question
-Needs a faithful reproduction (emulated arm64 or under-load full aeron suite) to determine WHY
-the second concurrent same-stream-id IPC Image never forms while the publication is
-demonstrably alive (probe keeps it alive until both connect). Leading candidate: media-driver
-conductor starvation or cross-test resource contention under the concurrent aeron suite on a
-slow runner. Fix direction (product-level image-formation robustness vs. driver-resource /
-test-concurrency) is a strategic call to make AFTER reproduction, not a timeout raise.
+### Diagnosis: CPU starvation of the embedded aeron driver/client conductor threads (a livelock)
+Platform note: ALL platforms (including JVM) drive the C shim `kyo_aeron.c` via kyo-ffi (Panama on
+JVM); there is no io.aeron Java-client path. So the shim's driver threading is in scope for the
+arm64 JVM hang.
+
+It is a LIVELOCK, not a hard deadlock: `defaultRetrySchedule` (`Topic.scala:37`) is infinite, so the
+connect-wait retries forever with `Async.sleep`; a single thread dump catching all carriers parked
+is what a sleep-dominated livelock looks like. Chain: consumer N releases `receivingN` on its first
+received element (`.tap` before `.filterPure`); if one consumer's IPC image is never observed
+`is_connected`, its latch never releases, the publisher probes forever and never offers the real
+batch, and the OTHER (connected) consumer only ever sees filtered-out probes, so both `take(3)` and
+both `consumer.get` block forever.
+
+Root cause: the zero-config embedded driver `Topic.run` starts runs DEDICATED threading
+(`aeron_driver_start(driver, false)`, `kyo_aeron.c:378-410`) = three agent pthreads
+(conductor/sender/receiver) whose idle strategies busy-spin under load, PLUS the C client's own
+conductor pthread. On a 2-4 vCPU / emulated / windows runner those four native threads starve the
+kyo carriers and, critically, the client conductor that processes the image-available event which
+flips `aeron_subscription_is_connected` (`:989-1001`). So the second same-(channel,streamId) IPC
+image's connectivity is never observed within the 2-min window. Evidence: NO `TopicTransportFailedException`
+(a client-liveness death would fire `fatalError` -> a terminal abort, not a hang); passes on
+many-core mac, fails only on constrained hosts (a contention signature). Ruled down: IPC flow-control
+(handshake guarantees both images got a probe before the batch; the publisher is unjoined so it alone
+cannot hang the test), a shim concurrent-add race (adds serialize under `g_registry_mutex` +
+`close_mutex`), and publisher-side connect-wait (needs only one image).
+
+### Fix (applied): make the embedded driver CPU-frugal (SHARED threading)
+`kyo_aeron.c` `kyo_aeron_driver_start`: `aeron_driver_context_set_threading_mode(ctx,
+AERON_THREADING_MODE_SHARED)` before `aeron_driver_init`, so all driver agents run in ONE thread
+instead of three. This frees CPU for the client conductor (which flips `is_connected`) and the kyo
+carriers, so the second IPC image is observed connected promptly even on a constrained host. A
+product-robustness fix for the zero-config path, NOT a timeout raise or test change; callers needing
+DEDICATED low-latency drive an external driver via `Topic.run(aeronDir)`. Local (fast mac) cannot
+reproduce the hang, so validation is: full kyo-aeron suite green locally (SHARED does not break any
+aeron test), then arm64 CI (loop TopicInvariantsTest; the hang must be gone). If arm64 still hangs
+after SHARED, escalate to the client-conductor idle strategy and the driver-counters instrumentation
+the diagnosis named (two subscriber-position counters present + advancing distinguishes starvation
+from a genuine driver-side single-image race).
