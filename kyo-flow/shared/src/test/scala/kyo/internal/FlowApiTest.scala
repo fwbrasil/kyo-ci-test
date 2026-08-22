@@ -36,7 +36,7 @@ class FlowApiTest extends kyo.test.Test[Any]:
             FlowEngine.init(store, workerCount = 1, pollTimeout = 100.millis).map { engine =>
                 engine.register(Flow.Id.Workflow("test-flow"), flow).map { _ =>
                     val handlers = FlowApi.handlers(engine)
-                    HttpServer.init(0, "localhost")(handlers.toSeq*).map { server =>
+                    HttpServer.init(0, "127.0.0.1")(handlers.toSeq*).map { server =>
                         HttpClient.withConfig(_.timeout(30.seconds))(f(server.port))
                     }
                 }
@@ -45,7 +45,7 @@ class FlowApiTest extends kyo.test.Test[Any]:
     end withFlowServer
 
     private def url(port: Int, path: String): String =
-        s"http://localhost:$port$path"
+        s"http://127.0.0.1:$port$path"
 
     private def jsonField(body: String, field: String): String =
         val pattern = s""""$field"\\s*:\\s*"([^"]*)"""".r

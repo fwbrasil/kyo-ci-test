@@ -15,9 +15,9 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
     import AllowUnsafe.embrace.danger
 
     def testConfig(port: Int) = OTLPConfig(
-        endpoint = s"http://localhost:$port",
-        tracesEndpoint = s"http://localhost:$port/v1/traces",
-        metricsEndpoint = s"http://localhost:$port/v1/metrics",
+        endpoint = s"http://127.0.0.1:$port",
+        tracesEndpoint = s"http://127.0.0.1:$port/v1/traces",
+        metricsEndpoint = s"http://127.0.0.1:$port/v1/metrics",
         headers = Map.empty,
         timeout = 5.seconds,
         compression = "none",
@@ -50,7 +50,7 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
                     HttpResponse.ok.addField("body", ExportMetricsResponse())
                 }
             }
-            server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
+            server <- HttpServer.init(0, "127.0.0.1")(traceHandler, metricHandler)
             config = testConfig(server.port)
             result <- test(config, metricCh)
         yield result

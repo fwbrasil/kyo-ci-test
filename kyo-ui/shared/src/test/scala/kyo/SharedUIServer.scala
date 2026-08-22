@@ -49,8 +49,8 @@ private[kyo] object SharedUIServer:
                         Abort.run[HttpBindException] {
                             for
                                 handlers <- UI.runHandlers("/")(current.safe.get)
-                                server   <- HttpServer.init(0, "localhost")(handlers*)
-                                _ <- Sync.Unsafe.defer(discard(cachedUrl.complete(Result.Success(s"http://localhost:${server.port}/"))))
+                                server   <- HttpServer.init(0, "127.0.0.1")(handlers*)
+                                _ <- Sync.Unsafe.defer(discard(cachedUrl.complete(Result.Success(s"http://127.0.0.1:${server.port}/"))))
                                 _ <- Async.never // hold the scope open until the fiber is interrupted on shutdown
                             yield ()
                         }.map {

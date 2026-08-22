@@ -230,7 +230,7 @@ class JsTransportTlsTest extends Test:
             // Listen on "localhost" (not 127.0.0.1): the verifying client must connect by NAME for hostname verification, and Node resolves
             // "localhost" to ::1 first on some hosts (verbatim DNS result order). Binding and connecting through the same name makes both
             // sides share one resolution, so the leaf does not depend on which address family the host lists first.
-            listener <- transport.listenTls("localhost", 0, 128, serverTls) { serverConn =>
+            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTls) { serverConn =>
                 discard(Sync.Unsafe.evalOrThrow {
                     Fiber.initUnscoped {
                         Abort.run[Closed](serverConn.inbound.safe.take.unit).unit
@@ -238,7 +238,7 @@ class JsTransportTlsTest extends Test:
                 })
             }.safe.get
             port = listener.port
-            result <- Abort.run[NetException](transport.connectTls("localhost", port, verifyingClient).safe.get)
+            result <- Abort.run[NetException](transport.connectTls("127.0.0.1", port, verifyingClient).safe.get)
         yield
             // This handshake succeeds, so the result carries a live connection. A listener close only reclaims sockets still mid-handshake,
             // never one already handed to the accept handler, so closing the client here is what releases both ends (its FIN tears down the

@@ -18,10 +18,10 @@ class HttpClientTest extends BaseHttpTest:
     )(using Frame, kyo.test.AssertScope): Unit < (Async & Abort[Any] & Scope) =
         initTrustAllClient().map { httpClient =>
             HttpServer.init(
-                HttpServerConfig.default.port(0).host("localhost").tls(internal.HttpTestPlatformBackend.serverTlsConfig)
+                HttpServerConfig.default.port(0).host("127.0.0.1").tls(internal.HttpTestPlatformBackend.serverTlsConfig)
             )(handlers*).map(s =>
                 HttpClient.let(httpClient) {
-                    test(HttpUrl.parse(s"https://localhost:${s.port}").getOrThrow)
+                    test(HttpUrl.parse(s"https://127.0.0.1:${s.port}").getOrThrow)
                 }
             )
         }
@@ -31,9 +31,9 @@ class HttpClientTest extends BaseHttpTest:
     )(using Frame): Unit =
         "plain" in {
             initTrustAllClient().map { httpClient =>
-                HttpServer.init(0, "localhost")(handlers*).map(s =>
+                HttpServer.init(0, "127.0.0.1")(handlers*).map(s =>
                     HttpClient.let(httpClient) {
-                        test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                        test(HttpUrl.parse(s"http://127.0.0.1:${s.port}").getOrThrow)
                     }
                 )
             }
@@ -48,9 +48,9 @@ class HttpClientTest extends BaseHttpTest:
     )(using Frame): Unit =
         "plain" in {
             initTrustAllClient().map { httpClient =>
-                HttpServer.init(0, "localhost")(handlers*).map(s =>
+                HttpServer.init(0, "127.0.0.1")(handlers*).map(s =>
                     HttpClient.let(httpClient) {
-                        test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                        test(HttpUrl.parse(s"http://127.0.0.1:${s.port}").getOrThrow)
                     }
                 )
             }
@@ -64,9 +64,9 @@ class HttpClientTest extends BaseHttpTest:
         test: kyo.test.AssertScope ?=> HttpUrl => Unit < (Async & Abort[Any] & Scope)
     )(using Frame, kyo.test.AssertScope): Unit < (Scope & Async & Abort[Any]) =
         initTrustAllClient().map { httpClient =>
-            HttpServer.init(0, "localhost")(handlers*).map(s =>
+            HttpServer.init(0, "127.0.0.1")(handlers*).map(s =>
                 HttpClient.let(httpClient) {
-                    test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                    test(HttpUrl.parse(s"http://127.0.0.1:${s.port}").getOrThrow)
                 }
             )
         }
@@ -215,8 +215,8 @@ class HttpClientTest extends BaseHttpTest:
             val ep                          = route.handler(_ => HttpResponse.ok("pong"))
             var captured: Maybe[HttpClient] = Absent
             Scope.run {
-                HttpServer.init(0, "localhost")(ep).map { s =>
-                    val url = HttpUrl.parse(s"http://localhost:${s.port}/ping").getOrThrow
+                HttpServer.init(0, "127.0.0.1")(ep).map { s =>
+                    val url = HttpUrl.parse(s"http://127.0.0.1:${s.port}/ping").getOrThrow
                     HttpClient.init(defaultTlsConfig = HttpTlsConfig(trustAll = true)).map { hc =>
                         captured = Present(hc)
                         HttpClient.let(hc)(HttpClient.getText(url).unit)
@@ -1123,18 +1123,18 @@ class HttpClientTest extends BaseHttpTest:
             // (RFC 6454 section 4 makes origin the scheme/host/port triple, so a port change alone crosses it).
             "plain" in {
                 initTrustAllClient().map { httpClient =>
-                    HttpServer.init(0, "localhost")(collectEp).map { collector =>
+                    HttpServer.init(0, "127.0.0.1")(collectEp).map { collector =>
                         val redirectEp = startRoute.handler { _ =>
                             HttpResponse.halt(
                                 HttpResponse(HttpStatus.Found)
-                                    .setHeader("Location", s"http://localhost:${collector.port}/collect")
+                                    .setHeader("Location", s"http://127.0.0.1:${collector.port}/collect")
                             )
                         }
-                        HttpServer.init(0, "localhost")(redirectEp).map { origin =>
+                        HttpServer.init(0, "127.0.0.1")(redirectEp).map { origin =>
                             HttpClient.let(httpClient) {
                                 HttpClient.withConfig(noTimeout) {
                                     val request = HttpRequest
-                                        .getRaw(HttpUrl.parse(s"http://localhost:${origin.port}/start").getOrThrow)
+                                        .getRaw(HttpUrl.parse(s"http://127.0.0.1:${origin.port}/start").getOrThrow)
                                         .setHeader("Authorization", "Bearer super-secret")
                                         .setHeader("Cookie", "session=super-secret")
                                     HttpClient.use(_.sendWith(collectRoute, request) { resp =>
@@ -1164,21 +1164,21 @@ class HttpClientTest extends BaseHttpTest:
             }
             initTrustAllClient().map { httpClient =>
                 // Hop 2 is plaintext; hop 1 below is TLS, so following the Location downgrades the scheme.
-                HttpServer.init(0, "localhost")(collectEp).map { collector =>
+                HttpServer.init(0, "127.0.0.1")(collectEp).map { collector =>
                     val redirectEp = startRoute.handler { _ =>
                         HttpResponse.halt(
                             HttpResponse(HttpStatus.Found)
-                                .setHeader("Location", s"http://localhost:${collector.port}/collect")
+                                .setHeader("Location", s"http://127.0.0.1:${collector.port}/collect")
                         )
                     }
                     HttpServer.init(
-                        HttpServerConfig.default.port(0).host("localhost")
+                        HttpServerConfig.default.port(0).host("127.0.0.1")
                             .tls(internal.HttpTestPlatformBackend.serverTlsConfig)
                     )(redirectEp).map { origin =>
                         HttpClient.let(httpClient) {
                             HttpClient.withConfig(noTimeout) {
                                 val request = HttpRequest
-                                    .getRaw(HttpUrl.parse(s"https://localhost:${origin.port}/start").getOrThrow)
+                                    .getRaw(HttpUrl.parse(s"https://127.0.0.1:${origin.port}/start").getOrThrow)
                                     .setHeader("Authorization", "Bearer super-secret")
                                     .setHeader("Cookie", "session=super-secret")
                                 HttpClient.use(_.sendWith(collectRoute, request) { resp =>
@@ -1940,7 +1940,7 @@ class HttpClientTest extends BaseHttpTest:
             test: kyo.test.AssertScope ?=> HttpUrl => A < (S & Async & Abort[HttpException])
         )(using Frame, kyo.test.AssertScope): A < (S & Async & Scope & Abort[HttpException]) =
             HttpServer.init(config)(handlers*).map(s =>
-                test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                test(HttpUrl.parse(s"http://127.0.0.1:${s.port}").getOrThrow)
             )
 
         "accepts body within limit" in {
@@ -1948,7 +1948,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(1024)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(1024)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(512)(0.toByte) // 512 bytes, within 1024 limit
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -1962,7 +1962,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(64)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(64)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(128)(0.toByte) // 128 bytes, exceeds 64 limit
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -1976,7 +1976,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(100)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(100)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(100)(0.toByte) // exactly 100 bytes
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -1990,7 +1990,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(100)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(100)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(101)(0.toByte) // 101 bytes, over 100 limit
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -2002,7 +2002,7 @@ class HttpClientTest extends BaseHttpTest:
         "empty body always succeeds" in {
             val route  = HttpRoute.getRaw("data").response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(1)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(1)
             withServerConfig(config)(ep) { url =>
                 send(url, route, HttpRequest.getRaw(HttpUrl.fromUri("/data"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -2015,7 +2015,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyText)
                 .response(_.bodyText)
             val ep     = route.handler(req => HttpResponse.ok(req.fields.body))
-            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(64)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(64)
             withServerConfig(config)(ep) { url =>
                 // First request: too large, should get 413
                 val bigBody = "x" * 128

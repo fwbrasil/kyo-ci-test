@@ -377,8 +377,8 @@ object LiveDashboardDemo extends KyoApp:
         val port = args.headMaybe.flatMap(s => Maybe.fromOption(s.toIntOption)).getOrElse(0)
         for
             handlers <- UI.runHandlers("/")(app)
-            server   <- HttpServer.init(port, "localhost")(handlers*)
-            _        <- Console.printLine(s"LiveDashboard running on http://localhost:${server.port}/")
+            server   <- HttpServer.init(port, "127.0.0.1")(handlers*)
+            _        <- Console.printLine(s"LiveDashboard running on http://127.0.0.1:${server.port}/")
             _        <- server.await
         yield ()
         end for

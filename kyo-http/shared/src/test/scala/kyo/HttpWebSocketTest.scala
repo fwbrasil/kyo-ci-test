@@ -12,8 +12,8 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
     def withWsServer[A, S](handlers: HttpHandler[?, ?, ?]*)(
         test: HttpUrl => A < (S & Async & Abort[HttpException])
     )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
-        HttpServer.init(0, "localhost")(handlers*).map(server =>
-            test(HttpUrl.parse(s"http://localhost:${server.port}").getOrThrow)
+        HttpServer.init(0, "127.0.0.1")(handlers*).map(server =>
+            test(HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow)
         )
 
     // ==================== Basic connectivity ====================
