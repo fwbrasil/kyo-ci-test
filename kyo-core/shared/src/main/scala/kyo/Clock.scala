@@ -337,7 +337,7 @@ object Clock:
 
                                 // Test seam: a waiter installed by awaitPendingSleepers, completed by the next sleep enqueue.
                                 // Guarded by the queue monitor; the completion runs outside the lock, mirroring tick.
-                                var armWaiter: IOPromise[Nothing, Unit < Any] = null
+                                var armWaiter: Maybe[IOPromise[Nothing, Unit < Any]] = Maybe.empty
 
                                 def now()(using AllowUnsafe) = current
 
@@ -349,25 +349,26 @@ object Clock:
                                         queue.synchronized {
                                             queue.enqueue(task)
                                             val w = armWaiter
-                                            armWaiter = null
+                                            armWaiter = Maybe.empty
                                             w
                                         }
-                                    if toSignal ne null then toSignal.completeDiscard(Result.succeed(()))
+                                    toSignal.foreach(_.completeDiscard(Result.succeed(())))
                                     Promise.Unsafe.fromIOPromise(task)
                                 end sleep
 
                                 def awaitPendingSleepers(count: Int): Unit < Async =
                                     Loop.foreach {
-                                        val waiter =
+                                        val waiter: Maybe[IOPromise[Nothing, Unit < Any]] =
                                             queue.synchronized {
-                                                if queue.count(!_.done()) >= count then null
+                                                if queue.count(!_.done()) >= count then Maybe.empty
                                                 else
                                                     val w = new IOPromise[Nothing, Unit < Any]()
-                                                    armWaiter = w
-                                                    w
+                                                    armWaiter = Present(w)
+                                                    Present(w)
                                             }
-                                        if waiter eq null then Loop.done
-                                        else Promise.Unsafe.fromIOPromise(waiter).safe.get.andThen(Loop.continue)
+                                        waiter match
+                                            case Absent     => Loop.done
+                                            case Present(w) => Promise.Unsafe.fromIOPromise(w).safe.get.andThen(Loop.continue)
                                     }
 
                                 def set(now: Instant) = set(now, 100.millis)
