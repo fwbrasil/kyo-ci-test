@@ -12,6 +12,21 @@ import kyo.ffi.FfiNullPointer
   */
 private[kyo] object AeronPlatformTransport:
 
+    /** Client-liveness and publication-unblock timeouts for the embedded [[Topic.run]] driver,
+      * raised above Aeron's 10s/15s defaults.
+      *
+      * The embedded driver's only client is in-process over `aeron:ipc`, so the client can die only
+      * when the whole process does, and the driver dies with it: a short liveness window buys
+      * nothing here. Aeron's default assumes the client conductor gets CPU promptly, and a loaded or
+      * emulated CI host can starve that conductor thread for seconds. At the default the driver reads
+      * the silence as client death and frees every registration the client holds, so a
+      * `Topic.stream` consumer's subscription never reads back connected and its retry loop backs off
+      * forever (the TopicInvariantsTest two-consumer hang). A wide window keeps a momentarily starved
+      * client alive; the unblock timeout must exceed liveness, which Aeron enforces at startup.
+      */
+    private val embeddedClientLiveness: Duration     = 60.seconds
+    private val embeddedPublicationUnblock: Duration = 65.seconds
+
     /** Starts an embedded media driver in `dir` and connects a client to it.
       *
       * `dir` must be unique per call (callers pass `Path.tempDir`), since Aeron otherwise routes
@@ -24,7 +39,9 @@ private[kyo] object AeronPlatformTransport:
     def embedded(dir: String)(using Frame): AeronRuntime < Async =
         Sync.Unsafe.defer(Ffi.load[AeronBindings]).map { bindings =>
             for
-                driver <- Sync.Unsafe.defer(bindings.driverStart(dir, 0L, 0L)).flatMap(_.safe.get)
+                driver <- Sync.Unsafe.defer(
+                    bindings.driverStart(dir, embeddedClientLiveness.toNanos, embeddedPublicationUnblock.toNanos)
+                ).flatMap(_.safe.get)
                 client <- Sync.Unsafe.defer(bindings.clientConnect(dir)).flatMap(_.safe.get)
                 runtime <- Sync.Unsafe.defer {
                     val ffiTransport = new FfiAeronTransport(bindings, client)
