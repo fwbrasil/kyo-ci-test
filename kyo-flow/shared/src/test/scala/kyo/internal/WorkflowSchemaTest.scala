@@ -220,22 +220,22 @@ class WorkflowSchemaTest extends kyo.test.Test[Any]:
                     for
                         engine <- FlowEngine.init(store, workerCount = 1, pollTimeout = 100.millis)
                         _      <- engine.register(wf1, flow)
-                        // Manually create an execution with a bogus hash
+                        // Manually create an execution whose stored hash ("") cannot match the registered flow.
                         now <- Clock.now
                         eid = Flow.Id.Execution("hash-mismatch-test")
                         _ <- store.createExecution(eid, Flow.Status.Running, Flow.Event.Created(wf1, eid, now), "")
                         _ <- store.putField[Int](eid, "x", 42)
-                        // Pump and check it stays Running (engine should reject it)
-                        _     <- tc.advance(2.seconds)
-                        state <- store.getExecution(eid)
+                        // The worker fails the mismatch asynchronously; pump advances until a terminal status
+                        // lands rather than reading once after a single advance, which races the worker.
+                        status <- pump(tc, store, eid, _.isTerminal)
                     yield
-                        // Hash mismatch: engine should fail the execution with a clear error
+                        // Hash mismatch: engine should fail the execution rather than run it.
                         assert(
-                            state.get.status match
+                            status match
                                 case Flow.Status.Failed(_) => true
                                 case _                     => false
                             ,
-                            s"Execution with mismatched hash should be Failed, but status is ${state.get.status}"
+                            s"Execution with mismatched hash should be Failed, but status is $status"
                         )
                     end for
                 }
