@@ -23,6 +23,10 @@ final private[runner] class NativeRunner(
 
     private val parsedArgs: Args.Result = Args.parse(args)
 
+    // Diagnostic branch: register the scheduler-workers dumper so a Native leaf timeout prints the full
+    // scheduler worker table instead of "(no dumpers registered)". Idempotent across runner creations.
+    SchedulerDiagnostics.ensureRegistered()
+
     locally:
         parsedArgs match
             case Args.Result.Help =>
