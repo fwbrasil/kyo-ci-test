@@ -21,9 +21,19 @@ import scala.annotation.tailrec
   * updates or other scenarios where processing only the latest value is acceptable, but not for cases where capturing every single change
   * is critical.
   *
+  * A change means a DIFFERENT value. Writing the value a signal already holds notifies nobody: `next` stays parked, `streamChanges` emits
+  * nothing, and `observe` does not re-run. That is why `A` must have a `CanEqual[A, A]`, and it is why there is no `distinct` operator to
+  * reach for: deduplication is the semantics rather than a combinator. A parked observation re-reads `current` on its repair timer, but a
+  * timer that finds the value unchanged simply waits again, so it never turns into a spurious notification either.
+  *
+  * There is likewise no `filter`, and it is not an omission. A signal must always have a current value, and a filtered signal has none
+  * before the first value that passes, so the type cannot be honoured. Filtering belongs to the change sequence rather than to the value:
+  * `signal.streamChanges.filter(...)` is a `Stream`, which has no such obligation. `map`, `zip`, `combineLatest`, `combineLatestAll` and
+  * `switchMap` are the value-level combinators.
+  *
   * The companion object provides these creation methods:
   *
-  *   - `Signal.initRef[A]`: creates a mutable `Signal.Ref[A]` initialized with a starting value
+  *   - `Signal.initRef[A]`: creates a mutable `SignalRef[A]` initialized with a starting value
   *   - `Signal.initConst[A]`: creates an immutable `Signal[A]` that always returns the same value
   *   - `Signal.initRaw[A]`: (low-level API) creates a custom `Signal[A]` by directly implementing its fundamental operations, primarily
   *     intended for implementing signal combinators and custom signal types
@@ -59,7 +69,7 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
     /** Waits for and returns the next value change in the signal.
       *
       * This method provides asynchronous notification of the next value change. It will wait until the signal's value changes before
-      * completing.
+      * completing, so on a signal that can never change (see [[Signal.initConst]]) it never completes.
       *
       * @return
       *   The next value of type A wrapped in an Async effect
@@ -266,11 +276,13 @@ object Signal:
 
     /** Waits for any of the given signals to change.
       *
+      * No signal can change if there is none to watch, so an empty sequence never completes.
+      *
       * @param signals
       *   The signals to watch
       */
     def awaitAny(signals: Seq[Signal[?]])(using Frame): Unit < Async =
-        if signals.isEmpty then ()
+        if signals.isEmpty then Async.never
         else Async.race(signals.map(_.next)).unit
 
     /** Zips a sequence of signals, waiting for all to change before emitting.
@@ -323,13 +335,13 @@ object Signal:
 
     /** Creates a new mutable signal reference with an initial value.
       *
-      * This method initializes a new `Signal.Ref[A]` that can be modified over time. The reference starts with the provided initial value
+      * This method initializes a new `SignalRef[A]` that can be modified over time. The reference starts with the provided initial value
       * and can be updated using methods like `set`, `getAndSet`, etc.
       *
       * @param initial
       *   The starting value for the signal reference
       * @return
-      *   A new mutable `Signal.Ref[A]`
+      *   A new mutable `SignalRef[A]`
       * @tparam A
       *   The type of value contained in the signal. Must have an instance of `CanEqual[A, A]`
       */
@@ -343,7 +355,7 @@ object Signal:
 
     /** Creates a new mutable signal reference with an initial value and applies a transformation function.
       *
-      * This method initializes a new `Signal.Ref[A]` that can be modified over time, and immediately applies a transformation function to
+      * This method initializes a new `SignalRef[A]` that can be modified over time, and immediately applies a transformation function to
       * it. The reference starts with the provided initial value and the transformation is applied within the same atomic operation.
       *
       * @param initial
@@ -369,8 +381,11 @@ object Signal:
 
     /** Creates a new immutable signal with a constant value.
       *
-      * This method creates a signal that always returns the same value. Unlike `Signal.Ref`, this signal cannot be modified after creation.
+      * This method creates a signal that always returns the same value. Unlike `SignalRef`, this signal cannot be modified after creation.
       * This is useful for cases where you need a signal interface but the value never changes.
+      *
+      * Since the value never changes, `next`/`nextWith` never complete. Read a constant with `current`/`currentWith`, and expect it to sit
+      * out the change-driven combinators (`awaitAny`, `combineLatest`, `zip`) rather than drive them.
       *
       * @param value
       *   The constant value for the signal
@@ -387,13 +402,15 @@ object Signal:
     ): Signal[A] =
         initRaw(
             currentWith = [B, S] => f => f(value),
-            nextWith = [B, S] => f => f(value)
+            // Completing this immediately would let a constant win every `awaitAny` arm, firing
+            // `combineLatest(ref, const).next` with no change to report and spinning an enclosing `observe`.
+            nextWith = [B, S] => _ => Async.never
         )
 
     /** Creates a new immutable signal with a constant value and applies a transformation function.
       *
       * This method creates a signal that always returns the same value and immediately applies a transformation function to it. Unlike
-      * `Signal.Ref`, this signal cannot be modified after creation.
+      * `SignalRef`, this signal cannot be modified after creation.
       *
       * @param value
       *   The constant value for the signal

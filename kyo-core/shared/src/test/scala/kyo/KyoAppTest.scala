@@ -6,6 +6,19 @@ import scala.util.Try
 
 class KyoAppTest extends kyo.test.Test[Any]:
 
+    "activates the classpath-present stats providers before running the app's own code" in {
+        // The application entrypoint is where kyo-core reaches kyo.Stat, and the only place it does: an app
+        // whose own code never mentions a metric still gets a classpath-present host sampler collecting from
+        // the start. Any hook broad enough to cover a non-KyoApp process would have to sit on the
+        // fiber-creation path, which is not somewhere a stats concern belongs; such a host calls
+        // Stat.activate() itself.
+        val before = Stat.activationCount
+        val app = new KyoApp:
+            run(Sync.defer("done"))
+        app.main(Array.empty)
+        assert(Stat.activationCount > before)
+    }
+
     "main" in {
         val app = new KyoApp:
             run {
@@ -129,6 +142,36 @@ class KyoAppTest extends kyo.test.Test[Any]:
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(run) match
             case Result.Failure(exception: KyoApp.FailureException) => assert(exception.error.toString == "Aborts!")
             case _                                                  => fail("Unexpected Success...")
+    }
+
+    // An application's stdout is its output contract, so a failure the run block did not catch belongs on stderr. It used to be rendered
+    // to stdout, which put a non-JSON line on the channel a stdio server's host was parsing, and made the host's first read of the
+    // connection garbage. No discipline in the run block avoided it: this is the framework's own terminal reporting.
+    // notJs / notWasm: on those platforms KyoApp.main cannot block, so it returns before the run block writes anything and the redirect
+    // scope has already closed. The reporting itself is shared, platform-independent code in KyoAppRunner.onResult; only observing it from
+    // inside the same process needs main to have finished.
+    "an uncaught failure renders to stderr, leaving stdout untouched".notJs.notWasm in {
+        assume(!Platform.isNative, "KyoApp.main too slow on Native")
+        val out = new java.io.ByteArrayOutputStream
+        val err = new java.io.ByteArrayOutputStream
+        val app = new KyoApp:
+            run { Abort.fail("no url") }
+        // main rethrows the failure as a FailureException after reporting it; the rethrow is the process's non-zero exit and is not what
+        // this case is about.
+        discard(Try(scala.Console.withOut(out)(scala.Console.withErr(err)(app.main(Array.empty)))))
+        assert(out.toString == "")
+        assert(err.toString.contains("no url"))
+    }
+
+    "a run block's value still renders to stdout".notJs.notWasm in {
+        assume(!Platform.isNative, "KyoApp.main too slow on Native")
+        val out = new java.io.ByteArrayOutputStream
+        val err = new java.io.ByteArrayOutputStream
+        val app = new KyoApp:
+            run { "the value" }
+        scala.Console.withOut(out)(scala.Console.withErr(err)(app.main(Array.empty)))
+        assert(out.toString.contains("the value"))
+        assert(err.toString == "")
     }
 
     "effect mismatch" in {
