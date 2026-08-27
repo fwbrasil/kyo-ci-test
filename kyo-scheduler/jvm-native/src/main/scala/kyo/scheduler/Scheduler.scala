@@ -494,6 +494,7 @@ final class Scheduler(
             while (position < currentWorkers) {
                 val worker = workers(position)
                 if (worker ne null) {
+                    worker.recoverStrand()
                     val _ = worker.checkAvailability(nowMs)
                 }
                 position += 1

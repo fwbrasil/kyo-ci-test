@@ -103,6 +103,18 @@ abstract private class Worker(
     // -1 = not mounted (idle or never started). Set to the thread's CPU-time ID
     // at the start of run(), reset to -1 on exit. Published by currentTask volatile.
     private[scheduler] var mountId: Long = -1L
+    // Ownership guard for strand recovery. run() claims it (false -> true) at entry and releases it before
+    // publishing Idle. A worker CAS'd to Running whose executor dispatch was lost (the Native javalib
+    // ThreadPoolExecutor/SynchronousQueue can drop a handoff, leaving the worker Running with queued work and
+    // no mounted thread) is recovered by Scheduler re-issuing execute(). If that original dispatch was in fact
+    // merely slow rather than lost, the re-dispatch races it; this guard makes exactly one run() invocation
+    // own the worker and the loser return before touching any single-owner field. False precisely when no
+    // thread is in this worker's run(), which under state == Running is the strand condition.
+    private[scheduler] val mountGuard = new java.util.concurrent.atomic.AtomicBoolean(false)
+    // Consecutive cycleWorkers turns this worker has been seen Running-but-unowned with queued work; only the
+    // timer thread touches it. Two turns rule out the sub-cycle gap between wakeup's Idle -> Running CAS and
+    // run() claiming ownership, past which the dispatch was genuinely dropped rather than still starting.
+    private var strandCycles = 0
     // Not volatile: written by BlockingMonitor timer thread (~2ms), read by cycleWorkers timer
     // thread (~100μs). Stale reads are acceptable: this is a scheduling heuristic, not a
     // correctness constraint. Worst case: a blocked worker accepts one extra task before
@@ -243,6 +255,28 @@ abstract private class Worker(
         available
     }
 
+    /** Recovers a stranded worker: one whose wakeup CAS'd it Idle -> Running but whose executor dispatch was
+      * then dropped (the Native javalib ThreadPoolExecutor/SynchronousQueue can lose a handoff), leaving it
+      * Running with queued work and no thread in its run() (mountGuard false). Re-issues execute() so the
+      * unbounded pool mounts it, spawning a fresh thread when the parked ones are the ones wedged; run()'s
+      * ownership CAS makes a redundant dispatch (a merely-slow original) a no-op. Requires the condition to
+      * hold across two consecutive turns so the sub-turn gap between the wakeup CAS and run() claiming the
+      * guard is not mistaken for a lost dispatch.
+      *
+      * Called only from cycleWorkers on the timer thread, so `strandCycles` has a single writer and each turn
+      * is one cycle; this stays out of the multi-threaded `checkAvailability` that `schedule` also calls.
+      */
+    def recoverStrand(): Unit = {
+        if ((state.get() eq State.Running) && !mountGuard.get() && !queue.isEmpty()) {
+            strandCycles += 1
+            if (strandCycles >= 2) {
+                strandCycles = 0
+                exec.execute(this)
+            }
+        } else
+            strandCycles = 0
+    }
+
     private def checkStalling(nowMs: Long): Boolean = {
         val task    = currentTask
         val start   = taskStartMs
@@ -263,7 +297,14 @@ abstract private class Worker(
     }
 
     def run(): Unit = {
-        Thread.interrupted() // clear stale interrupt from pool reuse
+        // Clear any stale interrupt from pool reuse before the ownership claim, so a loser that bows out below
+        // does not carry a leftover interrupt back into the pooled thread.
+        Thread.interrupted()
+        // Claim ownership before any setup. A strand-recovery re-dispatch (Scheduler re-issuing execute for a
+        // worker whose executor handoff was dropped) can race the original dispatch when that original was
+        // merely slow rather than lost; the loser of this CAS returns immediately, before writing any
+        // single-owner field, so the worker is never mounted by two threads.
+        if (!mountGuard.compareAndSet(false, true)) return
         // Set up worker state
         mounts += 1
         mount = Thread.currentThread()
@@ -340,6 +381,9 @@ abstract private class Worker(
                     blocked = false
                     mountId = -1L
                     mount = null
+                    // Release ownership before Idle so a successor run() can claim it; while state is still
+                    // Running no successor can be dispatched, so this write cannot race one.
+                    mountGuard.set(false)
                     state.set(State.Idle)
                     if (queue.isEmpty() || !state.compareAndSet(State.Idle, State.Running)) {
                         // Queue empty (released as the last owner) or a wakeup re-acquired ahead of us
@@ -348,7 +392,15 @@ abstract private class Worker(
                         released = true
                         return
                     }
-                    // Re-acquired before any successor: re-mount and keep running.
+                    // Re-acquired the Idle -> Running edge before a wakeup successor. Strand recovery is a
+                    // second dispatch source, though: a re-dispatched claimant may have taken ownership in the
+                    // window since we released the guard above. Re-claim it; if that fails, that claimant now
+                    // owns the worker (state is already Running from our CAS and it will poll the queue), so
+                    // bow out without touching any single-owner field.
+                    if (!mountGuard.compareAndSet(false, true)) {
+                        released = true
+                        return
+                    }
                     mount = Thread.currentThread()
                     mountId = ThreadUserTime.currentThreadId()
                 }
@@ -367,6 +419,8 @@ abstract private class Worker(
                 mountId = -1L
                 mount = null
                 if (task ne null) queue.add(task)
+                // Release ownership before Idle (same reasoning as the idle path) so a successor can claim.
+                mountGuard.set(false)
                 state.set(State.Idle)
                 drain()
             }

@@ -1067,4 +1067,36 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             )
         }
     }
+
+    "recoverStrand" - {
+        // A strand is a worker that wakeup() CAS'd Idle -> Running and dispatched, but whose executor never ran
+        // its run() -- on Native the javalib ThreadPoolExecutor/SynchronousQueue can drop the handoff -- leaving
+        // it Running with queued work and no mounted thread. Simulated here by an executor that counts worker
+        // dispatches but never runs them, so mountGuard is never claimed. recoverStrand (the timer's cycleWorkers
+        // path) must re-issue the dispatch once the condition is stable across two turns.
+        "re-dispatches a worker stranded by a lost executor handoff, after two turns" in {
+            val dispatches = new AtomicInteger(0)
+            val lostHandoff: Executor = command =>
+                if (command.isInstanceOf[Worker]) { val _ = dispatches.incrementAndGet() }
+            val worker = createWorker(executor = lostHandoff)
+            worker.enqueue(TestTask()) // wakeup(): CAS Idle -> Running + execute (counted, never run) => strand
+            assert(dispatches.get() == 1, s"expected one original (lost) dispatch, got ${dispatches.get()}")
+            assert(worker.load() == 1, "task queued on an unmounted Running worker")
+            worker.recoverStrand()
+            assert(dispatches.get() == 1, "turn 1: strand observed once, not yet re-dispatched")
+            worker.recoverStrand()
+            assert(dispatches.get() == 2, "turn 2: stable strand re-issues the dispatch")
+        }
+
+        "does not re-dispatch an idle worker with no queued work" in {
+            val dispatches = new AtomicInteger(0)
+            val exec: Executor = command =>
+                if (command.isInstanceOf[Worker]) { val _ = dispatches.incrementAndGet() }
+            val worker = createWorker(executor = exec)
+            worker.recoverStrand()
+            worker.recoverStrand()
+            worker.recoverStrand()
+            assert(dispatches.get() == 0, "an Idle, empty worker is never a strand")
+        }
+    }
 }
