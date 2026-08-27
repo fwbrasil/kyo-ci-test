@@ -422,6 +422,14 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
                     NodeFs.mkdirSync(toStr, js.Dynamic.literal(recursive = false))
             else
                 NodeFs.copyFileSync(pathStr, toStr, 0)
+                // Node's copyFileSync maps to CopyFileExW on Windows, which stamps the destination with
+                // the source's modification time; POSIX copyFileSync writes a current timestamp instead.
+                // A copyAttributes=false copy must read as freshly written on every platform, so restamp
+                // the destination with the current time (a harmless equivalent on POSIX).
+                if !options.copyAttributes then
+                    val nowSec = js.Date.now() / 1000.0
+                    NodeFs.utimesSync(toStr, nowSec, nowSec)
+                end if
             end if
             if options.copyAttributes && !(linkStat.isSymbolicLink() && !options.followLinks) then
                 val epochSec = sourceStat.mtimeMs / 1000.0
