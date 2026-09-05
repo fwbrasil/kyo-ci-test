@@ -1004,9 +1004,14 @@ class SqlConnectionCancelTest extends kyo.Test:
                                             }
                                         }.flatMap { leaked =>
                                             Sync.Unsafe.defer {
+                                                // Reclaims still running means the survivors are held by leases that have not finished
+                                                // unwinding; none running means every lease resolved and the survivors escaped the close
+                                                // sweep instead. The two call for different fixes, so the count is worth carrying here.
+                                                val pending = pool.cancelsInFlightCount
                                                 assert(
                                                     leaked == 0,
-                                                    s"$leaked connection(s) leaked at the connect handover: opened, never reclaimed, never closed"
+                                                    s"$leaked connection(s) leaked at the connect handover: opened, never reclaimed, never closed; " +
+                                                        s"$pending reclaim(s) still in flight when this was read"
                                                 )
                                             }
                                         }
