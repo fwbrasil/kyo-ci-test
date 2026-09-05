@@ -516,12 +516,23 @@ class ContainerOrchestrationItTest extends BasePodTest:
                         }
                     }
                 }
-                delivered <- marker.exists
+                // The trap writes the marker inside the container, and that write has to become visible on the host through the
+                // bind mount, which is not instantaneous under a nested or rootless runtime. Polling separates a slow mount from a
+                // signal that never arrived: reaching the bound means the trap did not run, rather than the host merely being late.
+                delivered <- Loop.indexed { i =>
+                    marker.exists.map {
+                        case true             => Loop.done(true)
+                        case false if i < 100 => Async.sleep(50.millis).andThen(Loop.continue)
+                        case false            => Loop.done(false)
+                    }
+                }
                 // The cleanup runs its own runner so a removal failure is reported here rather than failing the test.
                 _ <- Abort.run[FileSystemException](Path.run(hostDir.removeAll))
             yield assert(
                 delivered,
-                if armed then "scope cleanup completed but the stopSignal never reached the container's armed trap; no marker on the host"
+                if armed then
+                    "scope cleanup completed and the trap was armed, but no marker became visible on the host before the poll bound, "
+                        + "so the stopSignal did not reach the trap rather than the mount merely being slow"
                 else
                     "the container never wrote its readiness marker, so the bind mount was not visible to it and the stopSignal was never testable"
             )
