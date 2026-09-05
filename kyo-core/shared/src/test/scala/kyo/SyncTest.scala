@@ -144,8 +144,16 @@ class SyncTest extends kyo.test.Test[Any]:
         }
 
         "resource safety" - {
-            "runs finalizer on Abort.fail".ignore("Sync.ensure finalizer is not yet run when the computation aborts via Abort.fail") in {
-                ()
+            "runs finalizer on Abort.fail"
+                .pendingUntilFixed(
+                    "Sync.ensure does not run its finalizer when the guarded body short-circuits via Abort, so a resource held across an "
+                        + "aborting body is never released"
+                ) in {
+                var called = false
+                Abort.run[String](Sync.ensure { called = true }(Abort.fail("boom"))).map { result =>
+                    assert(result == Result.fail("boom"))
+                    assert(called, "the finalizer did not run when the guarded body short-circuited via Abort")
+                }
             }
 
             // The way to hold a resource across a computation that can abort, given the gap above: reify
@@ -204,9 +212,17 @@ class SyncTest extends kyo.test.Test[Any]:
                 }
             }
 
-            "error-aware ensure passes error on Abort.fail".ignore(
-                "an error-aware Sync.ensure finalizer is not yet passed the abort error on Abort.fail"
-            ) in { () }
+            "error-aware ensure passes error on Abort.fail"
+                .pendingUntilFixed(
+                    "Sync.ensure does not run its finalizer when the guarded body short-circuits via Abort, so the error-aware form is "
+                        + "never handed the abort error"
+                ) in {
+                var received: Maybe[Error[Any]] = Absent
+                Abort.run[String](Sync.ensure((e: Maybe[Error[Any]]) => received = e)(Abort.fail("boom"))).map { result =>
+                    assert(result == Result.fail("boom"))
+                    assert(received == Present(Result.fail("boom")), s"the finalizer was not passed the abort error, got $received")
+                }
+            }
 
             "works without fiber context" in {
                 import AllowUnsafe.embrace.danger
