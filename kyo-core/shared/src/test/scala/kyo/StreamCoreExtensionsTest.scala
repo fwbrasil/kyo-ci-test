@@ -973,8 +973,17 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
-        "Sync.ensure with take documents current behavior".ignore("Sync.ensure interaction with Stream.take is not yet specified") in {
-            ()
+        "Sync.ensure runs once when take ends the stream early" in {
+            // take stops the stream before its source is exhausted, which ends the guarded computation by a
+            // route the finalizer must still see exactly once, and only once.
+            AtomicInt.init(0).map { counter =>
+                Sync.ensure(counter.incrementAndGet.unit)(Stream.init(1 to 10).take(3).run).map { res =>
+                    counter.get.map { c =>
+                        assert(c == 1, s"the finalizer ran $c times")
+                        assert(res == Chunk(1, 2, 3))
+                    }
+                }
+            }
         }
 
         "takeWhile early exit with scope ensure" in {
