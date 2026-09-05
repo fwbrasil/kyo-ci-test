@@ -1,0 +1,4 @@
+DRIVE.md moved to /Users/fwbrasil/workspace/kyo-ci-drive/DRIVE.md
+
+It lives outside every worktree now, so a checkout, reset, or worktree removal cannot destroy it. The copy
+that used to sit here is stale from 2026-09-01 onward. Read the new path.
