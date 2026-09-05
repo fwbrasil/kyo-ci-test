@@ -83,8 +83,20 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
       * inspecting test names, which suites need per-runtime forking. Each forked JVM is pinned to a single runtime via `KYO_POD_RUNTIME`, so
       * this method registers leaves only for the pinned runtime; combined with sequential leaves, ≤1 in-flight container op per daemon.
       */
+    /** Registers a single cancelling leaf for a registrar that would otherwise register none.
+      *
+      * A registrar that finds no runtime, or no socket, registers nothing at all, and a suite with no leaves reports zero passed and zero
+      * failed under an overall success. That is indistinguishable in the totals from a suite that ran and had nothing to report, and it is
+      * the one outcome it must never be confused with. Naming the absence keeps it visible.
+      */
+    private def cancelUnexercised(reason: String)(using Frame): Unit =
+        "no container backend" in cancel(reason)
+
     def runBackends(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
-        Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
+        val runtimes = Seq("podman", "docker").filter(ContainerRuntime.isAvailable)
+        if runtimes.isEmpty then
+            cancelUnexercised("neither podman nor docker is reachable on this host, so no container backend could be exercised")
+        runtimes.foreach { runtime =>
             s"[$runtime]" - {
                 ContainerRuntime.findSocket(runtime).foreach { path =>
                     "http" in {
@@ -103,6 +115,7 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                 end if
             }
         }
+    end runBackends
 
     /** Like [[runBackends]] but raises the HTTP client's per-request timeout to 5 minutes for the http arm. Use for integration tests that
       * pull or build large images (e.g. mongo:7, mysql:8, postgres) where the default 5-second `HttpClientConfig` timeout is too short for
@@ -111,7 +124,10 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
       * The shell arm is unaffected — it delegates to the container CLI which uses its own process timeout.
       */
     def runBackendsLong(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
-        Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
+        val runtimes = Seq("podman", "docker").filter(ContainerRuntime.isAvailable)
+        if runtimes.isEmpty then
+            cancelUnexercised("neither podman nor docker is reachable on this host, so no container backend could be exercised")
+        runtimes.foreach { runtime =>
             s"[$runtime]" - {
                 ContainerRuntime.findSocket(runtime).foreach { path =>
                     "http" in {
@@ -132,6 +148,7 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                 end if
             }
         }
+    end runBackendsLong
 
     /** Register one leaf test per available container runtime (docker, podman). The test body receives the runtime name as a parameter —
       * use this when the test logic needs to construct a backend config explicitly or branch on runtime identity. The body picks its own
@@ -140,11 +157,15 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
       * Use as the body of `String -` in test declarations: {{{"auto-detect prefers HTTP" - runRuntimes { runtime => ... }}}}
       */
     def runRuntimes(f: String => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
-        Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
+        val runtimes = Seq("podman", "docker").filter(ContainerRuntime.isAvailable)
+        if runtimes.isEmpty then
+            cancelUnexercised("neither podman nor docker is reachable on this host, so no container backend could be exercised")
+        runtimes.foreach { runtime =>
             s"[$runtime]" in {
                 f(runtime)
             }
         }
+    end runRuntimes
 
     /** Register a single leaf using the HTTP backend over the auto-detected runtime socket. Use this when the test exercises kyo-pod's
       * higher-level Container API (predefs, demos, parser-specific stress) and the choice of backend (HTTP vs Shell) or runtime (Podman vs
@@ -158,6 +179,8 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
             .iterator
             .flatMap(rt => ContainerRuntime.findSocket(rt).iterator)
             .nextOption()
+        if socket.isEmpty then
+            cancelUnexercised("no container runtime socket was found on this host, so no container backend could be exercised")
         socket.foreach { path =>
             "http" in {
                 Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v))
@@ -174,6 +197,8 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
             .iterator
             .flatMap(rt => ContainerRuntime.findSocket(rt).iterator)
             .nextOption()
+        if socket.isEmpty then
+            cancelUnexercised("no container runtime socket was found on this host, so no container backend could be exercised")
         socket.foreach { path =>
             "http" in {
                 Container.withBackendConfig(_.UnixSocket(Path(path))) {
