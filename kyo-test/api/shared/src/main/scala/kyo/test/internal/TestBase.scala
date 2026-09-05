@@ -556,7 +556,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
           * an effect beyond `S0`): such a body is not a subtype of `Unit < (S0 & baseline)`. An over-discharged body (needing fewer
           * effects) is safely accepted.
           *
-          * The honored terminal decorators (`ignore`/`pending`/platform/`onlyIf`) carried in `builder` gate dispatch exactly as the
+          * The honored terminal decorators (`ignore`/platform/`onlyIf`) carried in `builder` gate dispatch exactly as the
           * `TestBuilder` `-` does.
           */
         inline infix def -(inline body: => Unit < (S0 & Async & Abort[Any] & Scope)): Unit =

@@ -13,7 +13,7 @@ import kyo.Maybe
   * @see
   *   [[kyo.test.TestReporter.onLeafComplete]] where each result is dispatched to reporters
   * @see
-  *   [[kyo.test.TestBuilder]] for decorators (.retry, .pending, .ignore) that determine which variant is produced
+  *   [[kyo.test.TestBuilder]] for decorators (.retry, .pendingUntilFixed, .ignore) that determine which variant is produced
   * @see
   *   [[kyo.test.AssertionFailed]] the exception that produces a [[TestResult.Failed]] leaf
   */

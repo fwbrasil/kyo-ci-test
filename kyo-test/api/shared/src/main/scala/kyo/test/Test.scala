@@ -21,7 +21,7 @@ package kyo.test
   * @see
   *   [[kyo.test.internal.TestBase]] for the full DSL and assertion methods
   * @see
-  *   [[kyo.test.TestBuilder]] for decorator chaining (.retry, .timeout, .pending, .flaky)
+  *   [[kyo.test.TestBuilder]] for decorator chaining (.retry, .timeout, .pendingUntilFixed, .flaky)
   * @see
   *   [[kyo.test.RunConfig]] for configuring the run (parallelism, filter, reporter)
   */

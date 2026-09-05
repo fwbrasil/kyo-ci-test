@@ -30,7 +30,7 @@ import scala.compiletime.erasedValue
   * @param ignore
   *   `Present(reason)` when `.ignore` or `.ignore(reason)` is in the decorator chain (an empty reason for the no-arg form)
   * @param pendingUntilFixed
-  *   `Present(reason)` when `.pendingUntilFixed(reason)` is in the chain. Unlike `pending`, the body RUNS: a still-failing body reports
+  *   `Present(reason)` when `.pendingUntilFixed(reason)` is in the chain. Unlike `.ignore`, the body RUNS: a still-failing body reports
   *   `Pending(reason)`, a now-passing body reports `Failed` so the marker gets removed. Retry/repeat do not apply (the body is expected to
   *   fail and runs exactly once).
   * @param timeout
@@ -144,7 +144,7 @@ transparent inline def gateOf[P]: Boolean =
   * gateOf[P]`: on an enabled platform they register exactly as the unfiltered DSL does, and on a disabled platform they discard the body
   * UNAPPLIED via `discardScoped`/`discardGroup`, so its code is never emitted.
   *
-  * Decorators chained after a platform filter (`.pending`, `.pendingUntilFixed`, `.focus`, `.retry`, `.timeout`, ...) preserve `P`, so a
+  * Decorators chained after a platform filter (`.ignore`, `.pendingUntilFixed`, `.focus`, `.retry`, `.timeout`, ...) preserve `P`, so a
   * chain like `"x".notNative.pending("...") in { ... }` stays compile-excluded on Native. A second platform filter combines with `P` via
   * [[PlatformSet.Both]] instead of replacing it, so `"x".notNative.notWasm in { ... }` is compile-excluded on both Native and WebAssembly.
   *

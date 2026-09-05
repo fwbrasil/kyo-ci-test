@@ -336,7 +336,7 @@ object TestRunner:
     /** Run one leaf at `cursor`, producing its result entry plus any synthetic stray entries.
       *
       * Re-instantiates the suite at this leaf's execution cursor. When the re-instantiation produced a TERMINAL registration
-      * (`peekRegisteredLeaf` is `Present`: a `.pending` / `.ignore` / `.only(false)` / platform-mismatch leaf that buffered no body), the
+      * (`peekRegisteredLeaf` is `Present`: an `.ignore` / `.only(false)` / platform-mismatch leaf that buffered no body), the
       * terminal `TestResult` is returned directly. Otherwise the buffered baseline body is discharged via [[runRegisteredBody]]: `Retry`
       * wraps the body (it already retries a thrown failure, which the Abort machinery lifts into a retryable `Result.Failure`), and
       * `Async.timeout` wraps the whole retry loop so it bounds the leaf including retries. A thrown `AssertionFailed` / `TestCancelled` on
