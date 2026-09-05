@@ -887,15 +887,20 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 }.unit
             }
 
-            "scope".ignore("groupedWithin does not yet close scoped resources with the same semantics as a plain stream run") in {
+            "a resource acquired by the source belongs to the caller's scope" in {
                 class TestResource(var closes: Int = 0) extends java.io.Closeable:
                     def close() = closes += 1
 
-                val stream        = Stream(Scope.acquire(TestResource()).map(r => Emit.value(Chunk(r))))
-                val groupedWithin = stream.groupedWithin(3, Duration.Infinity)
-                groupedWithin.run.map: grouped =>
-                    stream.run.map: streamResult =>
-                        assert(grouped.flatten.head.closes == streamResult.head.closes)
+                val source = Stream(Scope.acquire(TestResource()).map(r => Emit.value(Chunk(r))))
+                // Both counts are read while the enclosing scope is STILL OPEN. A resource the source acquired belongs to
+                // that scope, so a consumer may still be holding it and neither path may have closed it yet. Reading the
+                // counts after the scope ends cannot tell the two apart, since by then both are legitimately closed.
+                Scope.run {
+                    for
+                        plain   <- source.run
+                        grouped <- source.groupedWithin(3, Duration.Infinity).run
+                    yield assert(plain.head.closes == 0 && grouped.flatten.head.closes == 0)
+                }
             }
         }
     }

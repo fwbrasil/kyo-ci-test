@@ -1140,12 +1140,16 @@ object StreamCoreExtensions:
                                     else
                                         Loop.done
 
-                    (for
-                        _     <- tick
-                        fiber <- push
-                        _     <- Abort.run[Closed](pull)
-                        _     <- fiber.get
-                    yield ()).handle(Scope.run, Abort.run[Closed], _.unit)
+                    // `push` is spawned outside the local Scope.run, so a resource the SOURCE acquires stays bound to the caller's
+                    // scope instead of being released the moment this stream finishes, while the consumer may still be holding it.
+                    // The scope below covers the tick fiber, which is this combinator's own resource and the only thing it should free.
+                    push.map { fiber =>
+                        (for
+                            _ <- tick
+                            _ <- Abort.run[Closed](pull)
+                            _ <- fiber.get
+                        yield ()).handle(Scope.run, Abort.run[Closed], _.unit)
+                    }
                 }
         end groupedWithin
 
