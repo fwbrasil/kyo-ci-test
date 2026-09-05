@@ -31,6 +31,42 @@ class RyuTest extends kyo.test.Test[Any]:
         assert(parsed == v, s"Float round-trip failed: $v -> '$str' -> $parsed")
     end assertFloatRoundTrip
 
+    // The power-of-five lookup tables are checked in as generated data, and nothing verifies their contents. A single wrong
+    // entry would surface only for values whose exponent selects that entry, which the hand-picked cases below would miss.
+    // Walking the whole binary exponent range selects every entry in turn, so a bad one fails here rather than silently
+    // producing a wrong number for some range of inputs.
+    private val mantissaSamples =
+        Array(
+            0L, 1L, 0x3L, 0x5L, 0x1234567890abcL, 0x7ffffffffffffL, 0x8000000000000L, 0xaaaaaaaaaaaaaL, 0xffffffffffffeL, 0xfffffffffffffL
+        )
+
+    "every double exponent round-trips, so every power-of-five entry is exercised" in {
+        var exponent = 0
+        while exponent <= 2046 do
+            var i = 0
+            while i < mantissaSamples.length do
+                assertDoubleRoundTrip(java.lang.Double.longBitsToDouble((exponent.toLong << 52) | mantissaSamples(i)))
+                i += 1
+            end while
+            exponent += 1
+        end while
+        succeed
+    }
+
+    "every float exponent round-trips, so every power-of-five entry is exercised" in {
+        val floatMantissas = Array(0, 1, 0x3, 0x5, 0x12345, 0x3fffff, 0x400000, 0x555555, 0x7ffffe, 0x7fffff)
+        var exponent       = 0
+        while exponent <= 254 do
+            var i = 0
+            while i < floatMantissas.length do
+                assertFloatRoundTrip(java.lang.Float.intBitsToFloat((exponent << 23) | floatMantissas(i)))
+                i += 1
+            end while
+            exponent += 1
+        end while
+        succeed
+    }
+
     // --- RyuDouble basic tests ---
 
     "RyuDouble formats 0.0 correctly" in {
