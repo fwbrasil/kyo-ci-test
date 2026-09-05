@@ -242,9 +242,7 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
     // ── Fragmented messages (continuation frames) ──────────────
 
     "fragmented messages (continuation frames) reassemble into a single message" - {
-        "three-frame text message: text/FIN=0 + continuation/FIN=0 + continuation/FIN=1".ignore(
-            "WebSocketCodec.readFrameWith does not yet reassemble multi-frame continuation messages; it delivers each frame raw (proper reassembly is a follow-up)"
-        ) in {
+        "three-frame text message: text/FIN=0 + continuation/FIN=0 + continuation/FIN=1" in {
             // Spec: a WebSocket message MAY be split across multiple frames per RFC 6455.
             // The first frame carries the opcode (text or binary) with FIN=0; subsequent
             // frames use opcode 0x0 (continuation) with FIN=0; the final frame uses
@@ -260,7 +258,7 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             val frame2 = makeFrame(opcode = 0x0, fin = false, payload = "BBB".getBytes(Utf8))
             val frame3 = makeFrame(opcode = 0x0, fin = true, payload = "CCC".getBytes(Utf8))
             val mock   = new MockConn(frame1 ++ frame2 ++ frame3)
-            WebSocketCodec.readFrameWith(mock.read, mock) { (payload, _) =>
+            WebSocketCodec.readFrameWith(mock.read, mock, Int.MaxValue, _ => Kyo.unit, mask = true) { (payload, _) =>
                 payload match
                     case HttpWebSocket.Payload.Text(s) =>
                         assert(s == "AAABBBCCC")

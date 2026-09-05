@@ -28,6 +28,7 @@ private[kyo] object WebSocketCodec:
 
     private val Utf8     = StandardCharsets.UTF_8
     private val WsGuid   = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+    private val OpCont   = 0x0
     private val OpText   = 0x1
     private val OpBinary = 0x2
     private val OpClose  = 0x8
@@ -60,26 +61,117 @@ private[kyo] object WebSocketCodec:
     )(
         f: (HttpWebSocket.Payload, Stream[Span[Byte], Async]) => A < S
     )(using Frame): A < (S & Async & Abort[Closed]) =
+        readMessageWith(src, dst, maxFrameSize, onClose, mask, Absent)(f)
+    end readFrameWith
+
+    /** Reads frames until one complete message is assembled.
+      *
+      * A data frame with FIN clear opens a fragmented message (RFC 6455 section 5.4): its opcode names the message type, and each
+      * following continuation frame carries more of the same payload until one arrives with FIN set. `pending` carries that opcode and
+      * the fragments collected so far. Control frames are allowed between fragments and are answered without disturbing the message
+      * being assembled, which is why they thread `pending` through unchanged.
+      *
+      * `maxFrameSize` bounds the ASSEMBLED payload as well as each individual frame, so a peer cannot exhaust memory by sending an
+      * unbounded number of small fragments that each pass the per-frame check.
+      */
+    private def readMessageWith[A, S](
+        src: Stream[Span[Byte], Async],
+        dst: TransportStream,
+        maxFrameSize: Int,
+        onClose: ((Int, String)) => Unit < (S & Async),
+        mask: Boolean,
+        pending: Maybe[(Int, Chunk[Span[Byte]], Int)]
+    )(
+        f: (HttpWebSocket.Payload, Stream[Span[Byte], Async]) => A < S
+    )(using Frame): A < (S & Async & Abort[Closed]) =
         Abort.recover[HttpException](_ => Abort.fail(new Closed("HttpWebSocket", summon[Frame]))) {
-            readRawFrameWith(src, maxFrameSize, expectMasked = !mask) { (opcode, payload, remaining) =>
+            readRawFrameWith(src, maxFrameSize, expectMasked = !mask) { (fin, opcode, payload, remaining) =>
+                def deliver(op: Int, bytes: Span[Byte]): A < S =
+                    if op == OpText then f(HttpWebSocket.Payload.Text(new String(bytes.toArrayUnsafe, Utf8)), remaining)
+                    else f(HttpWebSocket.Payload.Binary(bytes), remaining)
+
                 opcode match
-                    case OpText   => f(HttpWebSocket.Payload.Text(new String(payload.toArrayUnsafe, Utf8)), remaining)
-                    case OpBinary => f(HttpWebSocket.Payload.Binary(payload), remaining)
+                    case OpText | OpBinary =>
+                        pending match
+                            case Present(_) =>
+                                Abort.fail(new Closed(
+                                    "HttpWebSocket",
+                                    summon[Frame],
+                                    "Data frame received while a fragmented message was open (RFC 6455 section 5.4)"
+                                ))
+                            case Absent =>
+                                if fin then deliver(opcode, payload)
+                                else
+                                    readMessageWith(
+                                        remaining,
+                                        dst,
+                                        maxFrameSize,
+                                        onClose,
+                                        mask,
+                                        Present((opcode, Chunk(payload), payload.size))
+                                    )(f)
+                    case OpCont =>
+                        pending match
+                            case Absent =>
+                                Abort.fail(new Closed(
+                                    "HttpWebSocket",
+                                    summon[Frame],
+                                    "Continuation frame with no fragmented message open (RFC 6455 section 5.4)"
+                                ))
+                            case Present((op, frags, total)) =>
+                                val assembled = total + payload.size
+                                if assembled > maxFrameSize then
+                                    Abort.fail(new Closed(
+                                        "HttpWebSocket",
+                                        summon[Frame],
+                                        "Reassembled HttpWebSocket message exceeds max frame size"
+                                    ))
+                                else if fin then deliver(op, concatFragments(frags.append(payload), assembled))
+                                else
+                                    readMessageWith(
+                                        remaining,
+                                        dst,
+                                        maxFrameSize,
+                                        onClose,
+                                        mask,
+                                        Present((op, frags.append(payload), assembled))
+                                    )(f)
+                                end if
                     case OpClose =>
                         val (code, reason) = decodeClosePayload(payload)
                         onClose((code, reason)).andThen(
                             Abort.fail(new Closed("HttpWebSocket", summon[Frame], s"Close frame received: $code $reason"))
                         )
                     case OpPing =>
-                        writeRawFrame(dst, OpPong, payload, mask).andThen(readFrameWith(remaining, dst, maxFrameSize, onClose, mask)(f))
+                        writeRawFrame(dst, OpPong, payload, mask).andThen(
+                            readMessageWith(remaining, dst, maxFrameSize, onClose, mask, pending)(f)
+                        )
                     case OpPong =>
-                        readFrameWith(remaining, dst, maxFrameSize, onClose, mask)(f)
+                        readMessageWith(remaining, dst, maxFrameSize, onClose, mask, pending)(f)
                     case other =>
                         Abort.fail(new Closed("HttpWebSocket", summon[Frame], s"Unknown opcode: $other"))
                 end match
             }
         }
-    end readFrameWith
+    end readMessageWith
+
+    /** Joins the fragments of a reassembled message into one payload.
+      *
+      * A message that arrived in a single frame is the common case and is returned as it stands, so an unfragmented read copies nothing.
+      */
+    private def concatFragments(frags: Chunk[Span[Byte]], total: Int): Span[Byte] =
+        if frags.size == 1 then frags(0)
+        else
+            val out = new Array[Byte](total)
+            var off = 0
+            frags.foreach { fragment =>
+                val bytes = fragment.toArrayUnsafe
+                Array.copy(bytes, 0, out, off, bytes.length)
+                off += bytes.length
+            }
+            Span.fromUnsafe(out)
+        end if
+    end concatFragments
 
     /** Write one data frame (Text or Binary). */
     def writeFrame(dst: TransportStream, frame: HttpWebSocket.Payload, mask: Boolean)(using Frame): Unit < Async =
@@ -338,7 +430,7 @@ private[kyo] object WebSocketCodec:
 
     /** Read a single raw frame (handles extended length + masking). */
     private inline def readRawFrameWith[A, S2](src: Stream[Span[Byte], Async], maxFrameSize: Int, expectMasked: Boolean)(
-        inline f: (Int, Span[Byte], Stream[Span[Byte], Async]) => A < S2
+        inline f: (Boolean, Int, Span[Byte], Stream[Span[Byte], Async]) => A < S2
     )(using inline frame: Frame): A < (S2 & Async & Abort[HttpException]) =
         ByteStream.readExactWith(src, 2) { (header, rem1) =>
             val fh          = parseFrameHeader(header(0), header(1))
@@ -364,12 +456,12 @@ private[kyo] object WebSocketCodec:
                 else if fh.masked then
                     ByteStream.readExactWith(rem1, 4) { (maskKey, rem2) =>
                         ByteStream.readExactWith(rem2, actualLen.toInt) { (payload, rem3) =>
-                            f(fh.opcode, unmask(payload, maskKey), rem3)
+                            f(fh.fin, fh.opcode, unmask(payload, maskKey), rem3)
                         }
                     }
                 else
                     ByteStream.readExactWith(rem1, actualLen.toInt) { (payload, rem2) =>
-                        f(fh.opcode, payload, rem2)
+                        f(fh.fin, fh.opcode, payload, rem2)
                     }
                 end if
             else
@@ -385,12 +477,12 @@ private[kyo] object WebSocketCodec:
                     else if fh.masked then
                         ByteStream.readExactWith(rem2, 4) { (maskKey, rem3) =>
                             ByteStream.readExactWith(rem3, actualLen.toInt) { (payload, rem4) =>
-                                f(fh.opcode, unmask(payload, maskKey), rem4)
+                                f(fh.fin, fh.opcode, unmask(payload, maskKey), rem4)
                             }
                         }
                     else
                         ByteStream.readExactWith(rem2, actualLen.toInt) { (payload, rem3) =>
-                            f(fh.opcode, payload, rem3)
+                            f(fh.fin, fh.opcode, payload, rem3)
                         }
                     end if
                 }
