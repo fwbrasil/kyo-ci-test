@@ -1,5 +1,6 @@
 package kyo.internal.websocket
 
+import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import kyo.*
@@ -86,9 +87,17 @@ private[kyo] object WebSocketCodec:
     )(using Frame): A < (S & Async & Abort[Closed]) =
         Abort.recover[HttpException](_ => Abort.fail(new Closed("HttpWebSocket", summon[Frame]))) {
             readRawFrameWith(src, maxFrameSize, expectMasked = !mask) { (fin, opcode, payload, remaining) =>
-                def deliver(op: Int, bytes: Span[Byte]): A < S =
-                    if op == OpText then f(HttpWebSocket.Payload.Text(new String(bytes.toArrayUnsafe, Utf8)), remaining)
-                    else f(HttpWebSocket.Payload.Binary(bytes), remaining)
+                def deliver(op: Int, bytes: Span[Byte]): A < (S & Abort[Closed]) =
+                    if op != OpText then f(HttpWebSocket.Payload.Binary(bytes), remaining)
+                    else
+                        decodeText(bytes) match
+                            case Present(text) => f(HttpWebSocket.Payload.Text(text), remaining)
+                            case Absent =>
+                                Abort.fail(new Closed(
+                                    "HttpWebSocket",
+                                    summon[Frame],
+                                    "Text frame payload is not valid UTF-8 (RFC 6455 section 8.1)"
+                                ))
 
                 opcode match
                     case OpText | OpBinary =>
@@ -154,6 +163,20 @@ private[kyo] object WebSocketCodec:
             }
         }
     end readMessageWith
+
+    /** Decodes a text frame's payload, rejecting bytes that are not valid UTF-8.
+      *
+      * Decoding with replacement would substitute U+FFFD wherever the input is malformed and hand up a string the peer never sent, where
+      * the protocol requires the connection to fail instead (RFC 6455 section 8.1). Absent means the payload was not valid UTF-8.
+      */
+    private def decodeText(bytes: Span[Byte]): Maybe[String] =
+        val decoder = StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+        try Present(decoder.decode(java.nio.ByteBuffer.wrap(bytes.toArrayUnsafe)).toString)
+        catch case _: java.nio.charset.CharacterCodingException => Absent
+        end try
+    end decodeText
 
     /** Joins the fragments of a reassembled message into one payload.
       *

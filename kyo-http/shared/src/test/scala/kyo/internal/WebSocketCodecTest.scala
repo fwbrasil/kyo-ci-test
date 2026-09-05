@@ -328,6 +328,20 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             }
         }
 
+        // RFC 6455 section 8.1: a text frame's payload MUST be valid UTF-8, and a receiver that finds it is not MUST fail
+        // the connection. Decoding with replacement instead invents characters the peer never sent, so a payload that
+        // should have ended the connection is delivered as an ordinary string carrying U+FFFD where the bad bytes were.
+        "rejects a text frame whose payload is not valid UTF-8" in {
+            // 0x80 as a leading byte is a continuation byte with nothing to continue, so this is not valid UTF-8.
+            val frame = makeFrame(0x1, fin = true, Array[Byte](0x48, 0x69, 0x80.toByte, 0x21))
+            val conn  = new MockConn(frame)
+            Abort.run[Closed](
+                WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) => frame)
+            ).map { result =>
+                assert(result.isFailure, s"invalid UTF-8 in a text frame must fail the connection, but it was accepted: $result")
+            }
+        }
+
         // RFC 6455 section 5.2: RSV1, RSV2 and RSV3 MUST be zero unless an extension is negotiated that defines them.
         // kyo-http negotiates no extensions, so a set reserved bit can only mean the peer believes something was agreed
         // that was not. Accepting the frame hands its payload over as if it were plain: a peer that thinks compression
