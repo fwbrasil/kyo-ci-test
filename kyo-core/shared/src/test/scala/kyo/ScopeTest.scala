@@ -753,6 +753,44 @@ class ScopeTest extends kyo.test.Test[Any]:
         }
     }
 
+    "interrupt and await" - {
+        // Awaiting an interrupted fiber's result is how an owner waits for that fiber to be done with what it held.
+        // The two sides record the order they reach, and both are awaited before the comparison, so neither a watcher
+        // that has not started nor a finalizer still running can make this read the wrong way round.
+        "awaiting an interrupted fiber's result waits for the finalizers it is unwinding".ignore(
+            "getResult returns once the fiber's result is settled, which happens before the finalizers it is still "
+                + "running have finished, so an owner that interrupts and awaits can proceed while the fiber still holds what it acquired"
+        ) in {
+            AtomicInt.init(0).map { seq =>
+                for
+                    entered  <- Promise.init[Unit, Any]
+                    started  <- Promise.init[Unit, Any]
+                    release  <- Promise.init[Unit, Any]
+                    finDone  <- Promise.init[Unit, Any]
+                    finOrder <- AtomicInt.init(-1)
+                    resOrder <- AtomicInt.init(-1)
+                    fiber <- Fiber.initUnscoped(Scope.run(
+                        Scope.ensure(
+                            started.completeUnitDiscard
+                                .andThen(release.get)
+                                .andThen(seq.getAndIncrement.map(finOrder.set))
+                                .andThen(finDone.completeUnitDiscard)
+                        ).andThen(entered.completeUnitDiscard).andThen(Async.never)
+                    ))
+                    _       <- entered.get
+                    _       <- fiber.interrupt
+                    _       <- started.get
+                    watcher <- Fiber.initUnscoped(fiber.getResult.andThen(seq.getAndIncrement.map(resOrder.set)))
+                    _       <- release.completeUnit
+                    _       <- finDone.get
+                    _       <- watcher.getResult
+                    f       <- finOrder.get
+                    r       <- resOrder.get
+                yield assert(f < r, s"the finalizer finished at $f and getResult returned at $r; the lower value ran first")
+            }
+        }
+    }
+
     "edge cases" - {
 
         "empty Scope.run returns value" in {
