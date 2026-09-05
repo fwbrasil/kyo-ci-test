@@ -14,7 +14,7 @@ import scala.collection.mutable
   *   2. A no-arg method round-trips with paramListIds == Chunk(Chunk.empty).
   *   3. A minor=11 snapshot header is rejected with TastyError.SnapshotVersionMismatch.
   *   4. The raw bytes of a written snapshot contain the "PLISTS__" tag.
-  *   5. Multi-parameter-list round-trip (marked ignore: no multi-list fixture exists yet).
+  *   5. A two-parameter-list method round-trips with both clauses intact.
   *
   * Cross-platform: all leaves target shared/src/test (JVM, JS, Native).
   */
@@ -237,10 +237,67 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
     // The fixture (FixtureClasses.scala) only defines single-list and no-arg methods.
     // To activate: add a fixture method with multiple parameter lists, re-embed the TASTy bytes,
     // and remove the .ignore annotation.
-    "multi_list_method_roundtrip".ignore(
-        "No multi-parameter-list method in embedded fixture set."
-    ) in {
-        fail("Not yet active")
+    "multi_list_method_roundtrip" in {
+        val digest = Array[Byte](0xd0.toByte, 0xd1.toByte, 0xd2.toByte, 0xd3.toByte, 0xd4.toByte, 0xd5.toByte, 0xd6.toByte, 0xd7.toByte)
+        TestClasspaths.withClasspath(TestClasspaths.kyoTastyFixtures)(Tasty.classpath).map { coldCp =>
+            Scope.run {
+                Abort.run[TastyError] {
+                    val snapPath = s"cache/${DigestComputer.toHexString(digest)}.krfl"
+                    val bytes    = SnapshotWriter.serializeToBytes(coldCp, digest)
+                    SnapshotReader.readFromBytes(bytes, snapPath).map { warmCp =>
+                        def findScaled(classpath: Tasty.Classpath): Maybe[Tasty.Symbol.Method] =
+                            classpath.findSymbol("kyo.fixtures.Meters") match
+                                case Maybe.Present(opaqueMeters: Tasty.Symbol.OpaqueType) =>
+                                    classpath.companion(opaqueMeters) match
+                                        case Maybe.Present(companion: Tasty.Symbol.Object) =>
+                                            companion.declarationIds.flatMap { id =>
+                                                classpath.symbol(id) match
+                                                    case Maybe.Present(m: Tasty.Symbol.Method)
+                                                        if m.name.asString == "scaled" && m.isExtension =>
+                                                        Chunk(m)
+                                                    case _ => Chunk.empty
+                                            }.headOption match
+                                                case Some(m) => Maybe.Present(m)
+                                                case None    => Maybe.Absent
+                                        case _ => Maybe.Absent
+                                case _ => Maybe.Absent
+                        end findScaled
+                        (findScaled(coldCp), findScaled(warmCp))
+                    }
+                }.map {
+                    case Result.Success((coldMaybe, warmMaybe)) =>
+                        coldMaybe match
+                            case Maybe.Absent =>
+                                fail("Meters scaled extension not found in cold classpath; fixture setup problem")
+                            case Maybe.Present(coldMethod) =>
+                                warmMaybe match
+                                    case Maybe.Absent =>
+                                        fail("Meters scaled extension not found in warm (snapshot-loaded) classpath")
+                                    case Maybe.Present(warmMethod) =>
+                                        val coldLists = coldMethod.paramListIds
+                                        val warmLists = warmMethod.paramListIds
+                                        // An extension carrying its own argument clause keeps the receiver and the argument
+                                        // in SEPARATE lists, a shape a single-clause method cannot produce. Asserting the
+                                        // shape itself rather than only that cold and warm agree is what makes this a
+                                        // multi-list test: two collapsed lists would still compare equal to each other.
+                                        assert(coldLists.size == 2, s"expected two parameter lists in cold, got ${coldLists.size}")
+                                        assert(
+                                            coldLists(0).size == 1 && coldLists(1).size == 1,
+                                            s"expected one parameter per cold list, got ${coldLists(0).size} and ${coldLists(1).size}"
+                                        )
+                                        assert(warmLists.size == 2, s"expected two parameter lists in warm, got ${warmLists.size}")
+                                        assert(
+                                            warmLists(0).size == 1 && warmLists(1).size == 1,
+                                            s"expected one parameter per warm list, got ${warmLists(0).size} and ${warmLists(1).size}"
+                                        )
+                                        succeed
+                    case Result.Failure(e) =>
+                        fail(s"Unexpected failure: $e")
+                    case Result.Panic(t) =>
+                        throw t
+                }
+            }
+        }
     }
 
 end SnapshotParamListsRoundTripTest

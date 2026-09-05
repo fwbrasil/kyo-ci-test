@@ -31,6 +31,9 @@ opaque type Meters = Double
 object Meters:
     def apply(d: Double): Meters            = d
     extension (m: Meters) def value: Double = m
+    // An extension carrying its own parameter clause compiles to two parameter lists (receiver, then arguments),
+    // which is the shape a snapshot's paramListIds has to preserve.
+    extension (m: Meters) def scaled(factor: Double): Meters = m * factor
 end Meters
 
 // Type alias
