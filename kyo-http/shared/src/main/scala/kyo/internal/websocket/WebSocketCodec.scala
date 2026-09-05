@@ -35,7 +35,7 @@ private[kyo] object WebSocketCodec:
     private val OpPing   = 0x9
     private val OpPong   = 0xa
 
-    case class FrameHeader(fin: Boolean, opcode: Int, masked: Boolean, payloadLen: Int)
+    case class FrameHeader(fin: Boolean, rsv: Int, opcode: Int, masked: Boolean, payloadLen: Int)
 
     // ── Public API ──────────────────────────────────────────────
 
@@ -344,10 +344,11 @@ private[kyo] object WebSocketCodec:
 
     private[internal] def parseFrameHeader(b0: Byte, b1: Byte): FrameHeader =
         val fin        = (b0 & 0x80) != 0
+        val rsv        = (b0 & 0x70) >>> 4
         val opcode     = b0 & 0x0f
         val masked     = (b1 & 0x80) != 0
         val payloadLen = b1 & 0x7f
-        FrameHeader(fin, opcode, masked, payloadLen)
+        FrameHeader(fin, rsv, opcode, masked, payloadLen)
     end parseFrameHeader
 
     private[internal] def unmask(payload: Span[Byte], maskKey: Span[Byte]): Span[Byte] =
@@ -438,7 +439,15 @@ private[kyo] object WebSocketCodec:
             val extLenBytes = if payloadLen == 126 then 2 else if payloadLen == 127 then 8 else 0
             val isControl   = fh.opcode >= OpClose
 
-            if fh.masked != expectMasked then
+            if fh.rsv != 0 then
+                // RSV1 to RSV3 carry meaning only under a negotiated extension, and none is negotiated here, so a set bit
+                // means the peer is encoding under an agreement this endpoint never made. Reading the frame anyway would
+                // hand its payload up as though it were plain, which for a compression extension is compressed bytes
+                // delivered as text (RFC 6455 section 5.2).
+                Abort.fail(
+                    HttpProtocolException("HttpWebSocket frame sets a reserved bit with no negotiated extension (RFC 6455 section 5.2)")
+                )
+            else if fh.masked != expectMasked then
                 // A server MUST receive masked frames and a client MUST receive unmasked ones (RFC 6455 section 5.1);
                 // the wrong masking direction is a protocol violation and (server side) a smuggling lever.
                 Abort.fail(HttpProtocolException("HttpWebSocket frame masking violates role (RFC 6455 section 5.1)"))

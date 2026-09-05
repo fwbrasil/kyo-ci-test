@@ -328,6 +328,21 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             }
         }
 
+        // RFC 6455 section 5.2: RSV1, RSV2 and RSV3 MUST be zero unless an extension is negotiated that defines them.
+        // kyo-http negotiates no extensions, so a set reserved bit can only mean the peer believes something was agreed
+        // that was not. Accepting the frame hands its payload over as if it were plain: a peer that thinks compression
+        // was negotiated has its compressed bytes delivered as text.
+        "rejects a frame with a reserved bit set" in {
+            val frame = makeFrame(0x1, fin = true, "hello".getBytes(Utf8))
+            frame(0) = (frame(0) | 0x40).toByte
+            val conn = new MockConn(frame)
+            Abort.run[Closed](
+                WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) => frame)
+            ).map { result =>
+                assert(result.isFailure, s"a reserved bit must fail the connection, but the frame was accepted: $result")
+            }
+        }
+
         // RFC 6455 section 5.1: a server MUST close the connection on receiving a frame that is not masked. Masking is
         // what stops an intermediary from being tricked into caching or misrouting attacker-chosen bytes, so a server
         // that accepts an unmasked client frame loses that protection. The server-role reader (mask = false) applies no
