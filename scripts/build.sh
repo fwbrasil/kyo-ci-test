@@ -150,6 +150,23 @@ else
     echo "build.sh: env=$ENV_KIND arch=$ARCH action=$ACTION platforms=$PLAT_LIST"
 fi
 
+# A container inherits the clock of the VM hosting it, and a VM whose clock has drifted far from real time
+# makes every certificate look expired. Provisioning then dies inside curl with "certificate has expired",
+# which reads as a stale image and sends the reader after the wrong thing; pulling a fresh one fails the same
+# way, since the registry handshake is TLS too. Comparing the two clocks says what is actually wrong. Only a
+# managed machine can drift this way: where the runtime is native the container shares this kernel's clock.
+if podman machine list --format '{{.Running}}' 2>/dev/null | grep -q true; then
+    vm_epoch=$(podman machine ssh 'date -u +%s' 2>/dev/null || echo "")
+    if [ -n "$vm_epoch" ]; then
+        host_epoch=$(date -u +%s)
+        skew=$((vm_epoch > host_epoch ? vm_epoch - host_epoch : host_epoch - vm_epoch))
+        if [ "$skew" -gt 86400 ]; then
+            echo "build.sh: the container machine's clock is ${skew}s away from this host's, so TLS inside it will reject every certificate; restart the machine to resync it, then retry" >&2
+            exit 1
+        fi
+    fi
+fi
+
 # -- emulation notice + binfmt precheck for a cross-arch container --
 if [ "$ARCH" != "native" ]; then
     hostarch=$(host_arch)
