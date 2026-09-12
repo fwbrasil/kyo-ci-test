@@ -100,9 +100,9 @@ class SafepointTest extends AnyFreeSpec:
         Safepoint.endSlice(slot, prev)
     }
 
-    // Only the owner knows which slice it runs, so only the owner replaces: a late delivery from another
-    // thread against a stop the running slice is owed leaves that stop in place.
-    "a late stop from another thread does not displace the running slice's own" in {
+    // Nobody but the owner knows which slice it runs, so a late delivery from another thread against a stop
+    // the running slice is owed merges into a wildcard: the running slice's own stop is still honored.
+    "a late stop from another thread merges into the running slice's own" in {
         val slot     = Safepoint.get()
         val owner    = Thread.currentThread()
         val departed = new AnyRef

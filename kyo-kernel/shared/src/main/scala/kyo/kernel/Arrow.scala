@@ -252,7 +252,8 @@ object Arrow:
         final def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2) =
             v match
                 case v: Pending[A, S2] @unchecked =>
-                    Effect.defer(v, this, cont)
+                    // fused rather than deferred: the value's arrival and this step are one, so no stop lands between them
+                    Effect.fused(v, this, cont)
                 case _ =>
                     cont.head(apply(Nested.unnest(v)), cont.tail)
     end Ensure

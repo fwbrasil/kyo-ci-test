@@ -707,12 +707,13 @@ class AeronTransportTest extends Test:
                             transport.interruptTook,
                             "the fixture's interrupt did not take, so a zero free count says nothing about the window"
                         )
-                        // The outcome is what separates the two readings of a zero free count: an interrupted add proves the
-                        // interrupt was OBSERVED and the flag still won, while a completed add proves only that the add
-                        // outran the interrupt and the window was never entered at all.
+                        // The interrupt was taken on the slice the Done poll ran in, and the add reached its own ending
+                        // in that slice, so the ending stands and the interrupt is refused by it: an add interrupted
+                        // instead would mean the poll's answer and the flag it sets were split by the interrupt, which
+                        // is the window the flag exists to close.
                         assert(
-                            result.isPanic,
-                            s"the add was not interrupted, so this leaf did not exercise the ownership window: $result"
+                            !result.isPanic,
+                            s"the interrupt taken on the slice owned an ending the add reached on its own: $result"
                         )
                         assert(
                             transport.freesAfterDone.get() == 0,

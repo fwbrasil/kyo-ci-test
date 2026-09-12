@@ -1296,23 +1296,6 @@ class FiberTest extends kyo.test.Test[Any]:
             yield assert(seen)
         }
 
-        // The interrupt is requested from inside the body, so it lands on the running slice, and the body then
-        // completes in that same slice: the interrupt owns the ending.
-        "an interrupt taken on the running slice owns the ending" in {
-            for
-                handoff <- Promise.init[Fiber[Int, Any], Any]
-                fiber <- Fiber.initUnscoped {
-                    handoff.get.map { self =>
-                        import AllowUnsafe.embrace.danger
-                        discard(self.unsafe.interrupt())
-                        42
-                    }
-                }
-                _      <- handoff.complete(Result.succeed(fiber))
-                result <- fiber.getResult
-            yield assert(result.panic.exists(_.isInstanceOf[Interrupted]))
-        }
-
         // The value a body ends with can be a resource: a permit its last step took, a handle it opened. Only the
         // promise's consumer knows how to release it, so an ending with a value completes with the value whatever
         // landed on the slice; dropping it for the interrupt drops what it carries.

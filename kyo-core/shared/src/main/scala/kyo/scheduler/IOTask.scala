@@ -51,15 +51,16 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     private def interrupted: Boolean = status.isInstanceOf[Result.Error[?]]
 
-    /** The one place an ending of the body completes the promise: a value, an abort, a throw.
+    /** The one place an ending of the body completes the promise: a value, an abort, a throw of its own.
       *
       * It completes only while the ending is still the body's to settle: not after the abort arm settled it
-      * and answered with a placeholder, and not once an interrupt taken on this slice owns it, since the
-      * promise then completes with the interrupt at `Done`, after the remainder is released. By name, so a
-      * value is not restored for an ending nobody settles.
+      * and answered with a placeholder. An interrupt taken on this slice does not own an ending the body
+      * reaches on its own: the value may be a resource only the promise's consumer can release, so the body's
+      * ending stands and the interrupt is refused by the completion. The interrupt owns a remainder, which is
+      * released and then settled with it. By name, so a value is not restored for an ending nobody settles.
       */
     private def finish(result: => Result[E, A < S2]): Unit =
-        if isPending() && !interrupted then completeDiscard(result)
+        if isPending() then completeDiscard(result)
 
     /** Claims this task for a thread that does not own it yet.
       *
@@ -321,11 +322,13 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                     case ex =>
                         // Finished here because the failure unwound past the boundary. A fatal completes the
                         // promise regardless: the release an interrupt would wait for never runs after one.
-                        // Otherwise a throw is an ending like any other, so an interrupt taken on this slice
-                        // owns it, as with the `InterruptedException` a blocked worker's promise throws once
-                        // the monitor interrupts the thread. Constructed rather than through `Result.panic`,
-                        // which refuses to hold a fatal.
-                        if IsFatal(ex) then completeDiscard(new Result.Panic(ex)) else finish(new Result.Panic(ex))
+                        // Otherwise a throw is the body's own ending, except while an interrupt is taken on
+                        // this slice: a blocked worker's promise throws `InterruptedException` once the
+                        // monitor interrupts the thread, and that throw is the interrupt arriving, not an
+                        // ending of the body's own, so the interrupt settles the promise instead. Constructed
+                        // rather than through `Result.panic`, which refuses to hold a fatal.
+                        if IsFatal(ex) then completeDiscard(new Result.Panic(ex))
+                        else if !interrupted then finish(new Result.Panic(ex))
                         curr = cleared
                         if IsFatal(ex) then
                             // A fatal skips the arms below that release ownership, and ownership never given
@@ -358,7 +361,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                     Task.Done
                 case _: Result.Error[?] =>
                     // An interrupt landed on this slice. What the stop left is the remainder, unless the body
-                    // ran to its end first, in which case the interrupt still owns the ending.
+                    // reached its own ending first, which completed the promise: the release then finds
+                    // nothing to release, and the interrupt is refused by the completion.
                     curr = if next.evalNow.isDefined then cleared else next
                     release()
                     Task.Done
@@ -398,12 +402,18 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
     /** Releases what an abandoned remainder still holds, links what it stands waiting on, and completes the
       * promise with the interrupt taken, when one was.
       *
-      * A parked computation carries its owed releases rather than running them, and this fiber will not
-      * resume, so they are run here. The link comes first: an interrupt arriving as the fiber reached its
-      * join can find a remainder standing at one whose promise is not yet tied to this fiber. A join the
-      * remainder has not reached is not linked, since nothing under a step that never ran is waited on yet,
-      * and the release runs no step of the remainder to find one. The completion comes last: the cascade to
-      * what this fiber linked, and every observer of its result, run only once its finalizers have.
+      * The remainder is resumed first, with the stop pending from the start, for exactly what a resumption
+      * could not have separated from where it stands: a join it stands at is answered by the boundary, which
+      * links the promise as it always does, and a promise that already holds its result has that result
+      * delivered and the step fused with it run, under the remainder's own regions, so a release registered
+      * in that step is registered here too. The first step boundary parks, and what parked is released: a
+      * parked computation carries its owed releases rather than running them, and this fiber will not
+      * resume. A join the remainder has not reached is not linked, since nothing under a step that never ran
+      * is waited on yet, and the resumption runs no such step. The completion comes last: the cascade to what
+      * this fiber linked, and every observer of its result, run only once its finalizers have.
+      *
+      * An ending the resumption reaches is the body's own and completes the promise through `finish`, as it
+      * would have in a slice; the interrupt is then refused by the completion.
       *
       * Only reached by a thread owning the task, so the release happens once. `Done` keeps a later schedule
       * from resuming what was just released.
@@ -413,23 +423,18 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         curr = cleared
         status = Done
         if !isNull(remainder) then
-            Eval.release(remainder, new KyoException("fiber abandoned")(using Frame.internal), Tag[Async.Join]) {
-                [C] =>
-                    input =>
-                        // Invoking the input registers the link, the same call the boundary makes. A promise that
-                        // already holds its result is what the boundary would have resumed on: the result is
-                        // handed back so the walk delivers it to the join's continuation and the release waiting
-                        // on what arrived runs, and the link, moot for a completed promise, is dropped as the
-                        // boundary drops it.
-                        val promise = input(this)
-                        promise.poll() match
-                            case Present(r) =>
-                                removeInterrupt(promise)(using input.frame)
-                                // Erasure-forced: the join's output is the promise's result at its own error type.
-                                Present(r.asInstanceOf[Result[Nothing, C]])
-                            case _ => Absent
-                        end match
-            }
+            val previous = IOTask.current.get()
+            IOTask.current.set(this)
+            val parked =
+                try Eval.stopped(remainder)
+                catch
+                    case ex if !IsFatal(ex) =>
+                        // The step fused with the delivery threw: the body's own ending, and the unwind released
+                        // what the remainder held on its way out.
+                        finish(new Result.Panic(ex))
+                        cleared
+                finally IOTask.current.set(previous)
+            if !isNull(parked) then Eval.release(parked, new KyoException("fiber abandoned")(using Frame.internal))
         end if
         interruption.foreach(error => discard(settleInterrupt(error)))
     end abandon

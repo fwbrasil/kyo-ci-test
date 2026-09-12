@@ -229,14 +229,13 @@ object Safepoint:
                             slots.compareAndSet(idx, owner, new Stop(thread, slice)) || loop(i, probes)
                         case pending: Stop if pending.thread eq thread =>
                             // A pending stop answers this request when it is honored wherever this one would be: a
-                            // wildcard is, and so is one naming the same slice. One naming another slice is either
-                            // a late delivery to work that has ended or the running slice's own, and only the
-                            // owner can tell which, since one slice runs on its thread at a time: it replaces the
-                            // stale one, which would otherwise leave its own request unhonored for as long as the
-                            // slice runs. A stopper on another thread cannot tell, so it leaves the pending one in
-                            // place rather than displace a stop the running slice is owed.
-                            (pending.slice eq null) || (pending.slice eq slice) || (thread ne Thread.currentThread()) ||
-                            slots.compareAndSet(idx, pending, new Stop(thread, slice)) || loop(i, probes)
+                            // wildcard is, and so is one naming the same slice. Two stops naming different slices
+                            // merge into a wildcard, honored wherever either would have been: one of them is a
+                            // late delivery to work that has ended and the other may be the running slice's own,
+                            // and nobody but the owner can tell which, so neither is dropped. The cost is at most
+                            // one spurious park, at the next evaluation's entry, where a wildcard is consumed.
+                            (pending.slice eq null) || (pending.slice eq slice) ||
+                            slots.compareAndSet(idx, pending, new Stop(thread, null)) || loop(i, probes)
                         case _ =>
                             loop(i + 1, probes + 1)
                     end match

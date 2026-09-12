@@ -60,6 +60,21 @@ import scala.collection.mutable.ArrayBuffer
         end if
     end partial
 
+    /** Evaluates what `v` stands at and nothing past it: a slice with the stop already pending as it begins.
+      *
+      * An operation `v` stands at is answered by its region; an answer that had already arrived is delivered, and the step fused with it
+      * runs under the regions the operation was issued under; the first step boundary after that parks. A deferral at the head is such a
+      * boundary, so a computation standing at one runs nothing. What a scheduler runs to release a remainder whose operation may already
+      * hold its answer: the release then finds what the delivery registered.
+      */
+    def stopped[A](v: A < Any): A < Any =
+        val slot = Safepoint.get()
+        discard(Safepoint.consumeStopped(slot))
+        discard(Safepoint.stop(Thread.currentThread()))
+        try apply(v, armed = true)
+        finally discard(Safepoint.consumeStopped(slot))
+    end stopped
+
     // `armed` is a parameter rather than a test inside the loop: it is constant for the whole evaluation, so the
     // stop check folds away entirely for a run that cannot be preempted.
     private def apply[A, S](v: A < S, armed: Boolean): A < S =
@@ -74,7 +89,9 @@ import scala.collection.mutable.ArrayBuffer
             v match
                 // a deferral: unfold it, its two continuations going in front of ours
                 case kyo: Pending.Defer[?, ?, T, S2] @unchecked =>
-                    if armed && Safepoint.stopped(slot) then
+                    // A fused deferral is not stopped in front of: its input's arrival and the step are one, and
+                    // what the input has not run polls on its own; see `Pending.Fused`.
+                    if armed && Safepoint.stopped(slot) && !kyo.isInstanceOf[Pending.Fused[?, ?, ?, ?]] then
                         park(v, contA, contB)
                     else
                         loop(kyo.value, kyo.contA, kyo.contB.chain(contA.chain(contB)), ctx)
@@ -116,8 +133,12 @@ import scala.collection.mutable.ArrayBuffer
                                         val result = handler.answering(kyo.input, continuation, kyo, stack)
                                         Debugger.onResult(result)
                                         // The stop is honored on the clause's answer: one that re-raises the
-                                        // operation would otherwise dispatch straight back here with no deferral to park at.
-                                        if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
+                                        // operation would otherwise dispatch straight back here with no deferral to
+                                        // park at. A parked slice the answer carries is entered instead: it is a
+                                        // crossing delivering the answer under the regions it crosses into, and
+                                        // what it holds polls on its own.
+                                        if armed && Safepoint.stopped(slot) && !result.isInstanceOf[Pending.Park[?, ?]] then
+                                            park(result, Arrow.id, Arrow.id)
                                         else loop(result, Arrow.id, Arrow.id, ctx2)
                                     // a masking clause: the same, handed the operation re-raised instead of its input
                                     case handler: Handler.MaskingHandler[EX, C, Y, S2] @unchecked =>
@@ -128,7 +149,8 @@ import scala.collection.mutable.ArrayBuffer
                                             else kyo.crossing(entries, contA.chain(contB))
                                         val result = handler.answering(kyo.reraise, continuation, kyo, stack)
                                         Debugger.onResult(result)
-                                        if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
+                                        if armed && Safepoint.stopped(slot) && !result.isInstanceOf[Pending.Park[?, ?]] then
+                                            park(result, Arrow.id, Arrow.id)
                                         else loop(result, Arrow.id, Arrow.id, ctx2)
                                     // a loop clause at the top: answered in place, the region staying installed
                                     case handler: Handler.LoopHandler[IX, OX, EX, C, Y, S2] @unchecked if atTop =>
@@ -608,30 +630,11 @@ import scala.collection.mutable.ArrayBuffer
       * it has just refused would otherwise run the very thing the refusal exists to stop, and a caller
       * abandoning a computation whole would otherwise run a step of it after the interrupt, acquiring what
       * nothing will release. What a deferral has not run has not acquired anything, so there is nothing under
-      * it to release.
+      * it to release. An operation the computation stands at is left as it stands: a caller that owes it
+      * something resumes the computation with [[stopped]] first, which answers the operation, runs the step
+      * fused with its answer, and parks at the first step boundary, and releases what parked.
       */
     def release[A, S](v: A < S, ex: Throwable): Unit =
-        release(v, ex, Absent, _ => Absent)
-
-    /** Releases the regions `v` still holds, and hands `f` the input of the first operation under them that
-      * `effectTag` answers, so a caller that owes something to an operation the computation stands at can
-      * settle it without walking the computation a second time. `f` runs before anything is released.
-      *
-      * `f` answers with the operation's result when it already has one: a fiber's join whose promise
-      * completed before the fiber resumed. That result is delivered here as the resumption would have
-      * delivered it, to the operation's continuation, and the one step that delivery runs fused with it
-      * runs too, since nothing can land between them when the computation resumes; a release waiting on
-      * what arrived is then found. Nothing else runs. An operation under a deferral does not exist yet, and
-      * neither does anything it would have waited on, so it is not reported: as in [[release]] above, a
-      * deferral is walked, not evaluated.
-      */
-    def release[I[_], O[_], E <: ArrowEffect[I, O], A, S](v: A < S, ex: Throwable, effectTag: Tag[E])(
-        f: [C] => I[C] => Maybe[O[C]]
-    ): Unit =
-        // Erasure-forced: the operation's state type is existential here, and `f` takes it back at that type.
-        release(v, ex, Present(effectTag.erased), input => f[Any](input.asInstanceOf[I[Any]]))
-
-    private def release[A, S](v: A < S, ex: Throwable, effectTag: Maybe[Tag[Any]], f: Any => Maybe[Any]): Unit =
         val collected = ArrayBuffer.empty[AnyRef]
 
         // An `Arrow.Ensure` waiting on an already-settled value is a release nobody will run, so the cont is
@@ -647,39 +650,43 @@ import scala.collection.mutable.ArrayBuffer
 
         // Applying the `Ensure` is not always the whole debt. One that registers its release elsewhere, as
         // `Scope.acquireRelease` does, is done once applied; one that installs a region to own it, as
-        // `Bracket` does, has only just created what owes it. So the result is walked too.
+        // `Bracket` does, has only just created what owes it. So the result is walked too. A registration
+        // that throws, as one on a closed scope does by contract, is suppressed into the signal rather than
+        // escaping: the release runs on behalf of a caller that has nothing to catch it with.
         def ensuring(v: Any, cont: Arrow[Any, Any, Any]): Unit =
             leftmost(cont) match
-                case step: Arrow.Ensure[Any, Any, Any] @unchecked => collect(step(Nested.unnest[Any](v)), Arrow.id, false)
-                case _                                            => ()
+                case step: Arrow.Ensure[Any, Any, Any] @unchecked =>
+                    val applied =
+                        try step(Nested.unnest[Any](v))
+                        catch
+                            case t if !IsFatal(t) =>
+                                ex.addSuppressed(t)
+                                null
+                    if applied != null then collect(applied, Arrow.id)
+                case _ => ()
 
-        // `delivered` is set for the value an operation's answer produced, and spent on the first deferral
-        // holding a settled value: that deferral's first arrow is the step fused with the delivery, which
-        // runs when the computation resumes with nothing landing between, so it runs here as well.
-        @tailrec def collect(v: Any, cont: Arrow[Any, Any, Any], delivered: Boolean): Unit =
+        @tailrec def collect(v: Any, cont: Arrow[Any, Any, Any]): Unit =
             v match
                 case p: Pending[?, ?] =>
                     p match
                         // A deferral whose value is still a computation is walked, which reaches what is under
                         // it. One whose value is settled holds its body in the cont, and the body is not run:
-                        // the value is offered to a release waiting on it, and that is the whole debt, unless
-                        // the value was just delivered, in which case the step fused with the delivery runs.
+                        // the value is offered to a release waiting on it, and that is the whole debt.
                         case kyo: Pending.Defer[a, b, c, s] @unchecked =>
                             // Erasure-forced: the types joining a chain's links are existential from out here.
                             val after = kyo.contB.chain(cont).asInstanceOf[Arrow[Any, Any, Any]]
                             val below = kyo.contA.chain(after).asInstanceOf[Arrow[Any, Any, Any]]
                             kyo.value match
-                                case _: Pending[?, ?] => collect(kyo.value, below, delivered)
-                                case _ if delivered   => collect(kyo.contA(kyo.value, Arrow.id), after, false)
+                                case _: Pending[?, ?] => collect(kyo.value, below)
                                 case _                => ensuring(kyo.value, below)
                             end match
                         case kyo: Pending.HandleContext[VX, CX, ?, ?] @unchecked =>
                             val hc = kyo.handler
                             collected += hc
                             collected += hc.derive(Maybe.empty).asInstanceOf[AnyRef]
-                            collect(kyo.value, cont, delivered)
+                            collect(kyo.value, cont)
                         case kyo: Pending.Handle[?, ?, ?, ?] =>
-                            collect(kyo.value, cont, delivered)
+                            collect(kyo.value, cont)
                         case kyo: Pending.Park[?, ?] =>
                             expandOwed(collected, kyo.owed)
                             val entries = kyo.entries
@@ -694,23 +701,11 @@ import scala.collection.mutable.ArrayBuffer
                                 expandOwed(collected, entries.owed(i))
                                 i += 1
                             end while
-                            collect(kyo.value, cont, delivered)
-                        // The operation is reported, and answered here when the reporter already holds its
-                        // answer: the answer goes to the operation's own continuation, as a resumption would
-                        // deliver it, and what that produces is walked with the fused step allowed once.
-                        case kyo: Pending.SuspendArrow[?, ?, ?, ?, ?, ?] @unchecked =>
-                            effectTag match
-                                case Present(t) if t <:< kyo.tag.erased =>
-                                    f(kyo.input) match
-                                        case Present(answer) =>
-                                            // Erasure-forced: the operation's output type is existential from out here.
-                                            collect(kyo.cont.asInstanceOf[Arrow[Any, Any, Any]](answer, Arrow.id), cont, true)
-                                        case Absent => ()
-                                case _ => ()
+                            collect(kyo.value, cont)
                         case _: Pending.Suspend[?, ?, ?, ?] => ()
                         case _: Pending.Snapshot[?, ?]      => ()
                 case settled => ensuring(settled, cont)
-        collect(v, Arrow.id, false)
+        collect(v, Arrow.id)
         releaseCollected(collected, ex)
     end release
 

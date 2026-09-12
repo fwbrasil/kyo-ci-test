@@ -340,7 +340,8 @@ object Fiber:
         /** Interrupts the Fiber.
           *
           * @return
-          *   Whether the Fiber was successfully interrupted
+          *   Whether this call stopped the fiber. The fiber's result says how it ended: a body that reaches its own ending in the slice
+          *   the interrupt lands on completes with that ending, and the interrupt is refused by the completion.
           */
         def interrupt(using frame: Frame): Boolean < Sync =
             interrupt(Result.Panic(Interrupted(frame)))
@@ -350,7 +351,7 @@ object Fiber:
           * @param error
           *   The error to interrupt the Fiber with
           * @return
-          *   Whether the Fiber was successfully interrupted
+          *   Whether this call stopped the fiber; see [[interrupt]]
           */
         inline def interrupt(inline error: => Result.Error[E])(using Frame): Boolean < Sync =
             Sync.Unsafe.defer(Unsafe.interrupt(self)(error))

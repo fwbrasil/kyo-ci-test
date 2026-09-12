@@ -413,10 +413,15 @@ object Topic:
                         // Token free-ownership: on Done, pollAddPublication's _get frees the token; on
                         // Failed the C layer does not, so each Failed arm frees it and clears tokOwned
                         // to keep the finalizer from double-freeing. The var is confined to one fiber.
+                        //
+                        // `ensureMap`, not `map`: the poll's answer and the flag that records who owns the
+                        // token after it are one step. A `map` polls the safepoint before applying, so an
+                        // interrupt landing inside the poll would park in front of the flag, and the
+                        // finalizer would free a token the transport had just taken.
                         var tokOwned = true
                         Sync.ensure(Sync.Unsafe.defer(if tokOwned then transport.freeAsyncPub(tok) else ())) {
                             Loop.foreach[Maybe[Pub], Async & Abort[TopicTransportException]] {
-                                Sync.Unsafe.defer(transport.pollAddPublication(tok)).map {
+                                Sync.Unsafe.defer(transport.pollAddPublication(tok)).ensureMap {
                                     poll =>
                                         (poll: AeronTransport.AddPoll[Pub]) match
                                             case AeronTransport.AddPoll.Done(pub) =>
@@ -493,7 +498,8 @@ object Topic:
                         var tokOwned = true
                         Sync.ensure(Sync.Unsafe.defer(if tokOwned then transport.freeAsyncSub(tok) else ())) {
                             Loop.foreach[Maybe[Sub], Async & Abort[TopicTransportException]] {
-                                Sync.Unsafe.defer(transport.pollAddSubscription(tok)).map {
+                                // `ensureMap` for the same reason as the publication's poll above.
+                                Sync.Unsafe.defer(transport.pollAddSubscription(tok)).ensureMap {
                                     poll =>
                                         (poll: AeronTransport.AddPoll[Sub]) match
                                             case AeronTransport.AddPoll.Done(sub) =>
