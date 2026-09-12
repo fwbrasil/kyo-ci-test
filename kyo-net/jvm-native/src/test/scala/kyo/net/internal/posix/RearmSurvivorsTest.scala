@@ -73,6 +73,11 @@ class RearmSurvivorsTest extends Test:
                     log.exists(_.startsWith("registerWrite")),
                     s"expected a registerWrite entry in call log: $log"
                 )
+                // the order this leaf rests on: registrations are applied in the order they were armed
+                assert(
+                    log.indexWhere(_.startsWith("registerWrite")) < log.indexWhere(_.startsWith("registerRead")),
+                    s"the write registration was armed first and must precede the read registration in the log: $log"
+                )
             }
         }
     }

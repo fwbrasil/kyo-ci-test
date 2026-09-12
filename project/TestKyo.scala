@@ -345,8 +345,7 @@ object TestKyo {
                 log("completed")
             } else {
                 val switch = if (version == current) Nil else Seq(s"++$version")
-                val tasks  = modules.map(taskFor(a.phase, _, a.isQuick)) ++ jmhCompileTasks(state, a.phase, modules)
-                val parts  = (switch ++ tasks) :+ doneCommandName
+                val parts  = (switch ++ modules.map(taskFor(a.phase, _, a.isQuick))) :+ doneCommandName
                 current = version
                 log(s"Scala $version, ${phaseLabel(a.phase)} ${modules.size} modules: ${modules.mkString(", ")}")
                 log(s"pass: ${parts.mkString("; ")}")
@@ -360,23 +359,6 @@ object TestKyo {
         if (chain.isEmpty || a.isDryRun) state
         else Command.process(chain.mkString("; "), state, msg => state.log.error(msg))
     }
-
-    /** The benchmark sources of the selected modules, compiled with the test sources. A module that enables the
-      * JMH plugin carries a `jmh` configuration whose sources no other phase compiles, so a signature they call
-      * could move without anything noticing until the next measurement failed to build; compile-test compiles
-      * them, and the modules are found from the build rather than listed.
-      */
-    private def jmhCompileTasks(state: State, phase: String, modules: Seq[String]): Seq[String] =
-        if (phase != "compile-test") Nil
-        else {
-            val extracted = Project.extract(state)
-            modules.flatMap { name =>
-                extracted.structure.allProjectRefs.find(_.project == name).toSeq.flatMap { ref =>
-                    val configs = extracted.getOpt(ref / ivyConfigurations).getOrElse(Nil)
-                    if (configs.exists(_.name == "jmh")) Seq(s"$name/Jmh/compile") else Nil
-                }
-            }
-        }
 
     /** The selected modules, one per line, for the runner that partitions them into batches. */
     private def writePlan(path: String, modules: Seq[String]): Unit = {
