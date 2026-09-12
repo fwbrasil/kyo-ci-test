@@ -2,7 +2,7 @@
 
 Base `cdefdc9e60`, branch `robustness`, worktree `.claude/worktrees/robustness`. Range and tip are
 re-derived by `package-check.sh` at packaging; the walk below is `sequence.json`, verified against
-the tip by `sequence.py --verify`. Thirty edits, applied one at a time with the Edit tool, in
+the tip by `sequence.py --verify`. Thirty-one edits, applied one at a time with the Edit tool, in
 the order given here: twenty-one in the kernel and the build (its test runner and the benchmark
 configuration), two in `kyo-prelude` and `kyo-bench` for the consumer of the multi-shot fix, two in
 `kyo-data` and `kyo-bench` for the Span fix and its number, and two in `kyo-net`, the last four being
@@ -200,6 +200,12 @@ through.
    is installed, abandoned through the budgeted release; the release must receive the resource
    itself, `eq`, not its box.
 
+**CI leaves**
+
+28. `SchedulerTest.scala` (kyo-scheduler): the suite's `eventually` polls wait with a 10 second patience at a 10
+   millisecond interval instead of ScalaTest's 150 millisecond default; the windows-x64 JVM job's one
+   failure was that default expiring on a first attempt that alone took 254 milliseconds.
+
 **G. The tooling**
 
 The kernel skill's pipeline names three files that did not exist; this change wrote them and they
@@ -208,12 +214,12 @@ are new files, applied whole. In the user's tree they are written under
 puts the kernel skill's artifacts; the branch tracks them under `kyo-kernel/.claude/skills/kernel/`
 for preservation only.
 
-28. `flags.sh`, new: emits one row per construct of concern on a diff's added lines (casts, `Any`,
+29. `flags.sh`, new: emits one row per construct of concern on a diff's added lines (casts, `Any`,
    `@unchecked`, allocations on hot paths, terminology), the skeleton `flags.md` adjudicates.
-29. `package-check.sh`, new: re-derives every mechanical claim a package makes (tip, commit count,
+30. `package-check.sh`, new: re-derives every mechanical claim a package makes (tip, commit count,
    surface, clean tree, flag count against the table, the walk reproducing the tip, and whether
    each benchmark class named references the package under review), one OK, CHECK or STALE per line.
-30. `rulings.md`, new: the reviewer's objections verbatim and dated, the rehearsal lens's rubric,
+31. `rulings.md`, new: the reviewer's objections verbatim and dated, the rehearsal lens's rubric,
    with the 2026-09-12 entry from this change's status report.
 
 ## Adjudication
