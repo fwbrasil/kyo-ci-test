@@ -411,10 +411,16 @@ The reviewer read the status report on 2026-09-12 and asked about each; the stat
    `KernelBench` rows whose hot path applies a settled continuation) is the next step, outside this
    package's range.
 2. **The `PollTest` ascriptions** are workarounds under the ruling of 2026-08-28 and are left in
-   place because their root cause is fork 1. The reviewer asked whether they come from the handler
-   method's signature: they come from overload resolution on the continuation's `apply` pair at the
-   clause's erased element type, which item 9 of the robustness list exposed by regrouping the
-   cases; the handler signature is unchanged.
+   place. The reviewer asked whether they come from the handler method's signature: no signature
+   changed. Compiled without them, on the tip and on the overload-removal experiment, the compiler
+   names the cause: `T` in that test is an `enum`, so `T.T2("zero")` widens to `T` and
+   `Present(T.T2("zero"))` is a `Present[T]`, which is not a `Maybe[T.T2]`; the ascription is the
+   expected type that keeps `T.T2` narrow. A plain parameter of type `Maybe[T.T2]` would propagate
+   that expected type on its own; a continuation's parameter is a `Maybe[T.T2] < S2`, through which
+   the lift does not carry it, and with the overload pair present the argument is typed with no
+   expected type at all. Not fork 1's symptom: the removal experiment shows the ascription is still
+   needed with the pair gone (the earlier attribution in this package was wrong and is corrected
+   here).
 3. **D**, the reference interpreter: dropped by the reviewer ("drop"). The derivation keeps the
    record of why it was not attempted; nothing else in the package depends on it.
 4. **Fork 4, A over B.** The alternative, candidate B, is `done` per resumption with a changed
