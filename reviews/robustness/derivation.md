@@ -436,6 +436,14 @@ Every "spawn or claim, then register in a later step" shape in kyo-core is expos
 budget used to run the later step for free. `Async.timeoutWithError` already registers in the step that
 spawns (its own comment says so); `Sync.ensure` (K) and `Scope.Finalizer.close` (L) did not.
 
+Two `ScopeInterruptTest` leaves were written against the budget as well: "an interrupt landing while the
+acquire's last step runs" requested the interrupt one step before the value and expected that last step
+to still run under abandonment, which is the stepping. Under the honest walk the acquire never produces
+and nothing leaks, so their `> 0` premise cannot hold. They now request the interrupt from inside the
+step that produces the value, the one shape in which the interrupt lands as the value arrives, and a
+third leaf pins the multi-step shape: an acquire interrupted a step before its value produces nothing
+and releases nothing.
+
 ### J. A stale stop is superseded by the running slice's own (kernel jvm-native)
 
 `Safepoint.stop` on jvm-native answered a request for a thread that already had a pending stop with

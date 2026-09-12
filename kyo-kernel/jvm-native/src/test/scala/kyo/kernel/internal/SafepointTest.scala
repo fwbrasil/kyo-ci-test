@@ -100,6 +100,25 @@ class SafepointTest extends AnyFreeSpec:
         Safepoint.endSlice(slot, prev)
     }
 
+    // Only the owner knows which slice it runs, so only the owner replaces: a late delivery from another
+    // thread against a stop the running slice is owed leaves that stop in place.
+    "a late stop from another thread does not displace the running slice's own" in {
+        val slot     = Safepoint.get()
+        val owner    = Thread.currentThread()
+        val departed = new AnyRef
+        val slice    = new AnyRef
+        val prev     = Safepoint.beginSlice(slot, slice)
+        assert(Safepoint.stop(owner, slice))
+        assert(Safepoint.stopped(slot))
+        val late = new Thread(() => discard(Safepoint.stop(owner, departed)))
+        late.start()
+        late.join()
+        assert(Safepoint.stopped(slot))
+        assert(Safepoint.consumeStopped(slot))
+        assert(!Safepoint.consumeStopped(slot))
+        Safepoint.endSlice(slot, prev)
+    }
+
     "a wildcard stop is honored inside a slice" in {
         val slot = Safepoint.get()
         val prev = Safepoint.beginSlice(slot, new AnyRef)

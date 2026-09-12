@@ -4,9 +4,9 @@ import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
 
 /** Interrupts landing inside an acquire, and scope exit over a child still holding a resource.
   *
-  * Each acquire leaf interrupts its own fiber and then takes one more step before producing its value, so the interrupt is pending when
-  * that step completes. An acquire whose value arrives in the same node as the interrupt request always releases, and the window a
-  * multi-node acquire opens is a race, so the leaves run rounds rather than once.
+  * Each acquire leaf interrupts its own fiber from inside the step that produces its value, so the interrupt is pending as the value
+  * arrives and the release is registered in that same step. An acquire that takes one more step after the request never produces: the
+  * abandonment runs nothing of what the interrupt stopped in front of, so there is nothing to release and nothing leaks.
   *
   * `ScopeTest`'s "acquire-time registration (#1820)" block covers `Scope.acquireRelease`; these cover `Sync.acquireReleaseWith` and
   * `Scope.acquire`.
@@ -41,11 +41,12 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                 _ <- selfInterrupting(rounds) { self =>
                     Sync.acquireReleaseWith {
                         Sync.defer {
-                            // Unsafe: the interrupt must be requested from inside the acquire, before it returns,
-                            // which is not an effectful position.
+                            // Unsafe: the interrupt must be requested from inside the acquire, in the step that
+                            // produces its value, which is not an effectful position.
                             import AllowUnsafe.embrace.danger
                             discard(self.unsafe.interrupt())
-                        }.andThen(acquired.incrementAndGet)
+                            acquired.unsafe.incrementAndGet()
+                        }
                     }(_ => released.incrementAndGet.unit)(_ => Sync.defer(()))
                 }
                 _   <- assertEventually(Kyo.zip(acquired.get, released.get).map((a, r) => a == r))
@@ -68,10 +69,9 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                                 // Unsafe: see the leaf above.
                                 import AllowUnsafe.embrace.danger
                                 discard(self.unsafe.interrupt())
-                            }.andThen(Sync.defer {
                                 discard(opened.incrementAndGet())
                                 new Handle(closed)
-                            })
+                            }
                         }.andThen(Sync.defer(()))
                     }
                 }
@@ -79,6 +79,27 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                 o <- Sync.defer(opened.get())
                 c <- Sync.defer(closed.get())
             yield assert(o == c && o > 0, s"$o handles were opened and $c of them were closed")
+            end for
+        }
+
+        // The request lands one step before the value: the interrupt stops in front of that step, the
+        // abandonment runs nothing of it, and an acquire that never produced owes no release.
+        "an acquire interrupted a step before its value produces nothing and releases nothing" in {
+            val rounds = 200
+            for
+                acquired <- AtomicInt.init(0)
+                released <- AtomicInt.init(0)
+                _ <- selfInterrupting(rounds) { self =>
+                    Sync.acquireReleaseWith {
+                        Sync.defer {
+                            import AllowUnsafe.embrace.danger
+                            discard(self.unsafe.interrupt())
+                        }.andThen(acquired.incrementAndGet)
+                    }(_ => released.incrementAndGet.unit)(_ => Sync.defer(()))
+                }
+                acq <- acquired.get
+                rel <- released.get
+            yield assert(acq == 0 && rel == 0, s"$acq acquires ran after their interrupt and $rel releases ran")
             end for
         }
     }
