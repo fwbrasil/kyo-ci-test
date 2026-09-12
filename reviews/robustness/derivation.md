@@ -245,6 +245,43 @@ output `B` with `done` applied per resumption, and the clause returns `B < (S & 
 standard algebraic-effects reading and needs no twin, but it changes `handleContRepeated`'s
 signature and makes `done` run per resumption rather than once, which is a public-surface decision.
 
+### What A costs, measured, and piece F
+
+Two rows added to `KernelBench` enter a `handleContRepeated` region, which no row did before:
+`repeatedRegionsPayEntry` (a region per operation) and `repeatedClausesPayReentry`
+(`suspensionBaseline`'s program under a repeated handler, ten thousand operations each resumed
+once). Base against tip with the allocation profiler: the twin costs 16 bytes and 4.7 ns per region
+entry; the re-entry costs 64 bytes and 61 ns per resumption, which makes the second row 7.2 times
+slower than the base. The mechanism is the design: every application of the continuation enters a
+region, and a region's entry and exit is what the existing rows `contextRegionsPayEntryExit` and
+`emittingClausesPayRegionRebuild` measure at 73 and 89 ns. There is no cheaper frame that would do:
+what stops an inner occurrence from capturing the clause's pending work is a handler on the stack
+above that work, because a crossing packs every stack entry between an occurrence and the handler
+that answers it into the continuation.
+
+The base was flat on that row because it was wrong: a clause with pending work between
+resumptions captured that work into every inner continuation. The tree's one consumer,
+`Choice.run`, paid the delimiter by hand, wrapping each resumption in a fresh `Choice.run`, which is
+why `kyo-prelude`'s suite passed at the base with sequential choices. With the kernel delimiting,
+that wrapper is a second region per resumption, so piece F removes it:
+
+**F.** `kyo-prelude/shared/src/main/scala/kyo/Choice.scala`, `Choice.run`: the clause becomes
+`Kyo.foreach(alternatives)(v => cont(v)).map(_.flattenChunk)`, one flatten, no inner `run`. Surface:
+that method only. `runStream` keeps its shape: it hands the peeled continuation out and evaluates
+the results outside the clause, under a fresh `handleFirstRepeated` per iteration, and the twin
+region each resumed computation now carries is a second region per element there; the benchmark
+section carries its number. `ChoiceBench` in `kyo-bench` is added for both rows, base against tip.
+
+### Fork 5: the per-resumption region is the price of a kernel that delimits
+
+Open for the user. Accepting A means every multi-shot resumption enters a region, 61 ns and 64
+bytes, and a clause that resumes exactly once under `handleContRepeated` pays it too, where the base
+ran flat; such a clause belongs under `handleCont`, and no consumer in the tree has that shape. The
+alternative is the base's contract, documented rather than enforced: a repeated clause with pending
+work between resumptions must re-enter a region itself, as `Choice.run` did, and a clause that does
+not hangs. Recommendation: A, with F, because the kernel is then correct by construction for the
+shape the matrix found, and the one consumer pays what it paid before.
+
 ### Fork 4, ruled: A
 
 The user granted full autonomy for the overnight work ("add tests to repro issues and do fix them.

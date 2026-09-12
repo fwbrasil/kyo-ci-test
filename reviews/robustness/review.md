@@ -2,9 +2,9 @@
 
 Base `cdefdc9e60`, branch `robustness`, worktree `.claude/worktrees/robustness`. Range and tip are
 re-derived by `package-check.sh` at packaging; the walk below is `sequence.json`, verified against
-the tip by `sequence.py --verify`. Nineteen edits, applied one at a time with the Edit tool, in the
-order given here: seventeen in the kernel, and one each in `kyo-data` and `kyo-net` that the branch's
-CI matrix required.
+the tip by `sequence.py --verify`. Twenty-one edits, applied one at a time with the Edit tool, in
+the order given here: seventeen in the kernel, two in `kyo-prelude` and `kyo-bench` for the consumer
+of the multi-shot fix, and one each in `kyo-data` and `kyo-net` that the branch's CI matrix required.
 
 ## What this change is
 
@@ -21,6 +21,7 @@ its first run, which is fixed here as well.
 | fix | multi-shot re-entry is not delimited, found by B | `Handler`, `ArrowEffect`, `Eval`, `ArrowEffectTest` |
 | C | one re-entry path for the four loop tails | `Handler` |
 | E | the benchmark class compiles against `ContextEffect.handle`'s signature | `KernelBench.scala` |
+| F | `Choice.run` resumes through the kernel's re-entry, no inner `run` per alternative | `Choice.scala`, `ChoiceBench.scala` |
 
 Piece D of the derivation, a reference interpreter, was not attempted: the night went to the defect
 B found, and D stays on the list as the long-run item with B's matrix as the subset it would
@@ -123,14 +124,23 @@ One sentence per edit, the sentence to say when applying it.
     `repeatedRegionsPayEntry` (a region per operation), the rows that measure the twin built per
     region and the arrow built per operation, since no row entered such a region before.
 
+**F. The consumer**
+
+18. `Choice.scala`, `run`: the clause is `Kyo.foreach` over the alternatives applied to the
+    continuation, flattened once; the inner `Choice.run(cont(v))` it wrapped each resumption in was
+    the consumer re-entering a region by hand, which the continuation now does on every application,
+    so keeping it would enter two regions per resumption.
+19. `ChoiceBench.scala`, new in `kyo-bench`: `run` and `runStream` over ten sequential binary
+    choice points, the rows that measure what Choice pays per resumption.
+
 **Outside the kernel**
 
-18. `Span.scala`, `updated`: an explicit index check raising the `IndexOutOfBoundsException` the
+20. `Span.scala`, `updated`: an explicit index check raising the `IndexOutOfBoundsException` the
     scaladoc already promises, in `Chunk`'s shape and message; the JVM's array store delivered it,
     Scala.js treats the store as undefined behaviour and its fatal error ends the node process, and
     the Wasm backend traps with the same effect, which is how the branch's CI matrix found it, on
     every JS and Wasm job, through the `SpanTest` case on the branch's ancestry.
-19. `RearmSurvivorsTest.scala`: the leaf arms write before read, so the write registration precedes
+21. `RearmSurvivorsTest.scala`: the leaf arms write before read, so the write registration precedes
     the read registration in the poller driver's command order and is in the log by the time the
     read event can fire; armed the other way, the EOF event could be dispatched and the driver closed
     before the write registration was applied, which the linux-arm64 JVM job reported as a missing
@@ -206,12 +216,33 @@ either comparison, all inside their combined errors at `-f 1`, and their `-f 3` 
 | `continuationBodiesFuse` | -5.9% | -5.9% | pending |
 | `bracketEnsuringOnly` | +12.0% | inside | pending |
 
+**The multi-shot rows, and the regression they show.** Two rows added by edit 17 enter a
+`handleContRepeated` region, which no row did before. Base against tip, `-f 3 -prof gc`,
+`bench/compare-rows-base-vs-AC.md`:
+
+| row | base | tip | per unit |
+|---|---|---|---|
+| `repeatedRegionsPayEntry`, 1000 regions of one operation | 53.7 us, 88,104 B | 58.4 us, 104,120 B | +4.7 ns and 16 B per region: the twin |
+| `repeatedClausesPayReentry`, one region of 10,000 operations | 98.7 us, 480,121 B | 706.4 us, 1,120,181 B | +61 ns and 64 B per resumption: one region entered per application |
+
+The second is a regression of 7.2 times on that row, and nobody has accepted it. The mechanism is
+the design: every application of a repeated handler's continuation enters a region, and a region's
+entry and exit is what `contextRegionsPayEntryExit` and `emittingClausesPayRegionRebuild` already
+measure at 73 and 89 ns per region, so the row sits at the floor, not above it. No cheaper frame
+would do, because what stops an inner occurrence from capturing the clause's pending work is a
+handler on the stack above that work: a crossing packs every stack entry between an occurrence and
+the handler that answers it into the continuation. The base was flat on this row because it was
+wrong on the shape the matrix found. The tree's one consumer of the repeated handlers, `Choice.run`,
+paid the delimiter by hand, wrapping each resumption in a fresh `Choice.run`; with the kernel
+delimiting, that wrapper is a second region per resumption, and edit 18 removes it. What that nets
+for Choice is the `ChoiceBench` comparison below; the decision on the price itself is open ruling 5.
+
 CI, on `fwbrasil/kyo-ci-test`: the full matrix (linux-x64, linux-arm64, windows-x64; JVM, JS, Native,
 Wasm), run 34672876184 on the gated-matrix commit, found every JS and Wasm job dying in `kyo-data`'s
 `SpanTest`: the branch's ancestry adds an out-of-bounds case for `Span.updated`, whose scaladoc
 promises `IndexOutOfBoundsException` while the code relied on the JVM's array store; on JS the fatal
 undefined-behaviour error escapes the harness and node exits, on Wasm the store traps with the same
-effect. Fixed by edit 18, reproduced locally before the fix (the same run-terminated exception)
+effect. Fixed by edit 20, reproduced locally before the fix (the same run-terminated exception)
 and verified after it: `SpanTest` 237 passed on each of JVM, JS and Wasm, the out-of-bounds case
 included. The matrix's final state is reported with the sweep below.
 
@@ -230,4 +261,14 @@ work and is reported in the summary that proposes this review.
 4. **Fork 4, ruled A by the author under the overnight autonomy.** The alternative, candidate B, is
    `done` per resumption with a changed `handleContRepeated` signature, the standard delimited
    reading. Edit 9's second case (1060, not 4060) is the line that pins the ruling; reversing it is a
-   public-surface decision.
+   public-surface decision. B would not change the cost in ruling 5: it re-enters a region per
+   resumption as well.
+5. **The per-resumption region is the price of a kernel that delimits.** Accepting A means every
+   multi-shot resumption enters a region, 61 ns and 64 bytes, and a clause that resumes exactly once
+   under `handleContRepeated` pays it where the base ran flat; such a clause belongs under
+   `handleCont`, and no consumer in the tree has that shape. The alternative is the base's contract,
+   documented rather than enforced: a repeated clause with pending work between resumptions must
+   re-enter a region itself, as `Choice.run` did, and one that does not hangs. Recommendation: A,
+   with edit 18, because the kernel is then correct by construction for the shape the matrix found
+   and the one consumer pays what it paid before; the Choice numbers are the evidence for the second
+   half of that sentence.
