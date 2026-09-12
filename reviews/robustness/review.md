@@ -571,3 +571,54 @@ close in 3 ms where it was 30 008 ms. The full matrix runs as 34716179868 on the
 Open for the reviewer: `Bracket.ensuringWith` is the one public addition (piece K), the missing middle
 between `apply` and `ensuring`; the alternative was a carrier thrown through the region for a typed
 failure, which is control flow by exception.
+
+## Third walk: a fiber's result arrives once its finalizers have run, 23 edits
+
+Piece O of the derivation, built to two rulings given live on 2026-09-12: the status word stays a
+flat union and the interrupt's `Result.Error` is its fifth state, no wrapper and no second field; and
+every ending of the body completes the promise through one method. The walk starts from the second
+walk's end, `9d5c795077`, and ends at `b9e522721b`; `sequence-3.json` holds the 23 edits below,
+verified by `sequence.py --verify 9d5c795077 b9e522721b reviews/robustness/sequence-3.json`, and
+`flags-3.md` adjudicates its 36 flags, none `REMOVE`. The promise first, then the task, then `Fiber`,
+then the pins.
+
+1. **`IOPromise.scala`, `preInterrupt`:** documented as the refusal hook; `onInterrupted` goes, its
+   only override being the task's, which the take replaces.
+2. **`IOPromise.scala`, `interruptLoop`:** `preInterrupt` is asked again before a retry, since a promise
+   that takes an interrupt without completing stays pending and refuses the next one there.
+3. **`IOPromise.scala`, `interrupt(p, v)`** overridable, delegating to `settleInterrupt(p, v)`, and
+   `settleInterrupt(v)` for a completion from any pending state.
+4. **`IOTask.scala`, the word:** five states, the invariant that makes a run never land on a slice in
+   flight, `interrupted`, and `finish`, the one place the body's ending completes the promise.
+5. **`IOTask.scala`, `boundary`'s documentation and signature:** handed `restore`, what the value
+   becomes, rather than a completion.
+6. **`IOTask.scala`, the abort arm:** `finish(error)`.
+7. **`IOTask.scala`, the done lane:** `finish(Result.succeed(restore(p)))`; the placeholder is never
+   restored, since `finish` settles nothing after the abort arm did.
+8. **`IOTask.scala`, `parkOn`:** a CAS, so an interrupt that landed on the slice keeps the word.
+9. **`IOTask.scala`, the take:** `interrupt(p, error)` over `Idle`, the thread and the promise;
+   `taken`; `preInterrupt` refusing on the error and on `Done`; `needsInterrupt` on the error too.
+10. **`IOTask.scala`, `run`'s claim:** a failed claim releases on behalf of an interrupt taken while
+    idle; an external completion abandons with no interrupt.
+11. **`IOTask.scala`, `run`'s catch:** a fatal completes regardless; any other throw is an ending, and
+    an interrupt taken on the slice owns it.
+12. **`IOTask.scala`, the slice's end:** every exit is a CAS out of the state the owner left.
+13. **`IOTask.scala`, the exits, `release` and `abandon`:** the park arm's CAS to `Idle` or the
+    release; the error arm; the thread arm's CAS to `Done` or `Idle` or the release; `release` claims
+    the error out of the word; `abandon` takes the interrupt it completes with.
+14. **`IOTask.scala`, `abandon`'s last line:** the completion, after the release.
+15. **`IOTask.scala`, `Status`:** the union's fifth member.
+16. **`IOTask.scala`, `apply`'s spawn:** `restore` is the isolate's.
+17. **`IOTask.scala`, `detached`'s spawn:** `restore` is the identity.
+18. **`Fiber.scala`, the `Bracket` import,** no longer used.
+19. **`Fiber.scala`, `init`:** no `ended` promise and no bracket; the scope closes with the result's
+    error after the wait the deferred completion provides.
+20. **`Fiber.scala`, `interruptAwait`,** two forms.
+21. **`IOPromiseTest.scala`, the hook pin:** runs once, on the interrupt path only, settles.
+22. **`IOPromiseTest.scala`, the taking pin:** the task's shape, refused through `preInterrupt`.
+23. **`FiberTest.scala`, "deferred completion",** five cases.
+
+Evidence at the tip: `kyo-coreJVM/test` 42 suites green, `FiberTest` 117 including "cooperative
+interruption: onInterrupt fires after carrier is interrupted", which timed out until edit 11: the
+blocking monitor's `InterruptedException` used to lose the race to the interrupt's completion and won
+it once the completion was deferred. `kyo-coreJS/test` and the CI matrix on this tip follow.

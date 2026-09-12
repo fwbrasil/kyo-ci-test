@@ -31,6 +31,13 @@ touches. History, not a date.
 `reviews/`, so `sequence-2.json`, `flags-2.md` and the review's second-round section name it as the
 tree they describe. Named as the tip of the sources, not as a date.
 
+9d5c795077: the base of the third walk, the second walk's sources plus the package commits after
+them, which touch only `reviews/`. History, not a date.
+
+b9e522721b: the tip of the third walk's sources, piece O. The commits after it in the range touch
+only `reviews/`, so `sequence-3.json`, `flags-3.md` and the review's third-walk section name it as
+the tree they describe. Named as the tip of the sources, not as a date.
+
 8cdb379d4d: the tip `lenses/fork1-apply-pair.md` read, a static analysis of removing
 `Arrow.apply(v: A)`, named as the tree it describes. The one kernel change since is piece H, the
 unnest on the release walk that this analysis found and recommended; the sources it inventories are
