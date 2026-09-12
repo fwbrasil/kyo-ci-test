@@ -23,6 +23,14 @@ either. It is named because edit 22 changes `kyo.Span.updated` in `kyo-data`, an
 the index check that method now makes on the JVM, base against tip. It is evidence about that edit
 and nothing in the kernel.
 
+7fedf93c73: the base of the second walk, the state the first walk left in the primary tree; the two
+kyo-bench edits the reviewer dropped live are not in that tree and touch nothing the second walk
+touches. History, not a date.
+
+98bdc584b7: the tip of the second walk's sources. The commits after it in the range touch only
+`reviews/`, so `sequence-2.json`, `flags-2.md` and the review's second-round section name it as the
+tree they describe. Named as the tip of the sources, not as a date.
+
 8cdb379d4d: the tip `lenses/fork1-apply-pair.md` read, a static analysis of removing
 `Arrow.apply(v: A)`, named as the tree it describes. The one kernel change since is piece H, the
 unnest on the release walk that this analysis found and recommended; the sources it inventories are
