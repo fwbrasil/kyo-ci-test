@@ -21,7 +21,7 @@ captured inside a re-entered region across that clause's resumptions, released w
 region ends, once the last of them has run; the scaladoc on `reentered` says so and a `BracketTest`
 case pins it.
 
-Also not flagged: the `inline` on `attachReentryToPending` and its re-entered handler. The two fused walks are
+Also not flagged: the `inline` on `attachReentryToPending` and its state-carrying form. The two fused walks are
 themselves `inline` templates expanded at every `handleLoop` and `handleLoopState` site, and their
 size is a design property; a non-inline helper on the tail would add a call inside every expansion.
 `inline` keeps the expansion the branch the walks carried before. Number: the fix leg against the

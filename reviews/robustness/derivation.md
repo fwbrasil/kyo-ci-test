@@ -5,7 +5,7 @@ Base `cdefdc9e60`. Branch `robustness`. The list this implements is `.dev/kernel
 
 Two bugs in one day shared a shape the kernel suite never built: a clause that suspends, an effect
 answered by a region other than the clause's own, at-top versus not-at-top. Each was invisible to
-1513 kernel tests and surfaced in a consumer. This change makes that shape a first-class thing the
+1510 kernel tests and surfaced in a consumer. This change makes that shape a first-class thing the
 suite builds, and makes the one rule those bugs circled live in one place.
 
 ## The four pieces
@@ -15,12 +15,16 @@ suite builds, and makes the one rule those bugs circled live in one place.
 `kyo-kernel/CONTRIBUTING.md`, checklist item 13, gains two sentences. The first: a change to the
 evaluator, the handlers or the representation is not verified by the kernel suite alone;
 `kyo-preludeJVM/test` and `kyo-coreJVM/test` run before it is called green, with `Batch.run` as the
-example of a consumer composing the combinators in a shape the kernel suite does not. The second: a
-change to a public signature also runs `kyo-kernelJVM/Jmh/compile`, because the benchmark sources
-are compiled by neither `test` nor CI's test action. The second sentence was added when the first
-was applied: `KernelBench` no longer compiled against `ContextEffect.handle`'s two parameter groups,
-a signature change from before the base that nothing had noticed, which is piece E below. The kernel
-skill would be the other home, but it is not tracked in this tree.
+example of a consumer composing the combinators in a shape the kernel suite does not. The second:
+the benchmark sources, which no test task compiles, are compiled by CI's compile-test phase, and a
+change to a public signature runs `kyo-kernelJVM/Jmh/compile` before it is pushed. The second
+sentence was added when the first was applied: `KernelBench` no longer compiled against
+`ContextEffect.handle`'s two parameter groups, a signature change from before the base that nothing
+had noticed, which is piece E below. The CI step is `project/TestKyo.scala`: in the compile-test
+phase, `testKyo` adds `Jmh/compile` for every selected module whose project carries the `jmh`
+configuration, found from the build rather than listed, which the rehearsal lens asked for in place
+of a sentence to remember (R3). The kernel skill would be the other home for the rule, but it is
+not tracked in this tree.
 
 ### B. The shape matrix, with the at-top law as its oracle (test only)
 
