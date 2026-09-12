@@ -41,9 +41,13 @@ the tree they describe. Named as the tip of the sources, not as a date.
 b0a9d4a666: the base of the fourth walk, the third walk's sources plus the package commit after them.
 History, not a date.
 
-a5b7d2a512: the tip of the fourth walk's sources, pieces P and Q. The commits after it in the range
-touch only `reviews/`, so `sequence-4.json`, `flags-4.md` and the review's fourth-walk section name it
-as the tree they describe. Named as the tip of the sources, not as a date.
+a5b7d2a512: pieces P and Q as first committed, before the scheduler pin's repair joined the fourth
+walk. History, not a date.
+
+c3eb9caa24: the tip of the fourth walk's sources, pieces P and Q and the `SchedulerTest` repair. The
+commits after it in the range touch only `reviews/`, so `sequence-4.json`, `flags-4.md` and the
+review's fourth-walk section name it as the tree they describe. Named as the tip of the sources, not
+as a date.
 
 8cdb379d4d: the tip `lenses/fork1-apply-pair.md` read, a static analysis of removing
 `Arrow.apply(v: A)`, named as the tree it describes. The one kernel change since is piece H, the

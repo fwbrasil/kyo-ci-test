@@ -624,12 +624,13 @@ blocking monitor's `InterruptedException` used to lose the race to the interrupt
 it once the completion was deferred. `kyo-coreJS/test` 37 suites green; the downstream JVM suites,
 prelude, combinators, STM and actor, 39 suites green.
 
-## Fourth walk: an answer that already arrived is delivered, and the pool's permit, 12 edits
+## Fourth walk: an answer that already arrived is delivered, the pool's permit, and a scheduler pin, 13 edits
 
-Pieces P and Q of the derivation. The walk starts from the third walk's end, `b0a9d4a666`, and ends at
-`a5b7d2a512`; `sequence-4.json` holds the 12 edits below, verified by `sequence.py --verify b0a9d4a666
-a5b7d2a512 reviews/robustness/sequence-4.json`, and `flags-4.md` adjudicates its 22 flags, none
-`REMOVE`. The walk first, then its pins, then the task's reporter, then the pool.
+Pieces P and Q of the derivation, and the repair of the first walk's `SchedulerTest` edit. The walk
+starts from the third walk's end, `b0a9d4a666`, and ends at `c3eb9caa24`; `sequence-4.json` holds the
+13 edits below, verified by `sequence.py --verify b0a9d4a666 c3eb9caa24 reviews/robustness/sequence-4.json`,
+and `flags-4.md` adjudicates its 22 flags, none `REMOVE`. The walk first, then its pins, then the
+task's reporter, then the pool, then the scheduler pin.
 
 1. **`Eval.scala`, the two public `release`:** the unbudgeted one's reporter answers nothing; the
    reporting one's reporter may answer, and the documentation says what the walk does with an answer.
@@ -655,6 +656,11 @@ a5b7d2a512 reviews/robustness/sequence-4.json`, and `flags-4.md` adjudicates its
 12. **`SqlConnectionPool.scala`, `withSlot`:** the take under `Scope.acquireRelease`, so the permit's
     return is registered in the step the take delivers it; `Scope.run` moves outward and closes where it
     did, at the body's end; the timeout logging and the body's failure routing are as they were.
+13. **`SchedulerTest.scala`, the patience:** named `patienceConfig`, so it shadows the implicit that
+    `import Eventually.*` brings in rather than standing beside it. The first walk's edit 28 added it as
+    `patience`, ambiguous at every `eventually`; the matrix on `98bdc584b7` failed to compile
+    kyo-scheduler's JVM tests on linux-x64 and windows-x64, and no local run had compiled that module.
+    This edit is owed to the primary tree, where the first walk left the ambiguous form.
 
 Evidence at the tip: `kyo-kernelJVM/test` 1848 green; `ScopeInterruptTest`, `ScopeTest`, `FiberTest`,
 `AsyncTest` green; `kyo-sql-postgresJVM/test` 82 suites and `kyo-sql-mysqlJVM/test` 57 suites green

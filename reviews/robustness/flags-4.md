@@ -1,6 +1,7 @@
-# Flags on the fourth walk's diff, `b0a9d4a666..a5b7d2a512`
+# Flags on the fourth walk's diff, `b0a9d4a666..c3eb9caa24`
 
-Every construct of concern `flags.sh` found on the added lines of pieces P and Q, each with a verdict
+Every construct of concern `flags.sh` found on the added lines of pieces P and Q and the scheduler pin's
+repair (which adds none), each with a verdict
 from the closed set: a cast ladder category, a measurement, a `moved` provenance, `test` for a fixture
 or local state in a test, or `REMOVE`. Sites are the tip's line numbers.
 
