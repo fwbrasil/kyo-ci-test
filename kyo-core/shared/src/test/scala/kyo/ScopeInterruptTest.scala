@@ -122,6 +122,8 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             _ <- child.onComplete(_ => parent.interrupt.unit)
             _ <- child.complete(Result.succeed(42))
             _ <- parent.getResult
+            // The scope's drain is detached, so the count is polled rather than read once.
+            _ <- assertEventually(released.get.map(_ == 1))
             r <- released.get
         yield assert(r == 1, s"the acquired value was released $r times")
         end for
