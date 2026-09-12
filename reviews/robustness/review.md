@@ -209,12 +209,15 @@ suspects; the rows the tails sit in, `handleLoopAnswersInPlace` +0.4%, `handleLo
 is the change's number (`bench/compare-base-vs-AC.md`): zero suspects. Rows outside the band in
 either comparison, all inside their combined errors at `-f 1`, and their `-f 3` confirmation:
 
-| row | base against tip, -f 1 | fix against tip, -f 1 | -f 3 |
-|---|---|---|---|
-| `pureIterationViaArrow` | -6.8% | -6.3% | pending |
-| `foreignCrossingsAnsweredInPlace` | -6.2% | inside | pending |
-| `continuationBodiesFuse` | -5.9% | -5.9% | pending |
-| `bracketEnsuringOnly` | +12.0% | inside | pending |
+| row | base against tip, -f 1 | fix against tip, -f 1 | -f 3, base against tip | -f 3, fix against tip |
+|---|---|---|---|---|
+| `pureIterationViaArrow` | -6.8% | -6.3% | +6.9%, errors of 11 and 12 percent, noise | +3.8% |
+| `foreignCrossingsAnsweredInPlace` | -6.2% | inside | +0.5% | -0.9% |
+| `continuationBodiesFuse` | -5.9% | -5.9% | -1.8% | +4.4% |
+| `bracketEnsuringOnly` | +12.0% | inside | -2.6% | +1.0% |
+
+`-f 3`, three legs back to back on those four rows: `bench/compare-base-vs-AC-f3.md` and
+`bench/compare-A-vs-AC-f3.md`, zero suspects in both.
 
 **The multi-shot rows, and the regression they show.** Two rows added by edit 17 enter a
 `handleContRepeated` region, which no row did before. Base against tip, `-f 3 -prof gc`,
