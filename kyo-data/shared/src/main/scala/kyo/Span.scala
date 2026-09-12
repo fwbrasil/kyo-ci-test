@@ -978,7 +978,9 @@ object Span:
           */
         inline def updated(idx: Int, x: A)(using ClassTag[A]): Span[A] =
             val size = self.length
-            val r    = new Array[A](size)
+            if idx < 0 || idx >= size then
+                throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${size - 1})")
+            val r = new Array[A](size)
             System.arraycopy(self, 0, r, 0, size)
             r(idx) = x
             r
