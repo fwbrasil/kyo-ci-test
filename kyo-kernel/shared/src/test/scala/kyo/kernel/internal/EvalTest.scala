@@ -2,6 +2,7 @@ package kyo.kernel.internal
 
 import kyo.Arrow
 import kyo.Const
+import kyo.Frame
 import kyo.Kyo
 import kyo.Loop
 import kyo.Maybe
@@ -28,6 +29,23 @@ class EvalTest extends AnyFreeSpec:
 
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
+
+    /** An answer that carries a computation as data, as a fiber's result carries the isolate's restore. */
+    final case class Got(value: Int < Any)
+    sealed trait Fetch extends ArrowEffect[Const[Unit], Const[Got]]
+    def fetch: Got < Fetch = ArrowEffect.suspend[Any](Tag[Fetch], ())
+
+    /** A computation only the evaluator can produce: it reads the stack, as an isolate's restore does. */
+    def reading(value: Int)(using _frame: Frame): Int < Any =
+        new Pending.SnapshotWith[Int, Any]:
+            override def frame = _frame
+            def cont           = this
+            override def apply[C, S2](cur: Stack < S2, cont2: Arrow[Int, C, S2]) =
+                cur match
+                    case p: Pending[Stack, S2] @unchecked => Effect.defer(p, this, cont2)
+                    case _ =>
+                        val v: Int < Any = value
+                        cont2(v, Arrow.id)
 
     def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
         ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
@@ -546,6 +564,65 @@ class EvalTest extends AnyFreeSpec:
     end requestStop
 
     "partial evaluation and parking" - {
+        // An operation issued under a region answers back through the region its clause sits in, and the crossing
+        // parks the answer as a deferral in front of the operation's own continuation. The step fused with the
+        // answer is that continuation's first arrow, and it runs as the answer arrives: a stop landing as the
+        // answer is delivered parks after it, not in front of it, or a release the step registers is never
+        // registered and what the answer produced is released by nobody.
+        "a stop pending as a crossing answer arrives parks after the step fused with it" in {
+            var registered = Maybe.empty[Int]
+            var later      = false
+            val body: Int < Ask =
+                Bracket(Effect.defer(1)) { _ =>
+                    ask.ensureMap { a =>
+                        registered = Maybe(a)
+                        Effect.defer {
+                            later = true
+                            a + 1
+                        }
+                    }
+                }((_, _) => ())
+            val program: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], body)(
+                    [C] =>
+                        (_, cont) =>
+                            requestStop()
+                            cont(21)
+                    ,
+                    a => a
+                )
+            val parked = Eval.partial(program)
+            assert(parked.isInstanceOf[Park[?, ?]])
+            assert(registered == Maybe(21), s"the step fused with the answer did not run, it saw $registered")
+            assert(!later, "the deferral after the fused step ran under the stop")
+            assert(parked.eval == 22)
+        }
+
+        // A join's answer is data carrying a computation: the promise's result holds the isolate's restore, which
+        // reads the stack and can only be produced by the evaluator. The fold that takes the computation out and
+        // the step fused with the value it produces are one arrival: a stop pending then parks after the value is
+        // produced and registered, not in front of the computation that produces it.
+        "an answer carrying a computation is produced and delivered before a pending stop parks" in {
+            var registered = Maybe.empty[Int]
+            val body: Int < Fetch =
+                fetch.ensureMap(_.value).ensureMap { a =>
+                    registered = Maybe(a)
+                    a + 1
+                }
+            val program: Int < Any =
+                ArrowEffect.handleCont(Tag[Fetch], body)(
+                    [C] =>
+                        (_, cont) =>
+                            requestStop()
+                            cont(Got(reading(21)))
+                    ,
+                    a => a
+                )
+            val parked = Eval.partial(program)
+            assert(registered == Maybe(21), s"the step fused with the value did not run, it saw $registered")
+            assert(parked.eval == 22)
+        }
+
         "parks on a pending stop and the parked value resumes to the same answer" in {
             var afterRan = false
             val body: Int < Ask =
@@ -1761,6 +1838,18 @@ class EvalTest extends AnyFreeSpec:
             Eval.release(v, walked, Tag[Ask])([C] => _ => Maybe(21))
             assert(released == Maybe(21))
             assert(!later, "the walk ran past the delivery")
+        }
+
+        // The answer a fiber's join holds is data carrying a computation, the isolate's restore, which reads the
+        // stack: the fold takes it out, and the value it produces is what the release waits on. Only the evaluator
+        // can produce it, so a delivery that applies the continuation outside the evaluator stops in front of it,
+        // and the release waiting on the value is never found.
+        "delivers an answer carrying a computation to the release waiting on the value it produces" in {
+            var released = Maybe.empty[Int]
+            val v: Int < Fetch =
+                fetch.ensureMap(_.value).ensureMap(a => Bracket.ensuring(_ => released = Maybe(a))(Effect.defer(a)))
+            Eval.release(v, walked, Tag[Fetch])([C] => _ => Maybe(Got(reading(21))))
+            assert(released == Maybe(21), s"the release saw $released")
         }
     }
 

@@ -1313,6 +1313,24 @@ class FiberTest extends kyo.test.Test[Any]:
             yield assert(result.panic.exists(_.isInstanceOf[Interrupted]))
         }
 
+        // The value a body ends with can be a resource: a permit its last step took, a handle it opened. Only the
+        // promise's consumer knows how to release it, so an ending with a value completes with the value whatever
+        // landed on the slice; dropping it for the interrupt drops what it carries.
+        "a body ending with its value in the slice its interrupt landed on completes with the value" in {
+            for
+                handoff <- Promise.init[Fiber[Int, Any], Any]
+                fiber <- Fiber.initUnscoped {
+                    handoff.get.map { self =>
+                        import AllowUnsafe.embrace.danger
+                        discard(self.unsafe.interrupt())
+                        42
+                    }
+                }
+                _       <- handoff.complete(Result.succeed(fiber))
+                outcome <- Abort.run[Nothing](fiber.get)
+            yield assert(outcome == Result.succeed(42), s"the value was dropped for $outcome")
+        }
+
         "a scoped fiber's own scope closes after the fiber released" in {
             for
                 order   <- AtomicRef.init(List.empty[String])

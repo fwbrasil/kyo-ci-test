@@ -129,6 +129,59 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         end for
     }
 
+    // The same, with the acquire joining a fiber rather than a promise. A fiber's result carries the isolate's
+    // restore, a computation that reads the stack and can only be produced by the evaluator: the delivery has to
+    // produce it under the fiber's regions before the release waiting on the value can be registered.
+    "a resource a joined fiber produced is released when the acquiring fiber is abandoned before it resumed" in {
+        for
+            released <- AtomicInt.init(0)
+            child    <- Promise.init[Int, Any]
+            inner    <- Fiber.initUnscoped(child.get)
+            parent <- Fiber.initUnscoped {
+                Scope.run {
+                    Scope.acquireRelease(inner.get)(_ => released.incrementAndGet.unit).andThen(Async.never)
+                }
+            }
+            _ <- assertEventually(inner.waiters.map(_ >= 1))
+            _ <- inner.onComplete(_ => parent.interrupt.unit)
+            _ <- child.complete(Result.succeed(42))
+            _ <- parent.getResult
+            _ <- assertEventually(released.get.map(_ == 1))
+            r <- released.get
+        yield assert(r == 1, s"the acquired value was released $r times")
+        end for
+    }
+
+    // A resource produced on a child fiber after its owner was abandoned. The owner's scope has closed and the
+    // registration it would have made never ran; the child then takes the permit in the step fused with its own
+    // wakeup and ends with it, and the value reaches nobody. The permit has to come back all the same.
+    "a permit a child takes after its owner was abandoned is returned" in {
+        for
+            permits <- Channel.init[Unit](1)
+            _       <- permits.put(())
+            gate    <- Promise.init[Unit, Any]
+            inner <- Fiber.initUnscoped {
+                gate.get.ensureMap { _ =>
+                    // Unsafe: the take has to happen in the step the wakeup delivers, not behind a deferral of its own.
+                    import AllowUnsafe.embrace.danger
+                    discard(permits.unsafe.poll())
+                }
+            }
+            parent <- Fiber.initUnscoped {
+                Scope.run {
+                    Scope.acquireRelease(inner.get)(_ => permits.put(())).andThen(Async.never)
+                }
+            }
+            _ <- assertEventually(inner.waiters.map(_ >= 1))
+            // The owner completes once its scope has closed, so the child's value arrives when nobody owns it.
+            _ <- parent.onComplete(_ => gate.completeUnitDiscard)
+            _ <- parent.interrupt
+            _ <- parent.getResult
+            _ <- assertEventually(Abort.run[Closed](permits.size).map(_.exists(_ == 1)))
+        yield succeed
+        end for
+    }
+
     "Scope.run waits for a scoped fiber to release the bracket it is inside" in {
         // The child must hold the bracket when the scope starts exiting, or the release happens for the wrong
         // reason. It parks rather than spinning: the region is installed before the body runs.
