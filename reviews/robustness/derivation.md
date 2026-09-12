@@ -10,8 +10,9 @@ suite builds, and makes the one rule those bugs circled live in one place.
 
 ## The pieces
 
-A to D are the list's items; E and F were added as the work found them, E under this heading and F
-under "What A costs", beside the measurement that motivated it.
+A to D are the list's items; E, F, G and H were added as the work found them: E under this heading,
+F under "What A costs" beside the measurement that motivated it, G (the pipeline's tooling) and H
+(a defect found by reading) under this heading.
 
 ### A. Downstream suites in the verification rule (CONTRIBUTING, not kernel source)
 
@@ -35,7 +36,9 @@ JMH projects (`Jmh / classDirectory := crossTarget.value / "jmh-classes"`); veri
 build, `Jmh/compile`, a one-fork `Jmh/run` and `doc` in sequence. One doc link in
 `EffectTrace`'s scaladoc, `[[splice]]`, resolved to nothing because `splice` lives on the companion;
 it now reads `[[EffectTrace.splice]]`, the only warning that build emitted for the kernel. The
-kernel skill would be the other home for the rule, but it is not tracked in this tree.
+kernel skill's `SKILL.md` names three files beside it that did not exist, `flags.sh`,
+`package-check.sh` and `rulings.md`; this change writes them (piece G) as the pipeline's tooling,
+and the rule itself stays in the module guide, where a contributor reads it.
 
 ### B. The shape matrix, with the at-top law as its oracle (test only)
 
@@ -160,6 +163,19 @@ the comment above it says why. Surface: `Eval.release`'s `ensuring` and `EvalTes
 evaluation path. The `[Any]` on the unnest is the walk's erased currency, `Arrow[Any, Any, Any]`,
 the spelling `answersLoop`'s settled arm already uses.
 
+### G. The kernel skill's tooling (not kernel source)
+
+`kyo-kernel/.claude/skills/kernel/SKILL.md` describes a pipeline whose three companion files did not
+exist in this tree: `flags.sh`, which emits one row per construct of concern on a diff's added lines
+(casts, `Any` carriers, `@unchecked`, allocations, terminology), the skeleton `flags.md` adjudicates;
+`package-check.sh`, which re-derives every mechanical claim a package makes (tip, commit count,
+surface, clean tree, the flag count against the table, the walk reproducing the tip, each benchmark
+class named referencing the package under review) as OK, CHECK or STALE lines; and `rulings.md`, the
+reviewer's objections verbatim and dated, the rehearsal lens's rubric, carrying the 2026-09-12 entry
+from this change's status report. This change writes the three, whole, as new files. Surface: those
+three files and nothing in `SKILL.md`. No equation: they are tooling, and the package's own checks
+(`package-check.sh` over this package, the flags table) are their first run.
+
 ## Also on the branch, outside the kernel
 
 `kyo-data/shared/src/main/scala/kyo/Span.scala`, `Span.updated`: an explicit index check raising the
@@ -271,7 +287,11 @@ to the outer region, whose `recover` is the one in effect, as before; a case in 
 pins that a throw after a second resumption reaches the outer `recover`.
 
 Cost: one arrow per suspension such a handler answers and one region per resumption, nowhere else.
-`Eval` and `ContHandler` are unchanged, so the single-shot path pays nothing, and
+`Eval` and `ContHandler` are unchanged by the fix (piece H changes one line of `Eval.release`, on
+no evaluation path), so the single-shot path pays nothing; the scaladoc of `handleContRepeated`
+gains the paragraph that states this rule, each application re-entering the region and a bracket
+acquired inside one resumption released where that resumption's region ends, which the recovering
+overload's scaladoc inherits by reference; and
 `handleFirstRepeated` is untouched by construction rather than by a condition: a holding handler
 runs its clause at `done`, after the region has exited, hands the continuation out, and its holder
 re-establishes the region before applying it, as `Choice.runStream` does per iteration. Two drafts
