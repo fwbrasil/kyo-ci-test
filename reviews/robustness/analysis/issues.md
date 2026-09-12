@@ -126,6 +126,14 @@ The exception path has its own reason for the guard: a blocked carrier's `IOProm
 interruption: onInterrupt fires after carrier is interrupted" needs the interrupt, not that
 exception, to be the result.
 
+### The same family, in CI
+
+CI run 34719693185 on f7cbfde9eb fails on both linux JVM legs (x64 and arm64) in
+`kyo.AeronTransportTest`, leaf "an interrupt on a completed add does not free a token the transport
+has already taken", 31 green beside it. An interrupt lands on a join whose promise already completed,
+and the token is in the value: Issue 1's delivery and Issue 2's ownership of the ending, seen from a
+consumer. Not yet reproduced locally.
+
 ## Issue 3: a resource acquired on a child fiber and registered by the parent
 
 `takeSlot` acquires the permit inside `Async.timeoutWithError`'s child and `withSlot` registers its
