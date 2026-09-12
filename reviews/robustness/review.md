@@ -124,10 +124,12 @@ One sentence per edit, the sentence to say when applying it.
 15. `KernelBench.scala`: four `ContextEffect.handle(Tag[X])(...)` calls become
     `ContextEffect.handle(Tag[X], ...)`, the two-group signature every context handler has since
     `cdefdc9e60`; the benchmark sources had not been compiled since, which item 13 now prevents.
-16. `KernelBench.scala`: two rows enter a multi-shot region, `repeatedClausesPayReentry` (the
-    `suspensionBaseline` program under `handleContRepeated`, one region, ten thousand operations) and
-    `repeatedRegionsPayEntry` (a region per operation), the rows that measure the twin built per
-    region and the arrow built per operation, since no row entered such a region before.
+16. `KernelBench.scala`: three rows enter a multi-shot region, `repeatedClausesPayReentry` (the
+    `suspensionBaseline` program under `handleContRepeated`, one region, ten thousand operations),
+    `repeatedRegionsPayEntry` (a region per operation) and `repeatedRegionsPayEntryRecovering` (the
+    same through the recovering overload, whose handler and twin are their own classes), the rows
+    that measure the twins built per region and the arrow built per operation, since no row entered
+    such a region before.
 
 **F. The consumer**
 
@@ -165,15 +167,15 @@ each with a verdict that is a category from the cast ladder, a measurement, a `m
 | id | site | added line | class | verdict |
 |----|------|------------|-------|---------|
 | F1 | ArrowEffect.scala:213 | `new Handler.ContHandler[I, O, E, A, A, S & S2]:` | allocation | measured: the `resumed` twin, built once per region entry. `repeatedRegionsPayEntry`, base against tip, `-f 3 -prof gc`: 16 bytes per region, 4.7 ns per region, +8.8% on a row that does nothing but enter and leave such regions (`bench/compare-rows-base-vs-AC.md`) |
-| F2 | ArrowEffect.scala:274 | `new Handler.ContHandler[I, O, E, A, A, S & S2]:` | allocation | measured: as F1, the same object for the recovering overload |
+| F2 | ArrowEffect.scala:274 | `new Handler.ContHandler[I, O, E, A, A, S & S2]:` | allocation | measurement pending: the recovering overload's twin, carried by `repeatedRegionsPayEntryRecovering`, base against tip, `-f 3 -prof gc`, in the tip's final benchmark session |
 | F3 | Handler.scala:106 | `new Arrow.Step[O[V], A, E & S]:` | allocation | measured, and the number is a regression on a row no consumer has: one arrow per operation answered by a clause that resumes inside its region, and one region node per application. `repeatedClausesPayReentry`, base against tip, `-f 3 -prof gc`: 64 bytes and 61 ns per operation, +615% (`bench/compare-rows-base-vs-AC.md`). Every other row is inside drift. The mechanism, the consumer's numbers and the decision are in the benchmark section and open ruling 5 |
 | F4 | Handler.scala:110 | `case p: Pending[O[V], S3] @unchecked => Effect.defer(p, this, cont2)` | cast | erasure-forced: a typed pattern binding at the arm's type, the runtime test being `Pending` alone; the same arm as `Arrow.apply`'s and `Suspend.crossing`'s |
 | F5 | Handler.scala:387 | `else outcome.asInstanceOf[Outcome[A < (E & S), B < S] < S]` | cast | moved: the pass-through cast `LoopHandler.answers` and `answersLoop` each carried at their tail, written once. Representation assertion: the two outcome types differ only in the `Continue` payload, and a settled outcome reaching the tail is not a `Continue` |
 | F6 | Handler.scala:414 | `else outcome.asInstanceOf[Outcome2[State, A < (E & S), B < S] < S]` | cast | moved: as F5, for the state-carrying outcome |
 | F7 | Handler.scala:479 | `result = attachReentryUnlessSettled[...](k.asInstanceOf[Arrow[O[C], A, E & S]], o)` | cast | moved: the same `k.asInstanceOf` on the same site at the base; erasure-forced, the fused walk rebinding `k` per operation |
 | F8 | Handler.scala:557 | `result = attachReentryUnlessSettled2[...](k.asInstanceOf[Arrow[O[C], A, E & S]], o2)` | cast | moved: as F7 |
-| H1 | Eval.scala, cont arm | `val continuation = if handler.repeated && !handler.escaping then handler.reentering(raw) else raw` | hot-path cost | measured, inside drift: `repeated` is a virtual `Boolean` on the arm every `handleCont` answer takes, `escaping` a second read only when `repeated` holds; no row outside the 5% band survives `-f 3`, base against tip over the whole class; the numbers are in the benchmark section |
-| H2 | Handler.scala:93 | `def resumed: ContHandler[I, O, E, A, A, S] = bug(...)` | claim | justified by construction, with the reach stated: only `reentering` calls `resumed`, only `Eval`'s cont arm calls `reentering`, under `repeated && !escaping`; five sites override `repeated` at the tip, the two `handleContRepeated` handlers and their twins, which override `resumed`, and `handleFirstRepeated`, which also overrides `escaping`, so the arm never asks it |
+| H1 | Eval.scala, cont arm | `val continuation = if handler.repeated && !handler.escaping then handler.reentering(raw) else raw` | hot-path cost | measurement pending for the line as written, rows named: every `KernelBench` row, base against tip, `-f 1`, then `-f 3` outside the band, the tip's final session; the arm with the `repeated` read alone is measured inside drift over the whole class, three legs in one session, and the benchmark section carries those numbers |
+| H2 | Handler.scala:94 | `def resumed: ContHandler[I, O, E, A, A, S] = bug(...)` | claim | evidence-backed, the evidence being the reach enumerated at the tip: only `reentering` calls `resumed`, only `Eval`'s cont arm calls `reentering`, under `repeated && !escaping`; five sites override `repeated` at the tip, the two `handleContRepeated` handlers and their twins, which override `resumed`, and `handleFirstRepeated`, which also overrides `escaping`, so the arm never asks it |
 
 ## Evidence
 
@@ -209,8 +211,11 @@ the fix alone, same session, back to back, `-f 1`, all 49 rows: `bench/compare-b
 `-f 3` on those three, both legs back to back: `bench/compare-base-vs-A-f3.md`, zero suspects.
 
 Three legs in one session, back to back, `-f 1`, 49 rows each: the base (`dcadee780d`, the base
-plus edit 15 so the class compiles), the fix alone (A, edits 3 to 8), and the tip (edits 9 to 14
-added). The fix against the tip attributes C alone, one variable (`bench/compare-A-vs-AC.md`): zero
+plus edit 15 so the class compiles), the fix alone (A, edits 3 to 8 with edit 7's arm reading
+`repeated` only), and that fix with C (edits 9 to 14 added, the arm the same). The `escaping` read
+in edit 7 came after this session, from the Choice measurement below, and the whole class runs
+again on the tip as it stands; those numbers close H1. The fix against the tip attributes C alone,
+one variable (`bench/compare-A-vs-AC.md`): zero
 suspects; the rows the tails sit in, `handleLoopAnswersInPlace` +0.4%, `handleLoopFusesContinuation`
 +0.0%, `statefulAnswersPaySuccessor` -0.9%, and every fusion row within 2%. The base against the tip
 is the change's number (`bench/compare-base-vs-AC.md`): zero suspects. Rows outside the band in
