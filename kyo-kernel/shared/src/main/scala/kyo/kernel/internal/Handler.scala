@@ -4,6 +4,7 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Tag
+import kyo.bug
 import kyo.discard
 import kyo.kernel.<
 import kyo.kernel.Arrow
@@ -85,6 +86,31 @@ end Handler
     abstract class ContHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
 
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
+
+        /** The handler a repeated continuation re-enters through: this handler with `done` as identity, so a re-entered region yields the
+          * body's value and `done` still runs once, at the outer region's end. Only a handler whose clause resumes inside the region
+          * defines one; a holding handler hands its continuation out, and its holder re-establishes the region, so it is never asked.
+          */
+        def resumed: ContHandler[I, O, E, A, A, S] = bug(s"resumed on a handler that does not repeat: $this")
+
+        /** Wraps the continuation for a clause that resumes it more than once, so that each application re-enters the region.
+          *
+          * Entering a region stores the loop's registers as that region's continuation, which keeps the clause's own pending work out of what
+          * a later occurrence captures. Without that, the continuation captured at a later occurrence carries the enclosing clause's next
+          * resumption, and every inner resumption re-triggers it, without bound. A computation handed to the wrapped continuation runs at
+          * the clause's level first, as it does for a crossing; only the settled answer re-enters.
+          */
+        // `V` rather than `X` for the operation's type: `Arrow` has a type member `X`, and inside the Step the two would collide.
+        private[kyo] def reentering[V](k: Arrow[O[V], A, E & S]): Arrow[O[V], A, E & S] =
+            val twin = resumed
+            new Arrow.Step[O[V], A, E & S]:
+                def frame = Frame.internal
+                override def apply[D, S3](v: O[V] < S3, cont2: Arrow[A, D, S3]) =
+                    v match
+                        case p: Pending[O[V], S3] @unchecked => Effect.defer(p, this, cont2)
+                        case _ => cont2(Pending.handle[Unit, E, A, A, S](k(Nested.unnest[O[V]](v)), twin, ()), Arrow.id)
+            end new
+        end reentering
 
         /** Runs the clause, attaching the effect trace to anything it throws.
           *
@@ -200,7 +226,7 @@ end Handler
                             case _ =>
                                 Loop.continue(k(Nested.unnest[O[X]](ans)))
                         end match
-                    case o => attachReentryToPending[I, O, E, A, B, S, X](k, o)
+                    case o => attachReentryUnlessSettled[I, O, E, A, B, S, X](k, o)
                 end match
             catch
                 case ex: Throwable =>
@@ -271,7 +297,7 @@ end Handler
                             case _ =>
                                 Loop.continue(st, k(Nested.unnest[O[X]](ans)))
                         end match
-                    case o2 => attachReentryToPending2[State, I, O, E, A, B, S, X](k, o2)
+                    case o2 => attachReentryUnlessSettled2[State, I, O, E, A, B, S, X](k, o2)
                 end match
             catch
                 case ex: Throwable =>
@@ -320,44 +346,6 @@ end Handler
         private[kyo] def discharge(state: State, ex: Throwable): Unit = release(state, ex)
     end ContextHandler
 
-    /** The handler a re-entered region runs under: `outer` with `done` as identity, so the region a resumption
-      * re-enters yields the body's value and `outer`'s `done` still runs once, at the outer region's end.
-      *
-      * It repeats, as `outer` does: a continuation captured inside a re-entered region is resumed by the same clause,
-      * more than once, so what that region owes (a bracket captured in the continuation, say) must be held across
-      * every application and discharged when the re-entered region ends, which is after the last of them.
-      */
-    private[kyo] def reentered[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
-        outer: ContHandler[I, O, E, A, B, S]
-    ): ContHandler[I, O, E, A, A, S] =
-        new ContHandler[I, O, E, A, A, S]:
-            def tag                                            = outer.tag
-            def run[X](input: I[X], next: Arrow[O[X], A, E & S]) = outer.run(input, next)
-            def done(state: Unit, v: A)                        = v
-            override def repeated                              = true
-
-    /** Wraps the continuation a clause may resume more than once, so that each application re-enters the region,
-      * through [[reentered]].
-      *
-      * Entering a region stores the loop's registers as that region's continuation, which keeps the clause's own
-      * pending work out of what a later occurrence captures. Without that, the continuation captured at a later
-      * occurrence carries the enclosing clause's next resumption, and every inner resumption re-triggers it, without
-      * bound. A computation handed to the wrapped continuation runs at the clause's level first, as it does for a
-      * crossing; only the settled answer re-enters.
-      */
-    private[kyo] def reentering[I[_], O[_], E <: ArrowEffect[I, O], A, S, X0](
-        k: Arrow[O[X0], A, E & S],
-        reentered: ContHandler[I, O, E, A, A, S]
-    ): Arrow[O[X0], A, E & S] =
-        new Arrow.Step[O[X0], A, E & S]:
-            def frame = Frame.internal
-            override def apply[D, S3](v: O[X0] < S3, cont2: Arrow[A, D, S3]) =
-                v match
-                    case p: Pending[O[X0], S3] @unchecked => Effect.defer(p, this, cont2)
-                    case _ => cont2(Pending.handle[Unit, E, A, A, S](k(Nested.unnest[O[X0]](v)), reentered, ()), Arrow.id)
-        end new
-    end reentering
-
     /** Attaches a cont to an outcome whose clause has not settled yet, turning the clause's answer into the
       * region's remaining computation.
       *
@@ -391,7 +379,7 @@ end Handler
       * here carries no answer to re-enter with; passing it through is that fact, and it is what lets the settled
       * path skip building the arrow. `inline` so the fused walks expand it as the branch they carry today.
       */
-    private[kyo] inline def attachReentryToPending[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, X0](
+    private[kyo] inline def attachReentryUnlessSettled[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, X0](
         reentry: Arrow[O[X0], A, E & S],
         outcome: Outcome[O[X0] < (E & S), B < S] < S
     ): Outcome[A < (E & S), B < S] < S =
@@ -417,8 +405,8 @@ end Handler
         end new
     end attachReentry2
 
-    /** [[attachReentryToPending]] for a region that carries its state through the outcome. */
-    private[kyo] inline def attachReentryToPending2[State, I[_], O[_], E <: ArrowEffect[I, O], A, B, S, X0](
+    /** [[attachReentryUnlessSettled]] for a region that carries its state through the outcome. */
+    private[kyo] inline def attachReentryUnlessSettled2[State, I[_], O[_], E <: ArrowEffect[I, O], A, B, S, X0](
         reentry: Arrow[O[X0], A, E & S],
         outcome: Outcome2[State, O[X0] < (E & S), B < S] < S
     ): Outcome2[State, A < (E & S), B < S] < S =
@@ -488,7 +476,7 @@ end Handler
                                 end if
                         end match
                     case o =>
-                        result = attachReentryToPending[I, O, E, A, B, S, C](k.asInstanceOf[Arrow[O[C], A, E & S]], o)
+                        result = attachReentryUnlessSettled[I, O, E, A, B, S, C](k.asInstanceOf[Arrow[O[C], A, E & S]], o)
                         running = false
                 end match
             catch
@@ -566,7 +554,7 @@ end Handler
                                 end if
                         end match
                     case o2 =>
-                        result = attachReentryToPending2[State, I, O, E, A, B, S, C](k.asInstanceOf[Arrow[O[C], A, E & S]], o2)
+                        result = attachReentryUnlessSettled2[State, I, O, E, A, B, S, C](k.asInstanceOf[Arrow[O[C], A, E & S]], o2)
                         running = false
                 end match
             catch

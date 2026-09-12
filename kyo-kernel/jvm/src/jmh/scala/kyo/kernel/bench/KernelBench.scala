@@ -577,17 +577,6 @@ class KernelBench:
         run(loop(seed - 1))
     end repeatedRegionsPayEntry
 
-    /** [[repeatedRegionsPayEntry]] through the recovering overload, whose handler and twin are their own classes. */
-    @Benchmark
-    def repeatedRegionsPayEntryRecovering: Int =
-        def loop(i: Int): Int < Any =
-            if i > NarrowDepth then i
-            else
-                ArrowEffect.handleContRepeated(Tag[Ask], ask)([C] => (_, cont) => cont(1), a => a, _ => Maybe.empty)
-                    .map(a => loop(i + a))
-        run(loop(seed - 1))
-    end repeatedRegionsPayEntryRecovering
-
 end KernelBench
 
 object KernelBench:

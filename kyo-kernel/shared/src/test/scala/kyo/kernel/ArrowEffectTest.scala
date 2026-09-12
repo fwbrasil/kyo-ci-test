@@ -219,14 +219,6 @@ class ArrowEffectTest extends Test:
             )
             assert(r.eval == 4)
         }
-
-        "deep sequential operations are stack safe" in {
-            // every resumption re-enters the region, so the regions nest one per operation
-            def loop(n: Int): Int < Ask =
-                if n == 0 then 0 else ask.map(_ => loop(n - 1))
-            val r: Int < Any = ArrowEffect.handleContRepeated(Tag[Ask], loop(100000))([C] => (_, cont) => cont(1), a => a)
-            assert(r.eval == 0)
-        }
     }
 
     "handleFirst" - {

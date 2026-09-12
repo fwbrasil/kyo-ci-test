@@ -203,14 +203,19 @@ object ArrowEffect:
             case _: Pending[?, ?] =>
                 val h =
                     new Handler.ContHandler[I, O, E, A, B, S & S2]:
+                        outer =>
                         def tag = effectTag
-                        // each application of the continuation re-enters the region, so the clause's pending work between
-                        // resumptions is never in the registers a later occurrence captures
-                        val reentered = Handler.reentered(this)
                         def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
-                            Region.discharge(handle[X](input, Handler.reentering(next, reentered)))
+                            Region.discharge(handle[X](input, next))
                         def done(state: Unit, v0: A) = onDone(v0)
                         override def repeated        = true
+                        override val resumed: Handler.ContHandler[I, O, E, A, A, S & S2] =
+                            new Handler.ContHandler[I, O, E, A, A, S & S2]:
+                                def tag                                                   = effectTag
+                                def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) = outer.run(input, next)
+                                def done(state: Unit, v0: A)                              = v0
+                                override def repeated                                     = true
+                                override def resumed                                      = this
 
                 new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
                     override def frame = _frame
@@ -258,15 +263,20 @@ object ArrowEffect:
                 case _: Pending[?, ?] =>
                     val h =
                         new Handler.ContHandler[I, O, E, A, B, S & S2]:
+                            outer =>
                             def tag = effectTag
-                            // as the overload above; the re-entered region carries no recover, its output being the body's A
-                            // where recover yields the region's B, so a throw inside it unwinds to this handler's
-                            val reentered = Handler.reentered(this)
                             def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
-                                Region.discharge(handle[X](input, Handler.reentering(next, reentered)))
+                                Region.discharge(handle[X](input, next))
                             def done(state: Unit, v1: A)                     = onDone(v1)
                             override def recover(state: Unit, ex: Throwable) = onRecover(ex)
                             override def repeated                            = true
+                            override val resumed: Handler.ContHandler[I, O, E, A, A, S & S2] =
+                                new Handler.ContHandler[I, O, E, A, A, S & S2]:
+                                    def tag                                                   = effectTag
+                                    def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) = outer.run(input, next)
+                                    def done(state: Unit, v1: A)                              = v1
+                                    override def repeated                                     = true
+                                    override def resumed                                      = this
 
                     new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
                         override def frame = _frame
