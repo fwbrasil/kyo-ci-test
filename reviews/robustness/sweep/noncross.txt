@@ -1,0 +1,11 @@
+kyo-compat-plugin
+kyo-compat-tests
+kyo-doctest-plugin
+kyo-doctest-readme
+kyo-ffi-bench
+kyo-ffi-codegen
+kyo-ffi-plugin
+kyo-settings
+kyo-test-readme
+kyo-test-sbt
+kyo-test-sbt-publish
