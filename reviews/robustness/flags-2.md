@@ -64,3 +64,5 @@ test, or `REMOVE`. Sites are the tip's line numbers.
 | F56 | CallbackShapesGen.scala:349 | `f.asInstanceOf[AnyRef]` | cast | moved: the base's cast into the erased stack |
 | F57 | CallbackShapesGen.scala:349 | `new TaggedCallback(...)` | allocation | moved: the base's per-push record |
 | F58 | CallbackShapesGen.scala:361 | `var tagged: TaggedCallback = null` | carrier | justified: a local of the generated trampoline, unset until the peek inside the `try` lands and read only in the `catch` to name the callback; the reporter names `<unknown>` when it never landed; kyo-ffi generated code, not kernel code |
+| F59 | CallbackShapesGen.scala:361 | `var tagged: TaggedCallback = null` | mutability | justified: as F58, a local written once by the peek |
+| F60 | CallbackShapesGen.scala:368 | `if tagged eq null then FfiGenErrors.reportCallbackFailed("<unknown>", ...)` | carrier | justified: as F58, the branch that names a callback the peek never reached |
