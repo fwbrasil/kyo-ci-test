@@ -325,7 +325,7 @@ end Handler
       *
       * It repeats, as `outer` does: a continuation captured inside a re-entered region is resumed by the same clause,
       * more than once, so what that region owes (a bracket captured in the continuation, say) must be held across
-      * every application and discharged when the re-entered region ends, which is after the last of them.
+      * every application and discharged when the re-entered region ends, once the last of them has run.
       */
     private[kyo] def reentered[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
         outer: ContHandler[I, O, E, A, B, S]
