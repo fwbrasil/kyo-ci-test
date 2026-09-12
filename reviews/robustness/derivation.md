@@ -139,14 +139,19 @@ up as a design note with what diverged, and B stands as the robustness measure.
 JVM's array store raised the exception, Scala.js treats an out-of-bounds store as undefined behaviour,
 and on the Wasm backend it traps and kills the node process, which ended `kyo-dataWasm`'s test run.
 The `SpanTest` case that reached it is on the branch's ancestry (`c52e4bd8fa`), not on main, so the
-contract was untested off the JVM until now. The check follows `Chunk`'s shape and message.
+contract was untested off the JVM until now. The check follows `Chunk`'s shape and message. On the
+JVM the array store already checked the index, so `updated` now checks twice on that platform;
+`SpanBench.updated` in `kyo-bench`, every index in bounds, prices that check on a sixteen-element
+span, base against tip.
 
 `kyo-net/jvm-native/src/test/scala/kyo/net/internal/posix/RearmSurvivorsTest.scala`: the leaf that
 asserts no rearm under edge-triggered registration armed read before write, and the poller driver
 applies registrations in command order on its poll fiber, so the EOF read event could be dispatched
 and the driver closed by the test before the write registration was applied; the linux-arm64 JVM
 job reported the log without `registerWrite`. The leaf now arms write first, which orders the two
-registrations; nothing it pins depends on the order. kyo-net is identical to main on this branch.
+registrations, and asserts that order in the log, so the property the reorder rests on is pinned
+rather than assumed; what the leaf is there to pin, no rearm under edge-triggered registration, does
+not depend on which direction is armed first. kyo-net is identical to main on this branch.
 
 Neither is a kernel piece; they are the last two edits of the live-review walk, in their own group,
 so the range's surface is fully declared and fully applied.
@@ -260,10 +265,12 @@ signature and makes `done` run per resumption rather than once, which is a publi
 
 ### What A costs, measured, and piece F
 
-Two rows added to `KernelBench` enter a `handleContRepeated` region, which no row did before:
-`repeatedRegionsPayEntry` (a region per operation) and `repeatedClausesPayReentry`
-(`suspensionBaseline`'s program under a repeated handler, ten thousand operations each resumed
-once). Base against tip with the allocation profiler: the re-entered handler costs 16 bytes and 4.7 ns per region
+Three rows added to `KernelBench` enter a `handleContRepeated` region, which no row did before:
+`repeatedRegionsPayEntry` (a region per operation), `repeatedRegionsPayEntryRecovering` (the same
+through the recovering overload, whose handler and re-entered handler are their own classes, so the
+flags table has a number for that allocation site rather than a borrowed one) and
+`repeatedClausesPayReentry` (`suspensionBaseline`'s program under a repeated handler, ten thousand
+operations each resumed once). Base against tip with the allocation profiler: the re-entered handler costs 16 bytes and 4.7 ns per region
 entry; the re-entry costs 64 bytes and 61 ns per resumption, which makes the second row 7.2 times
 slower than the base. The mechanism is the design: every application of the continuation enters a
 region, and a region's entry and exit is what the existing rows `contextRegionsPayEntryExit` and
@@ -302,6 +309,9 @@ All is in your scope"), so this is decided here rather than parked. A is impleme
 every signature and today's `done` behaviour, confines its cost to `repeated` handlers, and every
 piece of it already existed. B is recorded above as the alternative weighed, with the one thing that
 would motivate it, `done` per resumption being the standard delimited reading, left for a later
-decision on the public surface. Three named cases in `ArrowEffectTest` pin the fix, one of them
-pinning `done` once at the outer end against per-resumption (1060, not 4060), and the matrix runs
-the shape across every configuration.
+decision on the public surface. Five cases in `ArrowEffectTest`'s `handleContRepeated` block pin the
+fix: the two-occurrence shape (60), `done` once at the outer end against per-resumption (1060, not
+4060), three occurrences (180), a throw after a second resumption reaching the outer `recover` (4),
+and a hundred thousand sequential operations, which every sibling handler's block carries and which
+matters here because a repeated region now nests a region per resumption. The matrix runs the
+shape across every configuration.

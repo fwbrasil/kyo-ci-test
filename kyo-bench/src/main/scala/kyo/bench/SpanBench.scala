@@ -3,7 +3,8 @@ package kyo.bench
 import kyo.*
 import org.openjdk.jmh.annotations.*
 
-/** `Span.updated` over a sixteen-element span: the copy, plus the index check that raises the documented exception on every platform.
+/** `Span.updated` over a sixteen-element span, every index in bounds: the copy, plus the index check the method now makes before it,
+  * so the row prices the check and never reaches the throw.
   */
 class SpanBench extends BaseBench:
 

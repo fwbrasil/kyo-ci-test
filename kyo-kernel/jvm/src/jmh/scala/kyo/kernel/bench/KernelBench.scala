@@ -577,7 +577,7 @@ class KernelBench:
         run(loop(seed - 1))
     end repeatedRegionsPayEntry
 
-    /** [[repeatedRegionsPayEntry]] through the recovering overload, whose handler and twin are their own classes. */
+    /** [[repeatedRegionsPayEntry]] through the recovering overload, whose handler and re-entered handler are their own classes. */
     @Benchmark
     def repeatedRegionsPayEntryRecovering: Int =
         def loop(i: Int): Int < Any =

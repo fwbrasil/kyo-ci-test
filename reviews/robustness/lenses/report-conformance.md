@@ -1,170 +1,200 @@
-# Lens report: kernel-conformance
+# Report: kernel-conformance, round 3
 
-PASS
+FAIL
 
-Round 2, over `cdefdc9e60..1b1373db43`. The findings below are numbered from C9: round 1 used C1 to C8
-on this lens, and reusing those ids for different content would make them unstable. Both findings are
-against the derivation's text, not against the code: every piece the derivation names is implemented as
-the composition it states, every declared item is present, nothing in the diff is undeclared, each fork is
-taken on its ruled side only, and no reference interpreter is in the tree.
+Range `cdefdc9e60..HEAD`, judged against `reviews/robustness/derivation.md` as it stands at the tip.
+
+Substitution and forks are clean. Every piece the derivation names is present, and each one composes the
+values the derivation states it composes rather than new ones. The four re-entry tails of piece C become
+the two named helpers and nothing else moves with them; the multi-shot fix is the handler-side Candidate A
+exactly as written, wrapping the continuation in `run` through `Handler.reentered` and `Handler.reentering`,
+with `Eval` and `ContHandler` untouched; the matrix of piece B derives every cell from the three laws with
+no hand-written value of `prog(n)`; pieces A, E and F are the edits their sentences describe. Every "must
+not change" member is unchanged. No fork has the losing side half-present: `Arrow.apply`'s overload pair is
+untouched (fork 1), the `PollTest` ascriptions are untouched (fork 2), no reference interpreter is in the
+diff (fork 3, piece D), Candidate B's signature change is absent (fork 4), and the abandoned first two
+drafts of the fix left no residue (`Eval.scala` is not in the range, there is no `resumed` member on
+`ContHandler`, and no `repeated`/`escaping` gate was added to the evaluator's cont arm).
+
+The verdict is FAIL on the surface axis alone. Three code additions in the range have no declaring sentence
+anywhere in the derivation, and one added assertion contradicts the derivation sentence that describes the
+edit it sits in. Nothing declared is missing.
 
 ## Findings
 
-### C9. The cont arm's equation is stated twice in one paragraph, in two forms, and the code is the second
+### C11. A third `KernelBench` row, `repeatedRegionsPayEntryRecovering`, is undeclared
 
-`kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Eval.scala:118`
+`kyo-kernel/jvm/src/jmh/scala/kyo/kernel/bench/KernelBench.scala:580-589`.
 
-The derivation states the arm as: "so that `Eval`'s cont arm is one line, `if handler.repeated then
-handler.reentering(raw) else raw`". The line reads:
+The derivation says, under "What A costs, measured, and piece F":
 
-    val continuation = if handler.repeated && !handler.escaping then handler.reentering(raw) else raw
+> "Two rows added to `KernelBench` enter a `handleContRepeated` region, which no row did before:
+> `repeatedRegionsPayEntry` (a region per operation) and `repeatedClausesPayReentry` (`suspensionBaseline`'s
+> program under a repeated handler, ten thousand operations each resumed once)."
 
-The conjunct is declared four sentences earlier in the same paragraph ("the arm re-enters when `repeated
-&& !escaping`", with `handleFirstRepeated` as the handler it excludes and a measured reason for excluding
-it), so the design is on the record and the code implements it. What is not on the record is the quoted
-one-line form, which is the earlier draft of the same line. A reviewer who reads the derivation's stated
-equation and then greps the arm sees a predicate with a second term and has to find the other sentence to
-learn it was ruled.
+Three rows were added, not two: `repeatedClausesPayReentry` at 564, `repeatedRegionsPayEntry` at 573, and
+`repeatedRegionsPayEntryRecovering` at 582, the third running the same shape through the recovering
+overload. A reviewer reading the derivation's cost section and then the benchmark class finds a measured
+row that the design never asked for and whose numbers the derivation's cost paragraph does not account for.
 
-### C10. The "Surface, exactly" list for piece C names members that do not exist
+### C12. `SpanBench.scala` is a new file with no sentence declaring it
 
-`kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Handler.scala:229`, `:300`
+`kyo-bench/src/main/scala/kyo/bench/SpanBench.scala:1-18`, added whole in the range.
 
-The derivation's surface list says: "`Handler.LoopHandler.answers`: the `case o =>` tail becomes
-`reenter(k, o)`" and "`Handler.LoopStateHandler.answers`: the `case o2 =>` tail becomes `reenter2(k,
-o2)`". The tails call `attachReentryUnlessSettled` and `attachReentryUnlessSettled2`. The rename is
-declared in the prose two paragraphs above the list, with its reason ("The name is not `reenter`, the
-working name this section first used"), and the final names appear there, so the code follows the
-derivation. The list itself was not carried forward. A reviewer walking the surface list, which is the
-part of the section that says "exactly", finds two names with no definition in the tree.
+The derivation closes its out-of-kernel section with:
 
-## The surface I enumerated
+> "Neither is a kernel piece; they are the last two edits of the live-review walk, in their own group, so
+> the range's surface is fully declared and fully applied."
 
-The diff over the brief's paths plus the two paths the dispatch added (`kyo-prelude/.../Choice.scala`,
-`kyo-bench/.../ChoiceBench.scala`) and the two declared under "Also on the branch, outside the kernel"
-(`kyo-data/.../Span.scala`, `kyo-net/.../RearmSurvivorsTest.scala`) is eleven files. Line numbers are at
-the tip.
+The Span group is declared as one edit, the index check in `Span.updated`. A second file joins the range
+for it, a benchmark class, and the derivation names no benchmark for the Span piece anywhere; the string
+`SpanBench` does not occur in it. A reviewer would also read the new class's own scaladoc, "the index check
+that raises the documented exception on every platform", against its body, which walks `i` over `0` to `15`
+on a sixteen-element span and so never reaches the throw the sentence points at.
 
-### Declared and present
+### C13. The `handleContRepeated` block in `ArrowEffectTest` has five cases where four are declared
 
-**A, the verification rule.** `kyo-kernel/CONTRIBUTING.md:441`, checklist item 13. Two sentences added and
-nothing else on the line: the first requires `kyo-preludeJVM/test` and `kyo-coreJVM/test` for a change to
-the evaluator, the handlers or the representation, with `Batch.run` as the example consumer; the second
-requires `kyo-kernelJVM/Jmh/compile` for a public signature change, with the reason that neither `test`
-nor CI's test action compiles the benchmark sources. Both sentences are the ones the derivation declares,
-in that order.
+`kyo-kernel/shared/src/test/scala/kyo/kernel/ArrowEffectTest.scala:177-230`, the case at 223.
 
-**B, the shape matrix.** New file `kyo-kernel/shared/src/test/scala/kyo/kernel/internal/EvalShapeTest.scala`,
-231 lines, prefix `Eval` for the source beside it. Members: the effect under test `Ask` and `ask`; the
-outside-answered `Say` and `say`; the two interloper tags `Cfg` and `Idle`; `record` (the
-`handleLoopState` log that counts clause runs); `prog(n)` (n consecutive occurrences); `cfgAbove` (a
-`ContextEffect.handleInheritable` binding never read); `idleAbove` (a `handleCont` region never
-performed); `innerAbove` (an inner handler for the same tag, answering 1000); the three laws `law`,
-`lawState` and `runs`; the `Scenario` record and the `counter` done function; `scenarios`, ten entries;
-and the loop that runs each scenario for n in 0, 1, 2, 3 under eight cells.
+The derivation declares this block in two places. Fork 4:
 
-The ten scenarios are the derivation's axes restricted to the arms that exist: `handleCont` resuming once
-and never; `handleContRepeated` resuming once, twice and never; `handleLoop` continuing and ending from
-the clause; `handleLoopState` threading a counter and ending from the clause; and the single `Mask`
-scenario tunnelling a `handleCont` past an inner handler for the same tag. The eight cells are the
-derivation's eight: base, a binding above, a region above, the three suspending variants of those, and two
-with an inner handler for the same tag. Ten times four times eight is the declared 320 cells, and every
-cell asserts an equality against a value the laws produce. No expected value of `prog(n)` is written by
-hand: `expected` is `law(...)` or `lawState(...)` per scenario, `inner` likewise, `says` is `runs`, and
-`counter` is passed both to the handler and to `lawState`. `law`'s body is the fold the derivation states
-(each resumption's value once per path below it, plus the rest's total, and `ends` for an empty
-`resumes`).
+> "Three named cases in `ArrowEffectTest` pin the fix, one of them pinning `done` once at the outer end
+> against per-resumption (1060, not 4060), and the matrix runs the shape across every configuration."
 
-**C, one re-entry path.** `Handler.scala`. `attachReentryUnlessSettled` at `:382` and
-`attachReentryUnlessSettled2` at `:409`, both `private[kyo] inline`, both placed immediately after the
-`attachReentry` and `attachReentry2` they specialise, each body the pending test, the `attachReentry` call
-and the settled cast, unchanged from what the four sites spelled. The four tails, and only the tails:
-`LoopHandler.answers:229`, `LoopStateHandler.answers:300`, `answersLoop:479`, `answersLoopState:557`. The
-two unfused `Continue` arms above the tails at `:221-227` and `:292-298` are untouched, as the section
-requires. A grep for `attachReentry` returns exactly these four helper call sites, the two helper bodies,
-the two originals, and the two direct `Eval` calls.
+and Candidate A:
 
-**D, the reference interpreter.** Absent. The only test file added is `EvalShapeTest.scala`; no direct
-evaluator, no differential harness, no partial version of either.
+> "a case in `ArrowEffectTest` pins that a throw after a second resumption reaches the outer `recover`."
 
-**E, the benchmark class compiles.** `KernelBench.scala:468`, `:469`, `:470`, `:481`. Four
-`ContextEffect.handle(Tag[X])(...)` calls become `ContextEffect.handle(Tag[X], ...)`, which is the
-signature at `ContextEffect.scala:269`. Four calls, that file only, no other edit in those methods.
+The block holds five: the three that pin the fix (181, 191, 201), the recover case (211), and
+"deep sequential operations are stack safe" (223), which pins a property the derivation never claims for
+the re-entry and which its cost paragraph does not mention. The case follows the file's existing
+per-handler convention, the same name appearing at 975, 1263, 2155 and 2352 for other handler kinds, so
+its merit is not what is at issue; a reviewer holding the derivation still counts one case more than the
+design authorises.
 
-**F, `Choice.run`.** `kyo-prelude/shared/src/main/scala/kyo/Choice.scala:99`. The clause is
-`Kyo.foreach(Chunk.from(input))(v => cont(v)).map(_.flattenChunk)`: one flatten, no inner `Choice.run`,
-which is the equation the derivation gives. That method only; `runStream` is not in the diff.
-`kyo-bench/src/main/scala/kyo/bench/ChoiceBench.scala` is new, 27 lines, with the two rows declared, `run`
-and `runStream`, over ten sequential binary choice points.
+### C14. The kyo-net leaf now pins the arming order the derivation says it does not
 
-**The multi-shot re-entry fix, candidate A.** Two members added to `ContHandler` and no more:
-`resumed` at `Handler.scala:94`, defaulting to `bug`, and `reentering` at `:104`, `private[kyo]`. The
-import of `kyo.bug` at `:7` is what the default needs. `reentering` composes the derivation's equation out
-of existing values: a pending input defers through `Effect.defer(p, this, cont2)`, which is the arm
-`Arrow.apply` uses at `Arrow.scala:171`, and a settled one is unnested, applied to the raw continuation,
-and handed to `Pending.handle(..., twin, ())`, whose settled case is `done` and whose pending case builds
-a `HandleArrow` region node. `twin` is read once per suspension, not per resumption.
+`kyo-net/jvm-native/src/test/scala/kyo/net/internal/posix/RearmSurvivorsTest.scala:76-80`.
 
-The two `handleContRepeated` overloads define `resumed` as a `val`, so one twin per region entry:
-`ArrowEffect.scala:212` for the plain overload and `:273` for the recovering one, each with an `outer =>`
-self alias at `:206` and `:266` so the twin's `run` delegates to the outer clause. Each twin has `done` as
-identity, `repeated = true`, and `resumed = this`. Neither twin declares `recover`, which is what the
-derivation states for the recovering overload. `handleFirstRepeated` at `:986-987` is untouched and
-defines no twin, which is consistent with the arm excluding an escaping handler.
+The derivation says:
 
-`Eval.scala:113-118`: the cont arm's `continuation` becomes `raw`, two comment lines are added, and the
-new `continuation` is the branch discussed in C9. The arm is the only part of `Eval` in the diff.
+> "The leaf now arms write first, which orders the two registrations; nothing it pins depends on the order."
 
-`ArrowEffectTest.scala:177-222`: a new `"handleContRepeated"` block, four cases, appended and displacing
-nothing. Three pin the fix (two consecutive occurrences at 60, three at 180, and `done` once at the outer
-end at 1060 against the 4060 a per-resumption `done` would give) and the fourth pins a throw after a
-second resumption reaching the outer `recover`. Those are the three named cases plus the recover case the
-derivation declares in the candidate A paragraph.
+The edit does more than reorder the two `await` calls. It adds an assertion that the `registerWrite` entry
+precedes the `registerRead` entry in the driver's call log, which makes the arming order a property the
+leaf now pins, and which is the one thing the declaring sentence says the leaf does not do. A reviewer
+comparing the two sees a test that fails if the driver ever applies registrations out of arming order, a
+contract the derivation does not claim the leaf is there to hold.
 
-`KernelBench.scala:564` and `:573`: the two rows declared, under the declared names.
-`repeatedClausesPayReentry` is `suspensionBaseline`'s program, `Depth` being 10000, under
-`handleContRepeated` with a clause resuming once. `repeatedRegionsPayEntry` enters a region per operation
-at `NarrowDepth`, which is `contextRegionsPayEntryExit`'s shape.
+### C15. `KernelBench` calls the re-entered handler a "twin"
 
-**Outside the kernel.** `kyo-data/shared/src/main/scala/kyo/Span.scala:981-983`: an index check in
-`updated` raising `IndexOutOfBoundsException`, with the message text and shape of `Chunk.scala:174`.
-`kyo-net/jvm-native/src/test/scala/kyo/net/internal/posix/RearmSurvivorsTest.scala:46-54`: the first leaf
-arms write before read, with the ordering reason in place; the second leaf and the rest of the file are
-untouched, and kyo-net at the base is byte-identical to `origin/main`, which is the reading under which
-the derivation's sentence about kyo-net holds.
+`kyo-kernel/jvm/src/jmh/scala/kyo/kernel/bench/KernelBench.scala:580`, the scaladoc reading
+"through the recovering overload, whose handler and twin are their own classes".
 
-### Declared and not present
+The derivation names this thing once and consistently, in Candidate A:
 
-None. Every item the derivation declares as changing is in the diff, and D is declared as not attempted
-and is not there.
+> "`reentered` is the same handler with `done` as identity, built once with the handler so the re-entered
+> region yields the body's `A` rather than applying `done` a second time"
 
-### Present and not declared
+The word "twin" appears nowhere in the derivation and nowhere in the kernel sources; the member is
+`Handler.reentered` and the derivation and the kernel scaladoc both say "the re-entered handler". This is
+the last occurrence of the older name in the range's own added text. A reviewer looking up "twin" against
+the design finds no such concept.
 
-None in the brief's paths. The range also adds twenty files under `reviews/robustness/`, which is the
-review package the derivation itself lives in and which the brief's diff does not cover, so I did not
-judge them.
+## The surface enumerated
 
-### "Must not change", checked
+Thirteen non-package files change in the range. The package under `reviews/robustness/` is excluded as the
+review's own artefacts.
 
-- `attachReentry` (`Handler.scala:357-373`) and `attachReentry2` (`:390-406`): bodies identical to the
-  base, now reached only through the two helpers and the two `Eval` sites.
-- `clauseDispatch`: not in the diff.
-- `Suspend.crossing`: `PendingInternal.scala` is not in the diff.
-- The two `Eval` not-at-top arms: `Eval.scala:188` and `:256` still call `attachReentry` and
-  `attachReentry2` directly on a value known to be pending, unchanged.
-- Node classes: none in the diff.
-- Public surface: `handleContRepeated`'s two signatures are unchanged, including the `done` arity, and so
-  is `Choice.run`'s. The added members sit on `Handler.ContHandler`, inside a `private[kernel]` object
-  whose enclosing class is `private[kernel]`, and `reentering` is `private[kyo]`. The one public behaviour
-  change in the range is `Span.updated`, which is declared in its own section.
+**Piece A, declared.**
+- `kyo-kernel/CONTRIBUTING.md:441`, checklist item 13, gains exactly the two sentences the derivation
+  describes: downstream `kyo-preludeJVM/test` and `kyo-coreJVM/test` with `Batch.run` as the example, and
+  the benchmark sources compiled by CI's compile-test phase with `kyo-kernelJVM/Jmh/compile` before a push.
+  No other item changes.
+- `project/TestKyo.scala:348` and `:364-379`: `tasks` now appends `jmhCompileTasks(state, a.phase, modules)`,
+  and the new private `jmhCompileTasks` returns nothing outside the `compile-test` phase and otherwise finds
+  each selected module's project ref and emits `<name>/Jmh/compile` when its `ivyConfigurations` carry one
+  named `jmh`. Found from the build rather than listed, as declared.
 
-### Forks, checked
+**Piece B, declared.**
+- `kyo-kernel/shared/src/test/scala/kyo/kernel/internal/EvalShapeTest.scala`, new, 231 lines, package
+  `kyo.kernel.internal`, extending `kyo.Test`. Ten scenarios, matching the derivation's enumeration one for
+  one: `handleCont` resuming once and never, `handleContRepeated` resuming once, twice and never,
+  `handleLoop` continuing and ending from the clause, `handleLoopState` threading a counter and ending from
+  the clause, and one `Mask` tunnelling past an inner handler. Laws `law`, `lawState` and `runs`, and
+  helpers `prog`, `record`, `cfgAbove` (a `ContextEffect` binding never read), `idleAbove` (a `handleCont`
+  region never performed) and `innerAbove` (a handler for the same tag). Four values of n, zero to three,
+  under eight configurations: base, a binding above, a region above, the three suspending variants, and the
+  two inner-handler cells, so 320 cells. Every `expected` and `inner` field is a law application; no value
+  of `prog(n)` is written by hand.
 
-1. **The overload pair.** Untouched. `Arrow.scala` is not in the diff, and the existing `ArrowEffectTest`
-   contract cases are unedited; the file's only change is the appended block.
-2. **The `PollTest` ascriptions.** Left in place. `PollTest` is not in the diff.
-3. **Whether D ships.** Not attempted, and nothing partial of it is in the tree.
-4. **Candidate A against candidate B.** A only. B would have changed `handleContRepeated`'s signature and
-   made `done` run per resumption; the signature is unchanged and the 1060 case pins `done` once.
-5. **The per-resumption region.** A with F, which is the recommendation the section records: the arm
-   re-enters, and `Choice.run` drops its hand-rolled delimiter while `runStream` keeps its shape.
+**Piece C, declared, four sites plus two helpers.**
+- `Handler.scala:203`, `LoopHandler.answers`, `case o` tail is now
+  `attachReentryToPending[I, O, E, A, B, S, X](k, o)`.
+- `Handler.scala:274`, `LoopStateHandler.answers`, `case o2` tail is now
+  `attachReentryToPending2[State, I, O, E, A, B, S, X](k, o2)`.
+- `Handler.scala:491`, `answersLoop`, `result = attachReentryToPending[...](k.asInstanceOf[...], o)`.
+- `Handler.scala:569`, `answersLoopState`, `result = attachReentryToPending2[...](k.asInstanceOf[...], o2)`.
+- `Handler.scala:394` and `:421`, new `private[kyo] inline def attachReentryToPending` and
+  `attachReentryToPending2`, each the `isInstanceOf[Pending]` test with `attachReentry`/`attachReentry2` on
+  one arm and the pass-through cast on the other. `inline`, as declared.
+- The two unfused `Continue` arms at `Handler.scala:195-202` and `:265-273` are unchanged, which the
+  derivation requires after correcting its earlier draft.
+
+**The multi-shot fix, Candidate A, declared.**
+- `ArrowEffect.scala:209-211` and `:264-266`, the two `handleContRepeated` overloads only. Each anonymous
+  `ContHandler` gains `val reentered = Handler.reentered(this)`, built once with the handler, and `run`
+  passes `Handler.reentering[I, O, E, A, S & S2, X](next, reentered)` to `handle` in place of `next`.
+  Signatures, `done`, `recover` and `repeated` are unchanged. `handleCont` at `:165` and the other
+  `ContHandler` sites at `:319`, `:693`, `:921` and `handleFirstRepeated` at `:951-988` are untouched, so
+  the holding handler is untouched by construction rather than by a condition, as declared.
+- `Handler.scala:330-345`, new `private[kyo] def reentered(outer)`: `tag` and `run` delegate to `outer`,
+  `done` is identity, `repeated` is true. It carries no `recover`, as the derivation requires of the
+  recovering overload's re-entered handler.
+- `Handler.scala:348-362`, new `private[kyo] def reentering(k, reentered)`: an `Arrow.Step` whose two
+  argument `apply` defers a pending input through `Effect.defer(p, this, cont2)`, the same arm
+  `Arrow.apply` uses at `Arrow.scala:171-172`, and on a settled input applies
+  `Pending.handle[Unit, E, A, A, S](k(Nested.unnest(v)), reentered, ())`, which is the derivation's
+  `k(x) = Pending.handle(bodyRest(x), reentered, ())`.
+- `kyo-kernel/shared/src/test/scala/kyo/kernel/BracketTest.scala:1202-1224`, one case, the release inside a
+  re-entered region landing where that region ends and before the next outer resumption, which is the case
+  the derivation says pins the held debt.
+- `kyo-kernel/shared/src/test/scala/kyo/kernel/ArrowEffectTest.scala:177-230`, a new
+  `"handleContRepeated"` block. Declared: the value case at 181 (60), the `done`-once case at 191 (1060,
+  not 4060), the three-occurrence case at 201 (180), the recover case at 211. Undeclared: the case at 223,
+  finding C13.
+
+**Piece E, declared.**
+- `KernelBench.scala:468-470` and `:481`, four `ContextEffect.handle(Tag[X])(...)` calls become
+  `ContextEffect.handle(Tag[X], ...)`. Exactly four, and no other call in the file changes.
+
+**Piece F, declared.**
+- `kyo-prelude/shared/src/main/scala/kyo/Choice.scala:99`, `Choice.run`'s clause becomes
+  `Kyo.foreach(Chunk.from(input))(v => cont(v)).map(_.flattenChunk)`, one flatten and no inner `run`.
+  `run` is the only member that changes; `runStream` at `:113-133` keeps its `handleFirstRepeated` shape.
+- `kyo-bench/src/main/scala/kyo/bench/ChoiceBench.scala`, new, 27 lines, the two rows `run` and
+  `runStream` over ten sequential binary choice points.
+
+**Outside the kernel, declared.**
+- `kyo-data/shared/src/main/scala/kyo/Span.scala:981-982`, `Span.updated` gains the index check throwing
+  `IndexOutOfBoundsException`. The message is byte for byte the one `Chunk.scala:174` uses, which is the
+  derivation's "follows `Chunk`'s shape and message". The scaladoc's `@throws` at `:977-978` already
+  promised it.
+- `kyo-net/jvm-native/src/test/scala/kyo/net/internal/posix/RearmSurvivorsTest.scala:46-54`, the write
+  registration is armed before the read. Also `:76-80`, an added order assertion, finding C14.
+
+**Undeclared additions.**
+- `KernelBench.scala:580-589`, `repeatedRegionsPayEntryRecovering`, finding C11.
+- `kyo-bench/src/main/scala/kyo/bench/SpanBench.scala`, finding C12.
+- `ArrowEffectTest.scala:223-229`, finding C13.
+
+**Confirmed unchanged, against the derivation's "must not change" list.**
+- `Handler.attachReentry` at `:369` and `attachReentry2` at `:402`, bodies untouched, now callees only.
+- `clauseDispatch` on both loop handlers, `Handler.scala:158-175` and `:235-252`.
+- `Eval.scala`, not in the range at all, so `Suspend.crossing`, the two not-at-top arms and the held and
+  escaping machinery are untouched.
+- Every node class, and every public signature in `ArrowEffect`. The only `ArrowEffect` edits are inside
+  the two anonymous handler bodies.
+- `ArrowEffectBytecodeTest` and `PendingBytecodeTest`, not in the range, so no pinned number was rewritten.
+- `Arrow.scala`, not in the range, so the `apply` overload pair of fork 1 is untouched, and `PollTest`,
+  not in the range, so the fork 2 ascriptions stand.
