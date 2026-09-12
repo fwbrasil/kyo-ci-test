@@ -31,8 +31,11 @@ of a sentence to remember (R3). That step made a latent defect ordinary: the JMH
 the benchmark classes into the main class directory, and the kernel's scaladoc, which reads every
 TASTy file there, failed on a cross-framework benchmark whose dependency is only on the jmh
 classpath, so any sequence of compile-test then doc in one workspace broke (the sweep's publish
-module found it). `build.sbt` gives the `Jmh` configuration its own class directory in the three
-JMH projects (`Jmh / classDirectory := crossTarget.value / "jmh-classes"`); verified by a clean
+module found it). `build.sbt` gives the `Jmh` configuration its own class directory on kyo-kernel
+(`Jmh / classDirectory := crossTarget.value / "jmh-classes"`), and on kyo-kernel alone: the same setting
+was first applied to kyo-ffi-bench and kyo-bench for consistency and found, live in the review, to
+break their benchmark discovery, because their benchmarks live under `src/main` and only the
+generated list moves (rulings.md, 2026-09-12); verified on kyo-kernel by a clean
 build, `Jmh/compile`, a one-fork `Jmh/run` and `doc` in sequence. One doc link in
 `EffectTrace`'s scaladoc, `[[splice]]`, resolved to nothing because `splice` lives on the companion;
 it now reads `[[EffectTrace.splice]]`, the only warning that build emitted for the kernel. The
@@ -191,7 +194,7 @@ and on the Wasm backend it traps and kills the node process, which ended `kyo-da
 The `SpanTest` case that reached it is on the branch's ancestry (`c52e4bd8fa`), not on main, so the
 contract was untested off the JVM until now. The check follows `Chunk`'s shape and message. On the
 JVM the array store already checked the index, so `updated` now checks twice on that platform;
-`SpanBench.updated` in `kyo-bench`, every index in bounds, prices that check on a sixteen-element
+`SpanBench.updated` (kept in the package as `bench/src/SpanBench.scala`, not in kyo-bench, by the reviewer's ruling of 2026-09-12), every index in bounds, prices that check on a sixteen-element
 span, base against tip.
 
 `kyo-net/jvm-native/src/test/scala/kyo/net/internal/posix/RearmSurvivorsTest.scala`: the leaf that
@@ -353,7 +356,7 @@ that wrapper is a second region per resumption, so piece F removes it:
 that method only. `runStream` keeps its shape: it hands the peeled continuation out and evaluates
 the results outside the clause, under a fresh `handleFirstRepeated` per iteration, which is the
 holder re-establishing the region, and the arm does not re-enter for a holding handler, so nothing
-changes for it. `ChoiceBench` in `kyo-bench` is added for both rows, base against tip.
+changes for it. `ChoiceBench` measured both rows, base against tip; the class is kept in the package (`bench/src/ChoiceBench.scala`), not in kyo-bench, by the reviewer's ruling of 2026-09-12.
 
 ### Fork 5: the per-resumption region is the price of a kernel that delimits
 

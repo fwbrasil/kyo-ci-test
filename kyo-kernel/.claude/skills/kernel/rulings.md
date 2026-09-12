@@ -49,6 +49,18 @@ names `Stack` as the example) and is not a reason to invent a carrier.
 Standing consequence: changes stay inside the derivation's declared surface. An improvement
 outside it is still a finding, because nobody agreed to it.
 
+**2026-09-12**, during the live review of the robustness change, on two benchmark classes added
+to kyo-bench beside a consumer change and a bounds check:
+
+> why are you benchmarking span and choice?
+
+> remove those benchmarks for now
+
+Standing consequence: a benchmark class outside the module under review is not evidence for the
+review and is not part of the walk. A consumer-level number that supports a ruling is presented
+as a number in the package, from a session, and the class that produced it stays in the isolated
+worktree unless the reviewer asks for it.
+
 ## Naming
 
 **2026-08-29**, setting the vocabulary for the change:
@@ -130,3 +142,11 @@ Standing consequence: before a number is evidence, verify that the thing measure
 changed, mechanically. `package-check.sh` resolves every benchmark class a package names and reports
 one that does not reference the package under review. A plausible name answers the question by
 looking right, which is why judgment kept passing it.
+
+**2026-09-12**, discovered during the live review of the robustness change: a `Jmh / classDirectory`
+setting that is right for a module whose benchmarks live under `src/jmh` (kyo-kernel, where it keeps
+the benchmark classes out of the directory scaladoc reads) is wrong for a module whose benchmarks
+live under `src/main` (kyo-bench, kyo-ffi-bench): the generated benchmark list moves and the runner
+finds nothing. The walk had applied it to all three "for consistency". Standing consequence: a build
+setting copied to a sibling module is verified on that module, by running the thing it configures,
+before it enters a walk.

@@ -1394,9 +1394,7 @@ lazy val `kyo-ffi-bench` =
             `kyo-settings`,
             publish / skip := true,
             Compile / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
-            run / fork := true,
-            // as kyo-kernel: the benchmark classes stay out of the directory scaladoc reads
-            Jmh / classDirectory := crossTarget.value / "jmh-classes"
+            run / fork := true
         )
 
 lazy val `kyo-direct` =
@@ -3203,8 +3201,6 @@ lazy val `kyo-bench` =
             `kyo-settings`,
             publish / skip                          := true,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-            // as kyo-kernel: the benchmark classes stay out of the directory scaladoc reads
-            Jmh / classDirectory := crossTarget.value / "jmh-classes",
             // The Jmh fork runs on the background-job service's re-materialized classpath, where an
             // internal dependency travels as its packageBin jar, and kyo-net's main jar carries no
             // natives (P2b: they ship in per-platform classifier jars). Without them the transport
