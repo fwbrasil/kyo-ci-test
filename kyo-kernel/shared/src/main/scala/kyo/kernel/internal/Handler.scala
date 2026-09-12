@@ -225,9 +225,7 @@ end Handler
                             case _ =>
                                 Loop.continue(k(Nested.unnest[O[X]](ans)))
                         end match
-                    case o =>
-                        if o.isInstanceOf[Pending[?, ?]] then attachReentry[I, O, E, A, B, S, X](k)(o)
-                        else o.asInstanceOf[Outcome[A < (E & S), B < S] < S]
+                    case o => attachReentryUnlessSettled[I, O, E, A, B, S, X](k, o)
                 end match
             catch
                 case ex: Throwable =>
@@ -298,9 +296,7 @@ end Handler
                             case _ =>
                                 Loop.continue(st, k(Nested.unnest[O[X]](ans)))
                         end match
-                    case o2 =>
-                        if o2.isInstanceOf[Pending[?, ?]] then attachReentry2[State, I, O, E, A, B, S, X](k)(o2)
-                        else o2.asInstanceOf[Outcome2[State, A < (E & S), B < S] < S]
+                    case o2 => attachReentryUnlessSettled2[State, I, O, E, A, B, S, X](k, o2)
                 end match
             catch
                 case ex: Throwable =>
@@ -375,6 +371,20 @@ end Handler
         end new
     end attachReentry
 
+    /** [[attachReentry]] for an outcome that may have settled already: a settled one passes through unchanged, a
+      * pending one gets the cont attached.
+      *
+      * The caller has answered a settled `Continue` in place before reaching this, so a settled outcome arriving
+      * here carries no answer to re-enter with; passing it through is that fact, and it is what lets the settled
+      * path skip building the arrow. `inline` so the fused walks expand it as the branch they carry today.
+      */
+    private[kyo] inline def attachReentryUnlessSettled[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, X0](
+        reentry: Arrow[O[X0], A, E & S],
+        outcome: Outcome[O[X0] < (E & S), B < S] < S
+    ): Outcome[A < (E & S), B < S] < S =
+        if outcome.isInstanceOf[Pending[?, ?]] then attachReentry[I, O, E, A, B, S, X0](reentry)(outcome)
+        else outcome.asInstanceOf[Outcome[A < (E & S), B < S] < S]
+
     /** [[attachReentry]] for a region that carries its state through the outcome. */
     private[kyo] def attachReentry2[State, I[_], O[_], E <: ArrowEffect[I, O], A, B, S, X0](
         reentry: Arrow[O[X0], A, E & S]
@@ -393,6 +403,14 @@ end Handler
                         cont2(out.asInstanceOf[Out < S])
         end new
     end attachReentry2
+
+    /** [[attachReentryUnlessSettled]] for a region that carries its state through the outcome. */
+    private[kyo] inline def attachReentryUnlessSettled2[State, I[_], O[_], E <: ArrowEffect[I, O], A, B, S, X0](
+        reentry: Arrow[O[X0], A, E & S],
+        outcome: Outcome2[State, O[X0] < (E & S), B < S] < S
+    ): Outcome2[State, A < (E & S), B < S] < S =
+        if outcome.isInstanceOf[Pending[?, ?]] then attachReentry2[State, I, O, E, A, B, S, X0](reentry)(outcome)
+        else outcome.asInstanceOf[Outcome2[State, A < (E & S), B < S] < S]
 
     private[kyo] inline def answersLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, C](
         inline effectTag: Tag[E],
@@ -457,10 +475,7 @@ end Handler
                                 end if
                         end match
                     case o =>
-                        result =
-                            if o.isInstanceOf[Pending[?, ?]] then
-                                attachReentry[I, O, E, A, B, S, C](k.asInstanceOf[Arrow[O[C], A, E & S]])(o)
-                            else o.asInstanceOf[Outcome[A < (E & S), B < S] < S]
+                        result = attachReentryUnlessSettled[I, O, E, A, B, S, C](k.asInstanceOf[Arrow[O[C], A, E & S]], o)
                         running = false
                 end match
             catch
@@ -538,10 +553,7 @@ end Handler
                                 end if
                         end match
                     case o2 =>
-                        result =
-                            if o2.isInstanceOf[Pending[?, ?]] then
-                                attachReentry2[State, I, O, E, A, B, S, C](k.asInstanceOf[Arrow[O[C], A, E & S]])(o2)
-                            else o2.asInstanceOf[Outcome2[State, A < (E & S), B < S] < S]
+                        result = attachReentryUnlessSettled2[State, I, O, E, A, B, S, C](k.asInstanceOf[Arrow[O[C], A, E & S]], o2)
                         running = false
                 end match
             catch
