@@ -144,7 +144,7 @@ each with a verdict that is a category from the cast ladder, a measurement, a `m
 | F8 | Handler.scala:478 | `result = attachReentryUnlessSettled[...](k.asInstanceOf[Arrow[O[C], A, E & S]], o)` | cast | moved: the same `k.asInstanceOf` on the same site at the base; erasure-forced, the fused walk rebinding `k` per operation |
 | F9 | Handler.scala:556 | `result = attachReentryUnlessSettled2[...](k.asInstanceOf[Arrow[O[C], A, E & S]], o2)` | cast | moved: as F8 |
 | F10 | Eval.scala, cont arm | `val continuation = if handler.repeated then handler.reentering(raw) else raw` | hot-path cost | measured, inside drift: `repeated` is a virtual `Boolean` on the arm every `handleCont` answer takes; no `handleCont` row outside the 5% band at `-f 1`, and the three rows outside it confirm as noise at `-f 3`; the numbers are in the benchmark section |
-| F11 | Handler.scala:93 | `def resumed: ContHandler[I, O, E, A, A, S] = bug(...)` | claim | justified by construction, with the reach stated: only `reentering` calls `resumed`, `Eval` calls `reentering` only under `handler.repeated`, and the three handlers that override `repeated` all override `resumed` |
+| F11 | Handler.scala:93 | `def resumed: ContHandler[I, O, E, A, A, S] = bug(...)` | claim | justified by construction, with the reach stated: only `reentering` calls `resumed`, only `Eval`'s cont arm calls `reentering`, under `handler.repeated`; six sites override `repeated` at the tip, the three repeated handlers and their three twins, and all six override `resumed`, the twins with `this` |
 
 ## Evidence
 
