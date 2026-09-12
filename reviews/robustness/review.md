@@ -149,10 +149,10 @@ each with a verdict that is a category from the cast ladder, a measurement, a `m
 
 | id | site | added line | class | verdict |
 |----|------|------------|-------|---------|
-| F1 | ArrowEffect.scala:213 | `new Handler.ContHandler[I, O, E, A, A, S & S2]:` | allocation | justified: the `resumed` twin, a `val` built once with the handler at region entry, never on an answer or a resumption; a repeated region already allocates its handler and its `HandleArrow`, this is one object beside them |
-| F2 | ArrowEffect.scala:274 | `new Handler.ContHandler[I, O, E, A, A, S & S2]:` | allocation | justified: as F1, for the recovering overload |
-| F3 | ArrowEffect.scala:990 | `new Handler.ContHandler[I, O, E, A \| First, A \| First, S & S2]:` | allocation | justified: as F1, for `handleFirstRepeated` |
-| F4 | Handler.scala:105 | `new Arrow.Step[O[V], A, E & S]:` | allocation | justified: one arrow per operation answered by a repeated handler, built only when `handler.repeated`; number: the benchmark section, every row, base against the fix |
+| F1 | ArrowEffect.scala:213 | `new Handler.ContHandler[I, O, E, A, A, S & S2]:` | allocation | measured: the `resumed` twin, built once per region entry. `repeatedRegionsPayEntry`, base against tip, `-f 3 -prof gc`: 16 bytes per region, 4.7 ns per region, +8.8% on a row that does nothing but enter and leave such regions (`bench/compare-rows-base-vs-AC.md`) |
+| F2 | ArrowEffect.scala:274 | `new Handler.ContHandler[I, O, E, A, A, S & S2]:` | allocation | measured: as F1, the same object for the recovering overload |
+| F3 | ArrowEffect.scala:990 | `new Handler.ContHandler[I, O, E, A \| First, A \| First, S & S2]:` | allocation | measured: as F1, the same object for `handleFirstRepeated` |
+| F4 | Handler.scala:105 | `new Arrow.Step[O[V], A, E & S]:` | allocation | measured, and the number is a regression: one arrow per operation and one region node per application. `repeatedClausesPayReentry`, base against tip, `-f 3 -prof gc`: 64 bytes and 61 ns per operation, +615% (`bench/compare-rows-base-vs-AC.md`). Every other row is inside drift. The mechanism and what is done about it are in the benchmark section below |
 | F5 | Handler.scala:109 | `case p: Pending[O[V], S3] @unchecked => Effect.defer(p, this, cont2)` | cast | erasure-forced: a typed pattern binding at the arm's type, the runtime test being `Pending` alone; the same arm as `Arrow.apply`'s and `Suspend.crossing`'s |
 | F6 | Handler.scala:386 | `else outcome.asInstanceOf[Outcome[A < (E & S), B < S] < S]` | cast | moved: the pass-through cast `LoopHandler.answers` and `answersLoop` each carried at their tail, written once. Representation assertion: the two outcome types differ only in the `Continue` payload, and a settled outcome reaching the tail is not a `Continue` |
 | F7 | Handler.scala:413 | `else outcome.asInstanceOf[Outcome2[State, A < (E & S), B < S] < S]` | cast | moved: as F6, for the state-carrying outcome |
