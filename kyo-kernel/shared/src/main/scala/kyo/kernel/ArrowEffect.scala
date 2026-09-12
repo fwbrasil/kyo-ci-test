@@ -208,7 +208,7 @@ object ArrowEffect:
                         // resumptions is never in the registers a later occurrence captures
                         val reentered = Handler.reentered(this)
                         def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
-                            Region.discharge(handle[X](input, Handler.reentering(next, reentered)))
+                            Region.discharge(handle[X](input, Handler.reentering[I, O, E, A, S & S2, X](next, reentered)))
                         def done(state: Unit, v0: A) = onDone(v0)
                         override def repeated        = true
 
@@ -263,7 +263,7 @@ object ArrowEffect:
                             // where recover yields the region's B, so a throw inside it unwinds to this handler's
                             val reentered = Handler.reentered(this)
                             def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
-                                Region.discharge(handle[X](input, Handler.reentering(next, reentered)))
+                                Region.discharge(handle[X](input, Handler.reentering[I, O, E, A, S & S2, X](next, reentered)))
                             def done(state: Unit, v1: A)                     = onDone(v1)
                             override def recover(state: Unit, ex: Throwable) = onRecover(ex)
                             override def repeated                            = true
