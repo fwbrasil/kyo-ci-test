@@ -413,9 +413,22 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         curr = cleared
         status = Done
         if !isNull(remainder) then
-            // Invoking the input registers the link, the same call the boundary makes.
             Eval.release(remainder, new KyoException("fiber abandoned")(using Frame.internal), Tag[Async.Join]) {
-                [C] => input => discard(input(this))
+                [C] =>
+                    input =>
+                        // Invoking the input registers the link, the same call the boundary makes. A promise that
+                        // already holds its result is what the boundary would have resumed on: the result is
+                        // handed back so the walk delivers it to the join's continuation and the release waiting
+                        // on what arrived runs, and the link, moot for a completed promise, is dropped as the
+                        // boundary drops it.
+                        val promise = input(this)
+                        promise.poll() match
+                            case Present(r) =>
+                                removeInterrupt(promise)(using input.frame)
+                                // Erasure-forced: the join's output is the promise's result at its own error type.
+                                Present(r.asInstanceOf[Result[Nothing, C]])
+                            case _ => Absent
+                        end match
             }
         end if
         interruption.foreach(error => discard(settleInterrupt(error)))

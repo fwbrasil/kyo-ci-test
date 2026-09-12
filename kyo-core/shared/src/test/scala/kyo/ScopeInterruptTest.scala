@@ -104,6 +104,29 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         }
     }
 
+    // The acquire is a join. Its value arrives in the promise while the acquiring fiber is parked, and the
+    // interrupt lands before the fiber resumes: the promise's callbacks run last-registered first, so one
+    // registered after the park runs before the fiber's own wakeup. The release waits behind the join's
+    // continuation, and the abandonment delivers the value that already arrived to it, running the one
+    // fused step the delivery runs when the fiber resumes, so what the acquire produced is released.
+    "a resource an async acquire produced is released when the acquiring fiber is abandoned before it resumed" in {
+        for
+            released <- AtomicInt.init(0)
+            child    <- Promise.init[Int, Any]
+            parent <- Fiber.initUnscoped {
+                Scope.run {
+                    Scope.acquireRelease(child.get)(_ => released.incrementAndGet.unit).andThen(Async.never)
+                }
+            }
+            _ <- assertEventually(child.waiters.map(_ >= 1))
+            _ <- child.onComplete(_ => parent.interrupt.unit)
+            _ <- child.complete(Result.succeed(42))
+            _ <- parent.getResult
+            r <- released.get
+        yield assert(r == 1, s"the acquired value was released $r times")
+        end for
+    }
+
     "Scope.run waits for a scoped fiber to release the bracket it is inside" in {
         // The child must hold the bracket when the scope starts exiting, or the release happens for the wrong
         // reason. It parks rather than spinning: the region is installed before the body runs.

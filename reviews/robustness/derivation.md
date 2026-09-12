@@ -594,3 +594,45 @@ over a body completing after it, and a scoped fiber's own scope closes after the
 
 Not mirrored on the unsafe tier: `interruptAwait` waits, and the unsafe tier's wait is `block`, which
 already observes the deferred completion.
+
+### P. An answer that already arrived is delivered on abandonment (kernel source and `IOTask`)
+
+Found while reading I's consequences, reproduced deterministically, fixed. A fiber parked on a join
+whose promise completes and which is then interrupted before it resumes: the value sits in the promise,
+and a release waiting on it, `Scope.acquireRelease(fiber.get)(release)`, sits behind the join's own
+continuation, the fold that turns the result into the value. The walk of I stopped at the join and
+reported it; the fold never ran, the `Ensure` never received the value, and what the acquire produced
+was released by nobody. The base's budget did not reach this either: it stepped deferrals, not a
+suspension's continuation.
+
+The equation. When the fiber resumes, the boundary polls the promise, finds the result, and applies the
+join's continuation to it in one call, `cont(r)`, with no safepoint between the delivery and the step
+fused with it: an interrupt can never land between them. Abandonment honors the same atomicity: the
+reporter `f` may answer the operation, and the walk delivers that answer to the operation's own
+continuation and runs the one step the delivery is fused with, then continues collecting with nothing
+else run. A thunk that never started stays unrun, as I says.
+
+    release(Suspend(op, k), f)   with f(op.input) = Present(r)   =   collect(k(r), delivered = true)
+    collect(defer(v settled, kA, kB), delivered = true)          =   collect(kA(v), kB, delivered = false)
+
+Surface: `Eval.release`'s reporting overload, `f: [C] => I[C] => Maybe[O[C]]`; the walk's `delivered`
+flag, spent on the first settled deferral; `IOTask.abandon`'s reporter, which links the join as before
+and hands back the promise's result when it holds one, dropping the link as the boundary does for a
+completed promise. Pins: `EvalTest` "delivers an answer the reporter already holds to the release
+waiting on it", "delivers through the operation's own continuation, the one step fused with the
+delivery", "a delivery runs nothing past the step fused with it"; `ScopeInterruptTest` "a resource an
+async acquire produced is released when the acquiring fiber is abandoned before it resumed", which
+registers the interrupt on the child after the parent parked, so the promise's last-registered-first
+callback order runs it before the parent's wakeup.
+
+### Q. The pool's permit is registered in the step its take delivers it (kyo-sql)
+
+`withSlot` took the permit through `takeSlot`, which runs the take in the acquire-timeout fiber, and
+registered its return with `Scope.ensure` several steps later, in the outer fiber. An interrupt landing
+between the take's delivery and the registration left the permit taken and returned by nobody; the walk
+of I runs none of those steps, and the base's budget would have run at most sixteen of them. The take
+now sits under `Scope.acquireRelease`, whose `ensureMap` registers the return in the step the take's
+value arrives in, which with P holds for an abandonment as well as a resumption. The acquire-timeout
+logging and the body's failure routing are unchanged; `Scope.run` moves outward to hold the registration,
+and closes at the same point, the body's end. Evidence: `kyo-sql-postgresJVM/test` and
+`kyo-sql-mysqlJVM/test` against the real backends.

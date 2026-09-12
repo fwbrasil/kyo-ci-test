@@ -701,7 +701,7 @@ class EvalTest extends AnyFreeSpec:
                 }
             val parked = Eval.partial(v)
             assert(!acquired && released.isEmpty, "the premise is that the stop parked before the acquire ran")
-            Eval.release(parked, new RuntimeException("abandoned"), Tag[Ask])([C] => (_: Unit) => ())
+            Eval.release(parked, new RuntimeException("abandoned"), Tag[Ask])([C] => (_: Unit) => Maybe.empty)
             assert(!acquired, "the walk ran the acquire")
             assert(released.isEmpty, s"a release ran for a resource that was never acquired: $released")
         }
@@ -1622,31 +1622,38 @@ class EvalTest extends AnyFreeSpec:
         sealed trait AskSub extends Ask
         def askSub: Int < AskSub = ArrowEffect.suspend[Any](Tag[AskSub], ())
 
+        // A reporter that records the operation's input and holds no answer for it.
+        def seeing[A](f: A => Unit): [C] => A => Maybe[Nothing] =
+            [C] =>
+                (input: A) =>
+                    f(input)
+                    Maybe.empty
+
         "through a region and a handed-in deferral" in {
             val inner: Int < (Ask & Say) = ask.map(a => a)
             val idle: Int < Ask          = ArrowEffect.handleCont(Tag[Say], inner)([C] => (_, k) => k(()), a => a)
             val deferred: Int < Ask      = Effect.defer(idle, Arrow.id)
             var seen                     = 0
-            Eval.release(deferred, walked, Tag[Ask])([C] => _ => seen += 1)
+            Eval.release(deferred, walked, Tag[Ask])(seeing[Unit](_ => seen += 1))
             assert(seen == 1)
         }
 
         "a foreign operation standing first is not reported" in {
             var seen = 0
-            Eval.release(ask.map(_ + 1), walked, Tag[Say])([C] => _ => seen += 1)
+            Eval.release(ask.map(_ + 1), walked, Tag[Say])(seeing[String](_ => seen += 1))
             assert(seen == 0)
         }
 
         "queries in the dispatch direction" in {
             var seen = 0
-            Eval.release(ask, walked, Tag[AskSub])([C] => _ => seen += 1)
-            Eval.release(askSub, walked, Tag[Ask])([C] => _ => seen += 10)
+            Eval.release(ask, walked, Tag[AskSub])(seeing[Unit](_ => seen += 1))
+            Eval.release(askSub, walked, Tag[Ask])(seeing[Unit](_ => seen += 10))
             assert(seen == 1)
         }
 
         "a settled value reports nothing" in {
             var seen = 0
-            Eval.release(42: Int < Ask, walked, Tag[Ask])([C] => _ => seen += 1)
+            Eval.release(42: Int < Ask, walked, Tag[Ask])(seeing[Unit](_ => seen += 1))
             assert(seen == 0)
         }
 
@@ -1654,7 +1661,7 @@ class EvalTest extends AnyFreeSpec:
             sealed trait Cfg extends ContextEffect[Int]
             val region: Int < Ask = ContextEffect.handleInheritable(Tag[Cfg], 1)(ask.map(_ + 1))
             var seen              = 0
-            Eval.release(region, walked, Tag[Ask])([C] => _ => seen += 1)
+            Eval.release(region, walked, Tag[Ask])(seeing[Unit](_ => seen += 1))
             assert(seen == 1)
         }
 
@@ -1668,25 +1675,25 @@ class EvalTest extends AnyFreeSpec:
             val handled = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, k) => k(21), a => a)
             val parked  = Eval.partial(handled)
             var seen    = 0
-            Eval.release(parked, walked, Tag[Ask])([C] => _ => seen += 1)
+            Eval.release(parked, walked, Tag[Ask])(seeing[Unit](_ => seen += 1))
             assert(seen == 1)
         }
 
         "reads the input of a mapped suspension through its root" in {
             var seen = ""
-            Eval.release(say("root").map(_ => 1).map(_ + 1), walked, Tag[Say])([X] => input => seen = input)
+            Eval.release(say("root").map(_ => 1).map(_ + 1), walked, Tag[Say])(seeing[String](input => seen = input))
             assert(seen == "root")
         }
 
         "reads through the deferrals a map chain composes to the operation under them" in {
             var seen = ""
-            Eval.release(say("shown").map(_ => 1).map(_ + 1), walked, Tag[Say])([X] => input => seen = input)
+            Eval.release(say("shown").map(_ => 1).map(_ + 1), walked, Tag[Say])(seeing[String](input => seen = input))
             assert(seen == "shown")
         }
 
         "reports nothing under an isolate capture" in {
             var seen = 0
-            Eval.release(Isolate.internal.Contextual.run(ask), walked, Tag[Ask])([C] => _ => seen += 1)
+            Eval.release(Isolate.internal.Contextual.run(ask), walked, Tag[Ask])(seeing[Unit](_ => seen += 1))
             assert(seen == 0)
         }
 
@@ -1698,7 +1705,7 @@ class EvalTest extends AnyFreeSpec:
                     (_, a) => a
                 )
             val outer: Int < Say = ArrowEffect.handleCont(Tag[Ask], inner)([X] => (_, cont) => cont(1), a => a)
-            Eval.release(outer, walked, Tag[Say])([X] => input => seen = input)
+            Eval.release(outer, walked, Tag[Say])(seeing[String](input => seen = input))
             assert(seen == "deep")
         }
 
@@ -1712,9 +1719,48 @@ class EvalTest extends AnyFreeSpec:
                 built = true
                 say("hidden").map(_ => 1)
             }
-            Eval.release(v, walked, Tag[Say])([X] => input => seen = input)
+            Eval.release(v, walked, Tag[Say])(seeing[String](input => seen = input))
             assert(!built, "the walk ran the deferral")
             assert(seen == "", s"reported through a deferral that never ran: $seen")
+        }
+
+        // The reporter already holds the operation's answer, as a fiber's join does once its promise
+        // completed: the answer is delivered to the operation's continuation, and the release waiting on what
+        // arrived is found. The delivery is what the resumption would have done, no more.
+        "delivers an answer the reporter already holds to the release waiting on it" in {
+            var released = Maybe.empty[Int]
+            val v: Int < Ask =
+                ask.ensureMap(a => Bracket.ensuring(_ => released = Maybe(a))(Effect.defer(a + 1)))
+            Eval.release(v, walked, Tag[Ask])([C] => _ => Maybe(21))
+            assert(released == Maybe(21), s"the release saw $released")
+        }
+
+        "delivers through the operation's own continuation, the one step fused with the delivery" in {
+            var released = Maybe.empty[Int]
+            var mapped   = false
+            val v: Int < Ask =
+                askWith { a =>
+                    mapped = true
+                    a * 2
+                }.ensureMap(a => Bracket.ensuring(_ => released = Maybe(a))(Effect.defer(a)))
+            Eval.release(v, walked, Tag[Ask])([C] => _ => Maybe(21))
+            assert(mapped)
+            assert(released == Maybe(42), s"the release saw $released")
+        }
+
+        "a delivery runs nothing past the step fused with it" in {
+            var released = Maybe.empty[Int]
+            var later    = false
+            val v: Int < Ask =
+                ask.ensureMap { a =>
+                    Bracket.ensuring(_ => released = Maybe(a))(Effect.defer {
+                        later = true
+                        a
+                    })
+                }
+            Eval.release(v, walked, Tag[Ask])([C] => _ => Maybe(21))
+            assert(released == Maybe(21))
+            assert(!later, "the walk ran past the delivery")
         }
     }
 

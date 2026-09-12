@@ -611,22 +611,27 @@ import scala.collection.mutable.ArrayBuffer
       * it to release.
       */
     def release[A, S](v: A < S, ex: Throwable): Unit =
-        release(v, ex, Absent, _ => ())
+        release(v, ex, Absent, _ => Absent)
 
     /** Releases the regions `v` still holds, and hands `f` the input of the first operation under them that
       * `effectTag` answers, so a caller that owes something to an operation the computation stands at can
       * settle it without walking the computation a second time. `f` runs before anything is released.
       *
-      * An operation under a deferral does not exist yet, and neither does anything it would have waited on,
-      * so it is not reported: this evaluates nothing, as [[release]] above.
+      * `f` answers with the operation's result when it already has one: a fiber's join whose promise
+      * completed before the fiber resumed. That result is delivered here as the resumption would have
+      * delivered it, to the operation's continuation, and the one step that delivery runs fused with it
+      * runs too, since nothing can land between them when the computation resumes; a release waiting on
+      * what arrived is then found. Nothing else runs. An operation under a deferral does not exist yet, and
+      * neither does anything it would have waited on, so it is not reported: as in [[release]] above, a
+      * deferral is walked, not evaluated.
       */
     def release[I[_], O[_], E <: ArrowEffect[I, O], A, S](v: A < S, ex: Throwable, effectTag: Tag[E])(
-        f: [C] => I[C] => Unit
+        f: [C] => I[C] => Maybe[O[C]]
     ): Unit =
         // Erasure-forced: the operation's state type is existential here, and `f` takes it back at that type.
         release(v, ex, Present(effectTag.erased), input => f[Any](input.asInstanceOf[I[Any]]))
 
-    private def release[A, S](v: A < S, ex: Throwable, effectTag: Maybe[Tag[Any]], f: Any => Unit): Unit =
+    private def release[A, S](v: A < S, ex: Throwable, effectTag: Maybe[Tag[Any]], f: Any => Maybe[Any]): Unit =
         val collected = ArrayBuffer.empty[AnyRef]
 
         // An `Arrow.Ensure` waiting on an already-settled value is a release nobody will run, so the cont is
@@ -645,31 +650,36 @@ import scala.collection.mutable.ArrayBuffer
         // `Bracket` does, has only just created what owes it. So the result is walked too.
         def ensuring(v: Any, cont: Arrow[Any, Any, Any]): Unit =
             leftmost(cont) match
-                case step: Arrow.Ensure[Any, Any, Any] @unchecked => collect(step(Nested.unnest[Any](v)), Arrow.id)
+                case step: Arrow.Ensure[Any, Any, Any] @unchecked => collect(step(Nested.unnest[Any](v)), Arrow.id, false)
                 case _                                            => ()
 
-        @tailrec def collect(v: Any, cont: Arrow[Any, Any, Any]): Unit =
+        // `delivered` is set for the value an operation's answer produced, and spent on the first deferral
+        // holding a settled value: that deferral's first arrow is the step fused with the delivery, which
+        // runs when the computation resumes with nothing landing between, so it runs here as well.
+        @tailrec def collect(v: Any, cont: Arrow[Any, Any, Any], delivered: Boolean): Unit =
             v match
                 case p: Pending[?, ?] =>
                     p match
                         // A deferral whose value is still a computation is walked, which reaches what is under
                         // it. One whose value is settled holds its body in the cont, and the body is not run:
-                        // the value is offered to a release waiting on it, and that is the whole debt.
+                        // the value is offered to a release waiting on it, and that is the whole debt, unless
+                        // the value was just delivered, in which case the step fused with the delivery runs.
                         case kyo: Pending.Defer[a, b, c, s] @unchecked =>
                             // Erasure-forced: the types joining a chain's links are existential from out here.
                             val after = kyo.contB.chain(cont).asInstanceOf[Arrow[Any, Any, Any]]
                             val below = kyo.contA.chain(after).asInstanceOf[Arrow[Any, Any, Any]]
                             kyo.value match
-                                case _: Pending[?, ?] => collect(kyo.value, below)
+                                case _: Pending[?, ?] => collect(kyo.value, below, delivered)
+                                case _ if delivered   => collect(kyo.contA(kyo.value, Arrow.id), after, false)
                                 case _                => ensuring(kyo.value, below)
                             end match
                         case kyo: Pending.HandleContext[VX, CX, ?, ?] @unchecked =>
                             val hc = kyo.handler
                             collected += hc
                             collected += hc.derive(Maybe.empty).asInstanceOf[AnyRef]
-                            collect(kyo.value, cont)
+                            collect(kyo.value, cont, delivered)
                         case kyo: Pending.Handle[?, ?, ?, ?] =>
-                            collect(kyo.value, cont)
+                            collect(kyo.value, cont, delivered)
                         case kyo: Pending.Park[?, ?] =>
                             expandOwed(collected, kyo.owed)
                             val entries = kyo.entries
@@ -684,13 +694,23 @@ import scala.collection.mutable.ArrayBuffer
                                 expandOwed(collected, entries.owed(i))
                                 i += 1
                             end while
-                            collect(kyo.value, cont)
+                            collect(kyo.value, cont, delivered)
+                        // The operation is reported, and answered here when the reporter already holds its
+                        // answer: the answer goes to the operation's own continuation, as a resumption would
+                        // deliver it, and what that produces is walked with the fused step allowed once.
                         case kyo: Pending.SuspendArrow[?, ?, ?, ?, ?, ?] @unchecked =>
-                            effectTag.foreach(t => if t <:< kyo.tag.erased then f(kyo.input))
+                            effectTag match
+                                case Present(t) if t <:< kyo.tag.erased =>
+                                    f(kyo.input) match
+                                        case Present(answer) =>
+                                            // Erasure-forced: the operation's output type is existential from out here.
+                                            collect(kyo.cont.asInstanceOf[Arrow[Any, Any, Any]](answer, Arrow.id), cont, true)
+                                        case Absent => ()
+                                case _ => ()
                         case _: Pending.Suspend[?, ?, ?, ?] => ()
                         case _: Pending.Snapshot[?, ?]      => ()
                 case settled => ensuring(settled, cont)
-        collect(v, Arrow.id)
+        collect(v, Arrow.id, false)
         releaseCollected(collected, ex)
     end release
 

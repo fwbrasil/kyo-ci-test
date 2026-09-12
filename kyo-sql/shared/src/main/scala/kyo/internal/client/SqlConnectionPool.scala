@@ -386,43 +386,48 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
     )(using Frame): A < (S & Async & Abort[SqlException]) =
         // The stopwatch times the wait for a permit, which is the time spent blocked on a saturated pool.
         Clock.stopwatch.flatMap { sw =>
-            Abort.run[SqlException](takeSlot(slotCh, config)).flatMap {
-                case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
-                    Log.warn(
-                        s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
-                    ).andThen(Abort.fail(e))
-                case Result.Failure(e) => Abort.fail(e)
-                case Result.Panic(t)   => Abort.error(Result.Panic(t))
-                case Result.Success(()) =>
-                    sw.elapsed.flatMap(dur => metrics.recordPoolAcquireWait(dur.toMillis)).andThen {
-                        // The permit is returned by a Scope finalizer, not a `Sync.ensure` one. `Sync.ensure` covers
-                        // the interrupt and panic edges but NOT a typed `Abort` handled outside its region: that
-                        // finalizer parks until the calling FIBER ends, so an ordinary statement failure would strand
-                        // the permit until the caller's whole program finished. `Scope.run` closes its scope as part
-                        // of evaluating the body, so the finalizer fires on that edge too.
-                        Scope.run {
-                            Scope.ensure {
-                                Sync.Unsafe.defer {
-                                    discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
-                                }
-                            }.andThen {
-                                Abort.run[SqlException](body).flatMap {
-                                    case Result.Success(a)                     => a
-                                    case Result.Failure(e: SqlServerException) =>
-                                        // DEBUG, not ERROR. The caller is handed the same failure as a typed value and
-                                        // decides what it is: a tool running user-written SQL gets a syntax error back
-                                        // from the server as its ordinary answer. Writing it at ERROR filled an
-                                        // operator's dashboard with entries for a program behaving correctly, and on a
-                                        // stdio transport anything the library writes on its own initiative is a
-                                        // candidate for corrupting the channel. The typed Abort is the report.
-                                        Log.debug(s"kyo.sql: server error sqlState=${e.sqlState} msg=${e.serverMessage}")
-                                            .andThen(Abort.fail[SqlException](e))
-                                    case Result.Failure(e) => Abort.fail[SqlException](e)
-                                    case Result.Panic(t)   => Abort.error(Result.Panic(t))
-                                }
-                            }
+            // The permit is returned by a Scope finalizer, not a `Sync.ensure` one. `Sync.ensure` covers the
+            // interrupt and panic edges but NOT a typed `Abort` handled outside its region: that finalizer parks
+            // until the calling FIBER ends, so an ordinary statement failure would strand the permit until the
+            // caller's whole program finished. `Scope.run` closes its scope as part of evaluating the body, so
+            // the finalizer fires on that edge too.
+            //
+            // `Scope.acquireRelease` around the take, so the return is registered in the step the take
+            // delivers the permit in: an interrupt landing between the take and a registration in a later
+            // step would otherwise leave the permit taken and returned by nobody, and an abandonment runs
+            // nothing of the steps it stopped in front of.
+            Scope.run {
+                Abort.run[SqlException](
+                    Scope.acquireRelease(takeSlot(slotCh, config)) { _ =>
+                        Sync.Unsafe.defer {
+                            discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
                         }
                     }
+                ).flatMap {
+                    case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
+                        Log.warn(
+                            s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
+                        ).andThen(Abort.fail(e))
+                    case Result.Failure(e) => Abort.fail(e)
+                    case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                    case Result.Success(()) =>
+                        sw.elapsed.flatMap(dur => metrics.recordPoolAcquireWait(dur.toMillis)).andThen {
+                            Abort.run[SqlException](body).flatMap {
+                                case Result.Success(a)                     => a
+                                case Result.Failure(e: SqlServerException) =>
+                                    // DEBUG, not ERROR. The caller is handed the same failure as a typed value and
+                                    // decides what it is: a tool running user-written SQL gets a syntax error back
+                                    // from the server as its ordinary answer. Writing it at ERROR filled an
+                                    // operator's dashboard with entries for a program behaving correctly, and on a
+                                    // stdio transport anything the library writes on its own initiative is a
+                                    // candidate for corrupting the channel. The typed Abort is the report.
+                                    Log.debug(s"kyo.sql: server error sqlState=${e.sqlState} msg=${e.serverMessage}")
+                                        .andThen(Abort.fail[SqlException](e))
+                                case Result.Failure(e) => Abort.fail[SqlException](e)
+                                case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                            }
+                        }
+                }
             }
         }
     end withSlot
