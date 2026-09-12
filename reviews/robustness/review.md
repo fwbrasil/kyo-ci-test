@@ -2,7 +2,7 @@
 
 Base `cdefdc9e60`, branch `robustness`, worktree `.claude/worktrees/robustness`. Range and tip are
 re-derived by `package-check.sh` at packaging; the walk below is `sequence.json`, verified against
-the tip by `sequence.py --verify`. Twenty-eight edits, applied one at a time with the Edit tool, in
+the tip by `sequence.py --verify`. Thirty-one edits, applied one at a time with the Edit tool, in
 the order given here: twenty-one in the kernel and the build (its test runner and the benchmark
 configuration), two in `kyo-prelude` and `kyo-bench` for the consumer of the multi-shot fix, two in
 `kyo-data` and `kyo-bench` for the Span fix and its number, and two in `kyo-net`, the last four being
@@ -189,6 +189,19 @@ already exists as the lifecycle hook a region receives on re-entry, and an uncur
 `attachReentryUnlessSettled`, the name it carried until the rehearsal read the "unless" as an edge
 case: `attachReentryToPending` says what it does to a pending outcome, and a settled one passes
 through.
+
+**G. The tooling**
+
+The kernel skill's `SKILL.md` names three files beside it that did not exist yet; this change wrote them
+and they are new files, applied whole.
+
+29. `flags.sh`, new: emits one row per construct of concern on a diff's added lines (casts, `Any`,
+   `@unchecked`, allocations on hot paths, terminology), the skeleton `flags.md` adjudicates.
+30. `package-check.sh`, new: re-derives every mechanical claim a package makes (tip, commit count,
+   surface, clean tree, flag count against the table, the walk reproducing the tip, and whether
+   each benchmark class named references the package under review), one OK, CHECK or STALE per line.
+31. `rulings.md`, new: the reviewer's objections verbatim and dated, the rehearsal lens's rubric,
+   with the 2026-09-12 entry from this change's status report.
 
 ## Adjudication
 
