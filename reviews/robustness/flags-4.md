@@ -1,4 +1,4 @@
-# Flags on the fourth walk's diff, `b0a9d4a666..c3eb9caa24`
+# Flags on the fourth walk's diff, `b0a9d4a666..0beb288861`
 
 Every construct of concern `flags.sh` found on the added lines of pieces P and Q and the scheduler pin's
 repair (which adds none), each with a verdict

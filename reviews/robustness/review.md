@@ -627,8 +627,8 @@ prelude, combinators, STM and actor, 39 suites green.
 ## Fourth walk: an answer that already arrived is delivered, the pool's permit, and a scheduler pin, 13 edits
 
 Pieces P and Q of the derivation, and the repair of the first walk's `SchedulerTest` edit. The walk
-starts from the third walk's end, `b0a9d4a666`, and ends at `c3eb9caa24`; `sequence-4.json` holds the
-13 edits below, verified by `sequence.py --verify b0a9d4a666 c3eb9caa24 reviews/robustness/sequence-4.json`,
+starts from the third walk's end, `b0a9d4a666`, and ends at `0beb288861`; `sequence-4.json` holds the
+13 edits below, verified by `sequence.py --verify b0a9d4a666 0beb288861 reviews/robustness/sequence-4.json`,
 and `flags-4.md` adjudicates its 22 flags, none `REMOVE`. The walk first, then its pins, then the
 task's reporter, then the pool, then the scheduler pin.
 
