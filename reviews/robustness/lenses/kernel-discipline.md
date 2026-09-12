@@ -39,10 +39,10 @@ or any verdict whose substance is that the author found it acceptable.
    lines must have a row. A construct with no row is a finding (`D-missing-n`).
 2. Read every verdict against the rules above. A verdict that is not a category, a number, a
    provenance or REMOVE is a finding (`D-verdict-Fn`).
-3. Check the two hand-added rows (F6, F7): does the diff contain the line each cites, and is the
-   claim one the table can make without a number? If F6 says "measurement pending", confirm the
-   package's evidence section will be where the number lands; that is acceptable only if the row
-   names the benchmark rows that carry it.
+3. Check the two hand-added rows (F10, F11): does the diff contain the line each cites, and is the
+   claim one the table can make without a number? F10 is a hot-path cost and must carry a number
+   with the benchmark files it came from; a "measurement pending" there is acceptable only if the
+   row names the benchmark rows that will carry it.
 4. Tail-call claims: any comment asserting a tail call on a call under a cast, inside a `try`, or
    crossing a method boundary is a finding.
 
