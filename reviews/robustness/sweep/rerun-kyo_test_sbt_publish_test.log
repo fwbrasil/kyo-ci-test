@@ -1,0 +1,691 @@
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::arrayBaseOffset has been called by net.openhft.hashing.UnsafeAccess (file:/Users/fwbrasil/.sbt/boot/scala-2.12.21/org.scala-sbt/sbt/1.12.13/zero-allocation-hashing-0.16.jar)
+WARNING: Please consider reporting this to the maintainers of class net.openhft.hashing.UnsafeAccess
+WARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.scalasbt.ipcsocket.NativeLoader in an unnamed module (file:/Users/fwbrasil/.sbt/boot/scala-2.12.21/org.scala-sbt/sbt/1.12.13/ipcsocket-1.7.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+[info] welcome to sbt 1.12.13 (Eclipse Adoptium Java 25.0.3)
+[info] loading settings for project robustness-build from build.sbt, plugins.sbt...
+[info] loading project definition from /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/project
+[info] loading settings for project kyoJVM from build.sbt...
+[info] resolving key references (261695 settings) ...
+[info] set current project to kyoJVM (in build file:/Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/)
+[info] set current project to kyoJVM (in build file:/Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/)
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/sbt-publish/target/scala-2.12/sbt-1.0/sbt-kyo-test-publish-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/sbt/target/scala-2.12/sbt-1.0/sbt-kyo-test-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-config/js/target/scala-3.8.4/kyo-config_sjs1_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-config/jvm/target/scala-3.8.4/kyo-config_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-config/native/target/scala-3.8.4/kyo-config_native0.5_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-stats-registry/native/target/scala-3.8.4/kyo-stats-registry_native0.5_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-stats-registry/js/target/scala-3.8.4/kyo-stats-registry_sjs1_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-stats-registry/jvm/target/scala-3.8.4/kyo-stats-registry_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/sbt-publish/target/scala-2.12/sbt-1.0/sbt-kyo-test-publish_2.12_1.0-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/sbt/target/scala-2.12/sbt-1.0/sbt-kyo-test_2.12_1.0-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-data/native/target/scala-3.8.4/kyo-data_native0.5_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-scheduler/native/target/scala-3.8.4/kyo-scheduler_native0.5_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-scheduler/js/target/scala-3.8.4/kyo-scheduler_sjs1_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-data/js/target/scala-3.8.4/kyo-data_sjs1_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-scheduler/jvm/target/scala-3.8.4/kyo-scheduler_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-data/jvm/target/scala-3.8.4/kyo-data_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-kernel/native/target/scala-3.8.4/kyo-kernel_native0.5_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-kernel/js/target/scala-3.8.4/kyo-kernel_sjs1_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-kernel/jvm/target/scala-3.8.4/kyo-kernel_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-prelude/native/target/scala-3.8.4/kyo-prelude_native0.5_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-prelude/js/target/scala-3.8.4/kyo-prelude_sjs1_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-prelude/jvm/target/scala-3.8.4/kyo-prelude_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-core/native/target/scala-3.8.4/kyo-core_native0.5_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-core/js/target/scala-3.8.4/kyo-core_sjs1_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-core/jvm/target/scala-3.8.4/kyo-core_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/api/native/target/scala-3.8.4/kyo-test-api_native0.5_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/api/js/target/scala-3.8.4/kyo-test-api_sjs1_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/api/jvm/target/scala-3.8.4/kyo-test-api_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Main Scala API documentation to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/sbt/target/scala-2.12/sbt-1.0/api...
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/runner/native/target/scala-3.8.4/kyo-test-runner_native0.5_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/runner/js/target/scala-3.8.4/kyo-test-runner_sjs1_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Wrote /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/runner/jvm/target/scala-3.8.4/kyo-test-runner_3-1.0.0-RC6+1816-8539d504-SNAPSHOT.pom
+[info] Documenting kyo-config with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Option -classpath was updated
+[info] Main Scala API documentation to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/sbt-publish/target/scala-2.12/sbt-1.0/api...
+[info] compiling 1 Scala source to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/sbt-publish/target/scala-2.12/sbt-1.0/classes ...
+model contains 8 documentable templates
+model contains 7 documentable templates
+[warn] /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/sbt/src/main/scala/kyo/test/sbt/KyoTestJsPlugin.scala:7:1: Could not find any member to link for "ScalaJSPlugin".
+[warn] /** Auto-triggered companion that swaps the JVM framework for the Scala.js framework on any project where both [[KyoTestPlugin]] and
+[warn] ^
+[warn] /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/sbt/src/main/scala/kyo/test/sbt/KyoTestNativePlugin.scala:7:1: Could not find any member to link for "ScalaNativePlugin".
+[warn] /** Auto-triggered companion that swaps the JVM framework for the Scala Native framework on any project where both [[KyoTestPlugin]] and
+[warn] ^
+[warn] /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/sbt-publish/src/main/scala/kyo/test/sbt/SbtKyoTestPlugin.scala:7:1: Could not find any member to link for "KyoTestPlugin".
+[warn] /** sbt AutoPlugin that wires kyo-test into external projects and automatically adds the matching `kyo-test-runner` dependency.
+[warn] ^
+[warn] /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/sbt/src/main/scala/kyo/test/sbt/KyoTestPlugin.scala:6:1: Could not find any member to link for "SbtKyoTestPlugin".
+[warn] /** sbt AutoPlugin that wires the kyo-test framework into a project's `testFrameworks`.
+[warn] ^
+[warn] multiple main classes detected: run 'show discoveredMainClasses' to see the list
+[info] done compiling
+[warn] three warnings found
+[info] Main Scala API documentation successful.
+[warn] one warning found
+[info] Main Scala API documentation successful.
+[info] :: delivering :: io.getkyo#sbt-kyo-test;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:28:38 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/sbt/target/scala-2.12/sbt-1.0/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] 	published sbt-kyo-test to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/sbt-kyo-test.pom
+[info] 	published sbt-kyo-test_2.12_1.0 to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/sbt-kyo-test_2.12_1.0.jar
+[info] 	published sbt-kyo-test_2.12_1.0 to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/sbt-kyo-test_2.12_1.0-javadoc.jar
+[info] 	published sbt-kyo-test_2.12_1.0 to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/sbt-kyo-test_2.12_1.0.pom
+[info] 	published sbt-kyo-test to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/sbt-kyo-test.jar
+[info] 	published sbt-kyo-test to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/sbt-kyo-test-javadoc.jar
+[info] 	published sbt-kyo-test to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/sbt-kyo-test-sources.jar
+[info] 	published sbt-kyo-test_2.12_1.0 to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/sbt-kyo-test_2.12_1.0-sources.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] :: delivering :: io.getkyo#sbt-kyo-test-publish;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:28:38 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/sbt-publish/target/scala-2.12/sbt-1.0/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] 	published sbt-kyo-test-publish to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test-publish/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/sbt-kyo-test-publish-sources.jar
+[info] 	published sbt-kyo-test-publish to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test-publish/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/sbt-kyo-test-publish-javadoc.jar
+[info] 	published sbt-kyo-test-publish_2.12_1.0 to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test-publish/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/sbt-kyo-test-publish_2.12_1.0-sources.jar
+[info] 	published sbt-kyo-test-publish_2.12_1.0 to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test-publish/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/sbt-kyo-test-publish_2.12_1.0.jar
+[info] 	published sbt-kyo-test-publish_2.12_1.0 to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test-publish/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/sbt-kyo-test-publish_2.12_1.0.pom
+[info] 	published sbt-kyo-test-publish_2.12_1.0 to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test-publish/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/sbt-kyo-test-publish_2.12_1.0-javadoc.jar
+[info] 	published sbt-kyo-test-publish to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test-publish/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/sbt-kyo-test-publish.jar
+[info] 	published sbt-kyo-test-publish to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test-publish/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/sbt-kyo-test-publish.pom
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/sbt-kyo-test-publish/scala_2.12/sbt_1.0/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[33m[33m-- Warning: kyo-config/shared/src/main/scala/kyo/DynamicFlag.scala:43:15 -------[0m[0m
+[33m43 |[0m[33mabstract[0m [33mclass[0m [36mDynamicFlag[0m[[36mA[0m]([36mdefault[0m: [32mA[0m, [36mvalidate[0m: [32mA[0m => [32mEither[0m[[32mThrowable[0m, [32mA[0m] = ([36ma[0m: [32mA[0m) => [33mRight[0m(a))([33mimplicit[0m [36mreader[0m: [33mFlag[0m.[32mReader[0m[[32mA[0m])
+[33m[33m   |[0m               ^[0m
+[33m   |[0m           Couldn't resolve a member for the given link query: FlagAdmin
+2 warnings found
+[info] compiling 3 Scala sources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/api/native/target/scala-3.8.4/classes ...
+[info] compiling 3 Scala sources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/api/js/target/scala-3.8.4/classes ...
+[info] Documenting kyo-config with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Xplugin, -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Setting -Xplugin is currently not supported.
+Option -classpath was updated
+[33m[33m-- Warning: kyo-config/shared/src/main/scala/kyo/DynamicFlag.scala:43:15 -------[0m[0m
+[33m43 |[0m[33mabstract[0m [33mclass[0m [36mDynamicFlag[0m[[36mA[0m]([36mdefault[0m: [32mA[0m, [36mvalidate[0m: [32mA[0m => [32mEither[0m[[32mThrowable[0m, [32mA[0m] = ([36ma[0m: [32mA[0m) => [33mRight[0m(a))([33mimplicit[0m [36mreader[0m: [33mFlag[0m.[32mReader[0m[[32mA[0m])
+[33m[33m   |[0m               ^[0m
+[33m   |[0m           Couldn't resolve a member for the given link query: FlagAdmin
+3 warnings found
+[info] Documenting kyo-stats-registry with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Option -classpath was updated
+1 warning found
+[info] done compiling
+[info] compiling 1 Scala source to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/api/js/target/scala-3.8.4/classes ...
+[info] done compiling
+[info] compiling 1 Scala source to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/api/native/target/scala-3.8.4/classes ...
+[info] Documenting kyo-stats-registry with scaladoc 3.9.0-RC4
+[info] done compiling
+[info] done compiling
+[info] compiling 8 Scala sources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/runner/js/target/scala-3.8.4/classes ...
+Skipping unused scalacOptions: -Xplugin, -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Setting -Xplugin is currently not supported.
+[info] compiling 8 Scala sources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/runner/native/target/scala-3.8.4/classes ...
+Option -classpath was updated
+2 warnings found
+[info] Documenting kyo-scheduler with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Xplugin, -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Setting -Xplugin is currently not supported.
+Option -classpath was updated
+[info] done compiling
+[info] done compiling
+2 warnings found
+[info] Documenting kyo-data with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Xplugin, -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Setting -Xplugin is currently not supported.
+Option -classpath was updated
+[33m[33m-- Warning: kyo-data/shared/src/main/scala/kyo/internal/UnsafeBuffer.scala:12:15 [0m[0m
+[33m12 |[0m[33mabstract[0m [33mclass[0m [36mUnsafeBuffer[0m(
+[33m[33m   |[0m               ^[0m
+[33m   |[0m     Couldn't resolve a member for the given link query: JvmUnsafeBuffer
+3 warnings found
+[info] Documenting kyo-scheduler with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Option -classpath was updated
+1 warning found
+[info] Documenting kyo-data with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Option -classpath was updated
+1 warning found
+[info] Documenting kyo-kernel with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Option -classpath was updated
+[33m[33m-- Warning: kyo-kernel/jvm/src/main/scala/kyo/kernel/debug/DebugSession.scala:15:12 [0m[0m
+[33m15 |[0m[33mfinal[0m [33mclass[0m [36mCounting[0m([36mguardsLikeProduction[0m: [32mBoolean[0m) [33mextends[0m [32mDebugger[0m:
+[33m[33m   |[0m            ^[0m
+[33m   |[0m            Couldn't resolve a member for the given link query: Debugger
+[33m[33m-- Warning: kyo-kernel/jvm/src/main/scala/kyo/kernel/debug/ConsoleDebugger.scala:19:12 [0m[0m
+[33m19 |[0m[33mfinal[0m [33mclass[0m [36mConsoleDebugger[0m [33mextends[0m [32mDebugger[0m:
+[33m[33m   |[0m            ^[0m
+[33m   |[0m            Couldn't resolve a member for the given link query: Debugger
+3 warnings found
+[info] Documenting kyo-kernel with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Xplugin, -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Setting -Xplugin is currently not supported.
+Option -classpath was updated
+2 warnings found
+[info] Documenting kyo-prelude with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Xplugin, -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Setting -Xplugin is currently not supported.
+Option -classpath was updated
+2 warnings found
+[info] Documenting kyo-prelude with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Option -classpath was updated
+1 warning found
+[info] Documenting kyo-core with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Xplugin, -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Setting -Xplugin is currently not supported.
+Option -classpath was updated
+[33m[33m-- Warning: kyo-core/shared/src/main/scala/kyo/SecureRandom.scala:26:15 --------[0m[0m
+[33m26 |[0m[33mabstract[0m [33mclass[0m [36mSecureRandom[0m [33mextends[0m [32mSerializable[0m:
+[33m[33m   |[0m               ^[0m
+[33m   |[0m               Couldn't resolve a member for the given link query: live
+3 warnings found
+[info] Documenting kyo-core with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Option -classpath was updated
+[33m[33m-- Warning: kyo-core/shared/src/main/scala/kyo/SecureRandom.scala:26:15 --------[0m[0m
+[33m26 |[0m[33mabstract[0m [33mclass[0m [36mSecureRandom[0m [33mextends[0m [32mSerializable[0m:
+[33m[33m   |[0m               ^[0m
+[33m   |[0m               Couldn't resolve a member for the given link query: live
+2 warnings found
+[info] Documenting kyo-test-api with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Option -classpath was updated
+[33m[33m-- Warning: kyo-test/api/shared/src/main/scala/kyo/test/TestReport.scala:81:21 -[0m[0m
+[33m81 |[0m    [33mfinal[0m [33mcase class[0m [36mCounts[0m(
+[33m[33m   |[0m                     ^[0m
+[33m   |[0mCouldn't resolve a member for the given link query: kyo.test.runner.internal.Summary
+2 warnings found
+[info] Documenting kyo-test-runner with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Option -classpath was updated
+[33m[33m-- Warning: kyo-test/runner/shared/src/main/scala/kyo/test/runner/TestRunner.scala:63:7 [0m[0m
+[33m63 |[0m[33mobject[0m [36mTestRunner[0m:
+[33m[33m   |[0m       ^[0m
+[33m   |[0m       Couldn't resolve a member for the given link query: TestContext
+[33m[33m-- Warning: kyo-test/runner/shared/src/main/scala/kyo/test/runner/Cli.scala:42:7 [0m[0m
+[33m42 |[0m[33mobject[0m [36mCli[0m:
+[33m[33m   |[0m       ^[0m
+[33m   |[0m       Couldn't resolve a member for the given link query: Args
+3 warnings found
+[info] Documenting kyo-test-api with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Xplugin, -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Setting -Xplugin is currently not supported.
+Option -classpath was updated
+[33m[33m-- Warning: kyo-test/api/shared/src/main/scala/kyo/test/TestReport.scala:81:21 -[0m[0m
+[33m81 |[0m    [33mfinal[0m [33mcase class[0m [36mCounts[0m(
+[33m[33m   |[0m                     ^[0m
+[33m   |[0mCouldn't resolve a member for the given link query: kyo.test.runner.internal.Summary
+3 warnings found
+[info] Documenting kyo-test-runner with scaladoc 3.9.0-RC4
+Skipping unused scalacOptions: -Xplugin, -Werror, -Wvalue-discard, -Wnonunit-statement, -Wconf, -Xcheck-macros, -Xkind-projector
+Setting -Xplugin is currently not supported.
+Option -classpath was updated
+[33m[33m-- Warning: kyo-test/runner/native/src/main/scala/kyo/test/runner/NativeFramework.scala:26:6 [0m[0m
+[33m26 |[0m[33mclass[0m [36mNativeFramework[0m [33mextends[0m [32mFramework[0m:
+[33m[33m   |[0m      ^[0m
+[33m   |[0m      Couldn't resolve a member for the given link query: SbtFramework
+[33m[33m-- Warning: kyo-test/runner/shared/src/main/scala/kyo/test/runner/CombinedReporter.scala:40:12 [0m[0m
+[33m40 |[0m[33mfinal[0m [33mclass[0m [36mCombinedReporter[0m(
+[33m[33m   |[0m            ^[0m
+[33m   |[0mCouldn't resolve a member for the given link query: kyo.test.runner.JUnitXmlReporter
+[33m[33m-- Warning: kyo-test/runner/shared/src/main/scala/kyo/test/runner/TestRunner.scala:63:7 [0m[0m
+[33m63 |[0m[33mobject[0m [36mTestRunner[0m:
+[33m[33m   |[0m       ^[0m
+[33m   |[0m       Couldn't resolve a member for the given link query: TestContext
+[33m[33m-- Warning: kyo-test/runner/shared/src/main/scala/kyo/test/runner/Cli.scala:42:7 [0m[0m
+[33m42 |[0m[33mobject[0m [36mCli[0m:
+[33m[33m   |[0m       ^[0m
+[33m   |[0m       Couldn't resolve a member for the given link query: Args
+6 warnings found
+[info] :: delivering :: io.getkyo#kyo-config_sjs1_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-config/js/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] 	published kyo-config_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-config_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-config_sjs1_3.pom
+[info] 	published kyo-config_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-config_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-config_sjs1_3.jar
+[info] 	published kyo-config_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-config_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-config_sjs1_3-sources.jar
+[info] 	published kyo-config_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-config_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-config_sjs1_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-config_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] :: delivering :: io.getkyo#kyo-stats-registry_sjs1_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-stats-registry/js/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] 	published kyo-stats-registry_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-stats-registry_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-stats-registry_sjs1_3.pom
+[info] 	published kyo-stats-registry_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-stats-registry_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-stats-registry_sjs1_3.jar
+[info] 	published kyo-stats-registry_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-stats-registry_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-stats-registry_sjs1_3-sources.jar
+[info] 	published kyo-stats-registry_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-stats-registry_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-stats-registry_sjs1_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-stats-registry_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] :: delivering :: io.getkyo#kyo-scheduler_sjs1_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-scheduler/js/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] 	published kyo-scheduler_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-scheduler_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-scheduler_sjs1_3.pom
+[info] 	published kyo-scheduler_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-scheduler_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-scheduler_sjs1_3.jar
+[info] 	published kyo-scheduler_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-scheduler_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-scheduler_sjs1_3-sources.jar
+[info] 	published kyo-scheduler_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-scheduler_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-scheduler_sjs1_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-scheduler_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] :: delivering :: io.getkyo#kyo-data_sjs1_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-data/js/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-kernel_sjs1_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-kernel/js/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] 	published kyo-kernel_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-kernel_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-kernel_sjs1_3.pom
+[info] 	published kyo-kernel_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-kernel_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-kernel_sjs1_3.jar
+[info] 	published kyo-kernel_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-kernel_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-kernel_sjs1_3-sources.jar
+[info] 	published kyo-kernel_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-kernel_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-kernel_sjs1_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-kernel_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] :: delivering :: io.getkyo#kyo-core_sjs1_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-core/js/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] 	published kyo-core_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-core_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-core_sjs1_3.pom
+[info] 	published kyo-core_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-core_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-core_sjs1_3.jar
+[info] 	published kyo-core_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-core_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-core_sjs1_3-sources.jar
+[info] 	published kyo-core_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-core_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-core_sjs1_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-core_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] :: delivering :: io.getkyo#kyo-stats-registry_native0.5_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-stats-registry/native/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-prelude_sjs1_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-prelude/js/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-config_native0.5_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-config/native/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] 	published kyo-data_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-data_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-data_sjs1_3.pom
+[info] 	published kyo-data_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-data_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-data_sjs1_3.jar
+[info] 	published kyo-data_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-data_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-data_sjs1_3-sources.jar
+[info] 	published kyo-data_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-data_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-data_sjs1_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-data_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] :: delivering :: io.getkyo#kyo-config_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-config/jvm/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-scheduler_native0.5_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-scheduler/native/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-test-api_sjs1_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/api/js/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] 	published kyo-stats-registry_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-stats-registry_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-stats-registry_native0.5_3.pom
+[info] 	published kyo-stats-registry_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-stats-registry_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-stats-registry_native0.5_3.jar
+[info] 	published kyo-stats-registry_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-stats-registry_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-stats-registry_native0.5_3-sources.jar
+[info] 	published kyo-stats-registry_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-stats-registry_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-stats-registry_native0.5_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-stats-registry_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-prelude_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-prelude_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-prelude_sjs1_3.pom
+[info] 	published kyo-prelude_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-prelude_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-prelude_sjs1_3.jar
+[info] 	published kyo-prelude_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-prelude_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-prelude_sjs1_3-sources.jar
+[info] 	published kyo-prelude_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-prelude_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-prelude_sjs1_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-prelude_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-config_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-config_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-config_native0.5_3.pom
+[info] 	published kyo-config_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-config_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-config_native0.5_3.jar
+[info] 	published kyo-config_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-config_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-config_native0.5_3-sources.jar
+[info] 	published kyo-config_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-config_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-config_native0.5_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-config_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] :: delivering :: io.getkyo#kyo-test-runner_sjs1_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/runner/js/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-scheduler_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-scheduler/jvm/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-kernel_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-kernel/jvm/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-stats-registry_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-stats-registry/jvm/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] 	published kyo-config_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-config_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-config_3.pom
+[info] 	published kyo-config_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-config_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-config_3.jar
+[info] 	published kyo-config_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-config_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-config_3-sources.jar
+[info] 	published kyo-config_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-config_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-config_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-config_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-scheduler_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-scheduler_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-scheduler_native0.5_3.pom
+[info] 	published kyo-scheduler_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-scheduler_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-scheduler_native0.5_3.jar
+[info] 	published kyo-scheduler_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-scheduler_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-scheduler_native0.5_3-sources.jar
+[info] 	published kyo-scheduler_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-scheduler_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-scheduler_native0.5_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-scheduler_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-test-api_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-api_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-test-api_sjs1_3.pom
+[info] 	published kyo-test-api_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-api_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-test-api_sjs1_3.jar
+[info] 	published kyo-test-api_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-api_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-test-api_sjs1_3-sources.jar
+[info] 	published kyo-test-api_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-api_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-test-api_sjs1_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-api_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] :: delivering :: io.getkyo#kyo-prelude_native0.5_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-prelude/native/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-kernel_native0.5_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-kernel/native/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-data_native0.5_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-data/native/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-prelude_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-prelude/jvm/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] 	published kyo-test-runner_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-runner_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-test-runner_sjs1_3.pom
+[info] 	published kyo-test-runner_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-runner_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-test-runner_sjs1_3.jar
+[info] 	published kyo-test-runner_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-runner_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-test-runner_sjs1_3-sources.jar
+[info] 	published kyo-test-runner_sjs1_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-runner_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-test-runner_sjs1_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-runner_sjs1_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-scheduler_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-scheduler_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-scheduler_3.pom
+[info] 	published kyo-scheduler_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-scheduler_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-scheduler_3.jar
+[info] 	published kyo-scheduler_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-scheduler_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-scheduler_3-sources.jar
+[info] 	published kyo-scheduler_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-scheduler_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-scheduler_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-scheduler_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-kernel_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-kernel_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-kernel_3.pom
+[info] 	published kyo-kernel_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-kernel_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-kernel_3.jar
+[info] 	published kyo-kernel_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-kernel_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-kernel_3-sources.jar
+[info] 	published kyo-kernel_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-kernel_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-kernel_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-kernel_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-stats-registry_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-stats-registry_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-stats-registry_3.pom
+[info] 	published kyo-stats-registry_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-stats-registry_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-stats-registry_3.jar
+[info] 	published kyo-stats-registry_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-stats-registry_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-stats-registry_3-sources.jar
+[info] 	published kyo-stats-registry_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-stats-registry_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-stats-registry_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-stats-registry_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] :: delivering :: io.getkyo#kyo-data_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-data/jvm/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-test-runner_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/runner/jvm/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-test-api_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/api/jvm/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-test-api_native0.5_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/api/native/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] 	published kyo-prelude_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-prelude_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-prelude_native0.5_3.pom
+[info] 	published kyo-prelude_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-prelude_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-prelude_native0.5_3.jar
+[info] 	published kyo-prelude_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-prelude_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-prelude_native0.5_3-sources.jar
+[info] 	published kyo-prelude_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-prelude_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-prelude_native0.5_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-prelude_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-kernel_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-kernel_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-kernel_native0.5_3.pom
+[info] 	published kyo-kernel_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-kernel_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-kernel_native0.5_3.jar
+[info] 	published kyo-kernel_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-kernel_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-kernel_native0.5_3-sources.jar
+[info] 	published kyo-kernel_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-kernel_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-kernel_native0.5_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-kernel_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-data_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-data_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-data_native0.5_3.pom
+[info] 	published kyo-data_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-data_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-data_native0.5_3.jar
+[info] 	published kyo-data_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-data_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-data_native0.5_3-sources.jar
+[info] 	published kyo-data_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-data_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-data_native0.5_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-data_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-prelude_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-prelude_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-prelude_3.pom
+[info] 	published kyo-prelude_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-prelude_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-prelude_3.jar
+[info] 	published kyo-prelude_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-prelude_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-prelude_3-sources.jar
+[info] 	published kyo-prelude_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-prelude_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-prelude_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-prelude_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] :: delivering :: io.getkyo#kyo-test-runner_native0.5_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/runner/native/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-core_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-core/jvm/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] :: delivering :: io.getkyo#kyo-core_native0.5_3;1.0.0-RC6+1816-8539d504-SNAPSHOT :: 1.0.0-RC6+1816-8539d504-SNAPSHOT :: integration :: Sat Sep 12 12:29:35 GMT-03:00 2026
+[info] 	delivering ivy file to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-core/native/target/scala-3.8.4/ivy-1.0.0-RC6+1816-8539d504-SNAPSHOT.xml
+[info] 	published kyo-data_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-data_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-data_3.pom
+[info] 	published kyo-data_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-data_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-data_3.jar
+[info] 	published kyo-data_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-data_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-data_3-sources.jar
+[info] 	published kyo-data_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-data_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-data_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-data_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-test-runner_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-runner_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-test-runner_3.pom
+[info] 	published kyo-test-runner_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-runner_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-test-runner_3.jar
+[info] 	published kyo-test-runner_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-runner_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-test-runner_3-sources.jar
+[info] 	published kyo-test-runner_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-runner_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-test-runner_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-runner_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-test-api_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-api_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-test-api_3.pom
+[info] 	published kyo-test-api_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-api_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-test-api_3.jar
+[info] 	published kyo-test-api_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-api_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-test-api_3-sources.jar
+[info] 	published kyo-test-api_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-api_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-test-api_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-api_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-test-api_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-api_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-test-api_native0.5_3.pom
+[info] 	published kyo-test-api_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-api_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-test-api_native0.5_3.jar
+[info] 	published kyo-test-api_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-api_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-test-api_native0.5_3-sources.jar
+[info] 	published kyo-test-api_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-api_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-test-api_native0.5_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-api_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-test-runner_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-runner_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-test-runner_native0.5_3.pom
+[info] 	published kyo-test-runner_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-runner_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-test-runner_native0.5_3.jar
+[info] 	published kyo-test-runner_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-runner_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-test-runner_native0.5_3-sources.jar
+[info] 	published kyo-test-runner_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-runner_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-test-runner_native0.5_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-test-runner_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-core_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-core_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-core_3.pom
+[info] 	published kyo-core_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-core_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-core_3.jar
+[info] 	published kyo-core_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-core_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-core_3-sources.jar
+[info] 	published kyo-core_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-core_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-core_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-core_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] 	published kyo-core_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-core_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/poms/kyo-core_native0.5_3.pom
+[info] 	published kyo-core_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-core_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/jars/kyo-core_native0.5_3.jar
+[info] 	published kyo-core_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-core_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/srcs/kyo-core_native0.5_3-sources.jar
+[info] 	published kyo-core_native0.5_3 to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-core_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/docs/kyo-core_native0.5_3-javadoc.jar
+[info] 	published ivy to /Users/fwbrasil/.ivy2/local/io.getkyo/kyo-core_native0.5_3/1.0.0-RC6+1816-8539d504-SNAPSHOT/ivys/ivy.xml
+[info] Running 4 / 4 (100.00%) scripted tests with RunFromSourceMain
+[info] Running kyo-test/js-plugin
+[error] WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+[error] WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/Users/fwbrasil/Library/Caches/Coursier/v1/https/repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.12.13/sbt-launch-1.12.13.jar)
+[error] WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+[error] WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[error] [info] [launcher] getting org.scala-sbt sbt 1.12.13  (this may take some time)...
+[error] [info] [launcher] getting Scala 2.12.21 (for sbt)...
+[error] WARNING: A restricted method in java.lang.System has been called
+[error] WARNING: java.lang.System::load has been called by org.scalasbt.ipcsocket.NativeLoader in an unnamed module (file:/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_af62473a/global/boot/scala-2.12.21/org.scala-sbt/sbt/1.12.13/ipcsocket-1.7.0.jar)
+[error] WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+[error] WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+[error] 
+[info] [info] Updated file /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_af62473a/project/build.properties: set sbt.version to 1.12.13
+[info] [info] welcome to sbt 1.12.13 (Eclipse Adoptium Java 25.0.3)
+[info] [info] loading settings for project sbt_af62473a-build from plugins.sbt...
+[info] [info] loading project definition from /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_af62473a/project
+[info] [info] loading settings for project root from build.sbt...
+[info] [info] set current project to root (in build file:/private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_af62473a/)
+[info] [info] welcome to sbt 1.12.13 (Eclipse Adoptium Java 25.0.3)
+[info] [info] loading settings for project sbt_af62473a-build from plugins.sbt...
+[info] [info] loading project definition from /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_af62473a/project
+[info] [info] loading settings for project root from build.sbt...
+[info] [info] set current project to root (in build file:/private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_af62473a/)
+[info] [info] compiling 1 Scala source to /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_af62473a/target/scala-3.8.4/test-classes ...
+[info] [info] done compiling
+[info] [success] Total time: 2 s, completed Sep 12, 2026, 12:29:41 PM
+[info] [info] Fast optimizing /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_af62473a/target/scala-3.8.4/root-test-fastopt
+[info] Running 1 suite(s) with parallelism 2
+[info] 
+[info] [1m=== MySuite ===[0m
+[info]   [1m[32m[PASS][0m[0m passes  [2m(3ms)[0m
+[info] [2m---[0m MySuite: [32m1 passed[0m, [31m0 failed[0m  [2m(15ms)[0m
+[info] 
+[info] Results: [32m1 passed[0m, [31m0 failed[0m  (total: 15ms)
+[info] [info] kyo-test: 1 tests, 1 passed, 0 failed, 0 cancelled, 0 pending, 0 ignored, 0 timed out, 0 skipped
+[info] [success] Total time: 7 s, completed Sep 12, 2026, 12:29:48 PM
+[info] Running 1 suite(s) with parallelism 2
+[info] 
+[info] [1m=== FailingSuite ===[0m
+[info]   [1m[31m[FAIL][0m[0m fails  [2m(52ms)[0m *** FAILED ***
+[info] 
+[info]     assert(1 + 1 == 3)
+[info] 
+[info] [2m---[0m FailingSuite: [32m0 passed[0m, [31m1 failed[0m  [2m(63ms)[0m
+[info] FAILURES (1):
+[info]   fails  [FAIL]
+[info]     assert(1 + 1 == 3)
+[info] 
+[info] Results: [32m0 passed[0m, [31m1 failed[0m  (total: 63ms)
+[info] [info] kyo-test: 1 tests, 0 passed, 1 failed, 0 cancelled, 0 pending, 0 ignored, 0 timed out, 0 skipped
+[info] [info] TOTAL FAILURES (1):
+[info] [info]   fails  [FAIL]  assert(1 + 1 == 3)
+[info] [error] Failed tests:
+[info] [error] 	FailingSuite
+[info] [error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[info] [error] Total time: 1 s, completed Sep 12, 2026, 12:29:49 PM
+[info] + kyo-test/js-plugin 
+[info] Running kyo-test/jvm-manual
+[error] WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+[error] WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/Users/fwbrasil/Library/Caches/Coursier/v1/https/repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.12.13/sbt-launch-1.12.13.jar)
+[error] WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+[error] WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[error] [info] [launcher] getting org.scala-sbt sbt 1.12.13  (this may take some time)...
+[error] [info] [launcher] getting Scala 2.12.21 (for sbt)...
+[error] WARNING: A restricted method in java.lang.System has been called
+[error] WARNING: java.lang.System::load has been called by org.scalasbt.ipcsocket.NativeLoader in an unnamed module (file:/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_66d75f8c/global/boot/scala-2.12.21/org.scala-sbt/sbt/1.12.13/ipcsocket-1.7.0.jar)
+[error] WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+[error] WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+[error] 
+[info] [info] Updated file /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_66d75f8c/project/build.properties: set sbt.version to 1.12.13
+[info] [info] welcome to sbt 1.12.13 (Eclipse Adoptium Java 25.0.3)
+[info] [info] loading project definition from /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_66d75f8c/project
+[info] [info] loading settings for project root from build.sbt...
+[info] [info] set current project to root (in build file:/private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_66d75f8c/)
+[info] [info] welcome to sbt 1.12.13 (Eclipse Adoptium Java 25.0.3)
+[info] [info] loading project definition from /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_66d75f8c/project
+[info] [info] loading settings for project root from build.sbt...
+[info] [info] set current project to root (in build file:/private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_66d75f8c/)
+[info] [info] compiling 1 Scala source to /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_66d75f8c/target/scala-3.8.4/test-classes ...
+[info] [info] done compiling
+[info] [success] Total time: 2 s, completed Sep 12, 2026, 12:29:54 PM
+[info] Running 1 suite(s) with parallelism 24
+[info] 
+[info] [1m=== MySuite ===[0m
+[info]   [1m[32m[PASS][0m[0m passes  [2m(9ms)[0m
+[info] [2m---[0m MySuite: [32m1 passed[0m, [31m0 failed[0m  [2m(105ms)[0m
+[info] 
+[info] Results: [32m1 passed[0m, [31m0 failed[0m  (total: 105ms)
+[info] [info] kyo-test: 1 tests, 1 passed, 0 failed, 0 cancelled, 0 pending, 0 ignored, 0 timed out, 0 skipped
+[info] [success] Total time: 0 s, completed Sep 12, 2026, 12:29:55 PM
+[info] Running 1 suite(s) with parallelism 24
+[info] 
+[info] [1m=== FailingSuite ===[0m
+[info]   [1m[31m[FAIL][0m[0m fails  [2m(16ms)[0m *** FAILED ***
+[info] 
+[info]     assert(1 + 1 == 3)
+[info] 
+[info] [2m---[0m FailingSuite: [32m0 passed[0m, [31m1 failed[0m  [2m(75ms)[0m
+[info] FAILURES (1):
+[info]   fails  [FAIL]
+[info]     assert(1 + 1 == 3)
+[info] 
+[info] Results: [32m0 passed[0m, [31m1 failed[0m  (total: 75ms)
+[info] [info] kyo-test: 1 tests, 0 passed, 1 failed, 0 cancelled, 0 pending, 0 ignored, 0 timed out, 0 skipped
+[info] [info] TOTAL FAILURES (1):
+[info] [info]   fails  [FAIL]  assert(1 + 1 == 3)
+[info] [error] Failed tests:
+[info] [error] 	FailingSuite
+[info] [error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[info] [error] Total time: 0 s, completed Sep 12, 2026, 12:29:55 PM
+[info] + kyo-test/jvm-manual 
+[info] Running kyo-test/jvm-plugin
+[error] WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+[error] WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/Users/fwbrasil/Library/Caches/Coursier/v1/https/repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.12.13/sbt-launch-1.12.13.jar)
+[error] WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+[error] WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[error] [info] [launcher] getting org.scala-sbt sbt 1.12.13  (this may take some time)...
+[error] [info] [launcher] getting Scala 2.12.21 (for sbt)...
+[error] WARNING: A restricted method in java.lang.System has been called
+[error] WARNING: java.lang.System::load has been called by org.scalasbt.ipcsocket.NativeLoader in an unnamed module (file:/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_3b8f62cd/global/boot/scala-2.12.21/org.scala-sbt/sbt/1.12.13/ipcsocket-1.7.0.jar)
+[error] WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+[error] WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+[error] 
+[info] [info] Updated file /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_3b8f62cd/project/build.properties: set sbt.version to 1.12.13
+[info] [info] welcome to sbt 1.12.13 (Eclipse Adoptium Java 25.0.3)
+[info] [info] loading settings for project sbt_3b8f62cd-build from plugins.sbt...
+[info] [info] loading project definition from /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_3b8f62cd/project
+[info] [info] loading settings for project root from build.sbt...
+[info] [info] set current project to root (in build file:/private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_3b8f62cd/)
+[info] [info] welcome to sbt 1.12.13 (Eclipse Adoptium Java 25.0.3)
+[info] [info] loading settings for project sbt_3b8f62cd-build from plugins.sbt...
+[info] [info] loading project definition from /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_3b8f62cd/project
+[info] [info] loading settings for project root from build.sbt...
+[info] [info] set current project to root (in build file:/private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_3b8f62cd/)
+[info] [info] compiling 1 Scala source to /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_3b8f62cd/target/scala-3.8.4/test-classes ...
+[info] [info] done compiling
+[info] [success] Total time: 2 s, completed Sep 12, 2026, 12:30:01 PM
+[info] Running 1 suite(s) with parallelism 24
+[info] 
+[info] [1m=== MySuite ===[0m
+[info]   [1m[32m[PASS][0m[0m passes  [2m(9ms)[0m
+[info] [2m---[0m MySuite: [32m1 passed[0m, [31m0 failed[0m  [2m(81ms)[0m
+[info] 
+[info] Results: [32m1 passed[0m, [31m0 failed[0m  (total: 81ms)
+[info] [info] kyo-test: 1 tests, 1 passed, 0 failed, 0 cancelled, 0 pending, 0 ignored, 0 timed out, 0 skipped
+[info] [success] Total time: 0 s, completed Sep 12, 2026, 12:30:01 PM
+[info] Running 1 suite(s) with parallelism 24
+[info] 
+[info] [1m=== FailingSuite ===[0m
+[info]   [1m[31m[FAIL][0m[0m fails  [2m(16ms)[0m *** FAILED ***
+[info] 
+[info]     assert(1 + 1 == 3)
+[info] 
+[info] [2m---[0m FailingSuite: [32m0 passed[0m, [31m1 failed[0m  [2m(89ms)[0m
+[info] FAILURES (1):
+[info]   fails  [FAIL]
+[info]     assert(1 + 1 == 3)
+[info] 
+[info] Results: [32m0 passed[0m, [31m1 failed[0m  (total: 89ms)
+[info] [info] kyo-test: 1 tests, 0 passed, 1 failed, 0 cancelled, 0 pending, 0 ignored, 0 timed out, 0 skipped
+[info] [info] TOTAL FAILURES (1):
+[info] [info]   fails  [FAIL]  assert(1 + 1 == 3)
+[info] [error] Failed tests:
+[info] [error] 	FailingSuite
+[info] [error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[info] [error] Total time: 0 s, completed Sep 12, 2026, 12:30:01 PM
+[info] + kyo-test/jvm-plugin 
+[info] Running kyo-test/native-plugin
+[error] WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+[error] WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/Users/fwbrasil/Library/Caches/Coursier/v1/https/repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.12.13/sbt-launch-1.12.13.jar)
+[error] WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+[error] WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[error] [info] [launcher] getting org.scala-sbt sbt 1.12.13  (this may take some time)...
+[error] [info] [launcher] getting Scala 2.12.21 (for sbt)...
+[error] WARNING: A restricted method in java.lang.System has been called
+[error] WARNING: java.lang.System::load has been called by org.scalasbt.ipcsocket.NativeLoader in an unnamed module (file:/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_c3da5d66/global/boot/scala-2.12.21/org.scala-sbt/sbt/1.12.13/ipcsocket-1.7.0.jar)
+[error] WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+[error] WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+[error] 
+[info] [info] Updated file /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_c3da5d66/project/build.properties: set sbt.version to 1.12.13
+[info] [info] welcome to sbt 1.12.13 (Eclipse Adoptium Java 25.0.3)
+[info] [info] loading settings for project sbt_c3da5d66-build from plugins.sbt...
+[info] [info] loading project definition from /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_c3da5d66/project
+[info] [info] loading settings for project root from build.sbt...
+[info] [info] set current project to root (in build file:/private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_c3da5d66/)
+[info] [info] welcome to sbt 1.12.13 (Eclipse Adoptium Java 25.0.3)
+[info] [info] loading settings for project sbt_c3da5d66-build from plugins.sbt...
+[info] [info] loading project definition from /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_c3da5d66/project
+[info] [info] loading settings for project root from build.sbt...
+[info] [info] set current project to root (in build file:/private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_c3da5d66/)
+[info] [info] compiling 1 Scala source to /private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_c3da5d66/target/scala-3.8.4/test-classes ...
+[info] [info] done compiling
+[info] [success] Total time: 2 s, completed Sep 12, 2026, 12:30:07 PM
+[info] [warn] Using deprecated clang version '15.0.0'.
+[info] Versions older than clang '16' can contain known bugs and runtime issues.
+[info] Please upgrade to clang '16' or newer.
+[info] Refer to (http://www.scala-native.org/en/latest/user/setup.html)
+[info] [info] Linking (multithreadingEnabled=detect) (2653 ms)
+[info] [info] Discovered 5108 classes and 26709 methods after classloading
+[info] [info] Checking intermediate code (quick) (129 ms)
+[info] [info] Discovered 5074 classes and 21671 methods after optimization
+[info] [info] Optimizing (debug mode) (2688 ms)
+[info] [info] Produced 111 LLVM IR files
+[info] [info] Generating intermediate code (14115 ms)
+[info] [info] Compiling to native code (23263 ms)
+[info] [info] Linking with [pthread, dl, m]
+[info] [info] Linking native code (immix gc, none lto) (189 ms)
+[info] [info] Postprocessing (0 ms)
+[info] [info] Total (34181 ms)
+[info] [info] Starting process '/private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_c3da5d66/target/scala-3.8.4/root-test' on port '60593'.
+[info] [info] Starting process '/private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_c3da5d66/target/scala-3.8.4/root-test' on port '60596'.
+[info] Running 1 suite(s) with parallelism 1
+[info] 
+[info] [1m=== MySuite ===[0m
+[info]   [1m[32m[PASS][0m[0m passes  [2m(0ms)[0m
+[info] [2m---[0m MySuite: [32m1 passed[0m, [31m0 failed[0m  [2m(15ms)[0m
+[info] 
+[info] Results: [32m1 passed[0m, [31m0 failed[0m  (total: 15ms)
+[info] [info] kyo-test: 1 tests, 1 passed, 0 failed, 0 cancelled, 0 pending, 0 ignored, 0 timed out, 0 skipped
+[info] [success] Total time: 35 s, completed Sep 12, 2026, 12:30:42 PM
+[info] [info] Build skipped: No changes detected in build configuration and class path contents since last build.
+[info] [info] Starting process '/private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_c3da5d66/target/scala-3.8.4/root-test' on port '60600'.
+[info] [info] Starting process '/private/var/folders/zk/vg88k9sn72s9wtl5p19zwcq40000gn/T/sbt_c3da5d66/target/scala-3.8.4/root-test' on port '60602'.
+[info] Running 1 suite(s) with parallelism 1
+[info] 
+[info] [1m=== FailingSuite ===[0m
+[info]   [1m[31m[FAIL][0m[0m fails  [2m(2ms)[0m *** FAILED ***
+[info] 
+[info]     assert(1 + 1 == 3)
+[info] 
+[info] [2m---[0m FailingSuite: [32m0 passed[0m, [31m1 failed[0m  [2m(15ms)[0m
+[info] FAILURES (1):
+[info]   fails  [FAIL]
+[info]     assert(1 + 1 == 3)
+[info] 
+[info] Results: [32m0 passed[0m, [31m1 failed[0m  (total: 15ms)
+[info] [info] kyo-test: 1 tests, 0 passed, 1 failed, 0 cancelled, 0 pending, 0 ignored, 0 timed out, 0 skipped
+[info] [info] TOTAL FAILURES (1):
+[info] [info]   fails  [FAIL]  assert(1 + 1 == 3)
+[info] [error] Failed tests:
+[info] [error] 	FailingSuite
+[info] [error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[info] [error] Total time: 0 s, completed Sep 12, 2026, 12:30:42 PM
+[info] + kyo-test/native-plugin 
+[info] compiling 1 Scala source to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/kyo-test/sbt-publish/target/scala-2.12/sbt-1.0/test-classes ...
+[info] done compiling
+[info] SbtKyoTestPluginTest:
+[info] - SbtKyoTestPlugin.projectSettings contains kyo-test-runner % Test dependency
+[info] - BuildInfo.kyoVersion is non-empty
+[info] - BuildInfo.kyoVersion matches the pattern of a valid version string
+[info] Run completed in 198 milliseconds.
+[info] Total number of tests run: 3
+[info] Suites: completed 1, aborted 0
+[info] Tests: succeeded 3, failed 0, canceled 0, ignored 0, pending 0
+[info] All tests passed.
+[success] Total time: 132 s (0:02:12.0), completed Sep 12, 2026, 12:30:43 PM
