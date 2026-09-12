@@ -59,9 +59,25 @@ while IFS=: read -r file sha; do
         [ "$full" = "$base_sha" ] || [ "$full" = "$tip_sha" ] && continue
         if git merge-base --is-ancestor "$sha" "$tip" 2>/dev/null &&
             ! git merge-base --is-ancestor "$sha" "$base" 2>/dev/null; then
-            # inside the range and not the tip: the shape that dated three rounds of numbers to a
-            # commit the change had already superseded
-            stale "$(basename "$file") dates something to $sha, a commit inside the range that the tip supersedes"
+            case "$(basename "$file")" in
+                report-*.md)
+                    # A lens report names the tip it judged, and committing the report moves the tip past
+                    # it, so the question is not whether the sha is the tip but whether anything the lens
+                    # reads changed since: the sources, the derivation, the flags table, the package. The
+                    # lens reports, the benchmark logs and the sweep logs are not what a lens reads.
+                    changed=$(git diff --name-only "$sha" "$tip" -- . ":(exclude)$dir/lenses" ":(exclude)$dir/bench" ":(exclude)$dir/sweep" | wc -l | tr -d ' ')
+                    if [ "$changed" = "0" ]; then
+                        echo "OK     $(basename "$file") judged at $sha, and nothing a lens reads changed since"
+                    else
+                        stale "$(basename "$file") judged at $sha, and $changed file(s) a lens may read changed since; re-dispatch that lens"
+                    fi
+                    ;;
+                *)
+                    # inside the range and not the tip: the shape that dated three rounds of numbers to a
+                    # commit the change had already superseded
+                    stale "$(basename "$file") dates something to $sha, a commit inside the range that the tip supersedes"
+                    ;;
+            esac
         else
             echo "CHECK  $(basename "$file") names $sha, outside the range; confirm it is history and not a date"
         fi

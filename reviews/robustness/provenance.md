@@ -22,3 +22,8 @@ not about any kernel row, and the package presents them under that heading only.
 either. It is named because edit 25 changes `kyo.Span.updated` in `kyo-data`, and its one row prices
 the index check that method now makes on the JVM, base against tip. It is evidence about that edit
 and nothing in the kernel.
+
+8cdb379d4d: the tip `lenses/fork1-apply-pair.md` read, a static analysis of removing
+`Arrow.apply(v: A)`, named as the tree it describes. The one kernel change since is piece H, the
+unnest on the release walk that this analysis found and recommended; the sources it inventories are
+otherwise those of the package's tip. History, not a date.
