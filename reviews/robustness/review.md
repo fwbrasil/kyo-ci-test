@@ -200,10 +200,11 @@ Verification, on the tip with C:
 |---|---|
 | `kyo-kernelJVM/clean` then `compile`, batch | clean |
 | `kyo-kernelJVM/Jmh/compile` | clean |
-| `kyo-kernelJVM/test` | 1737 passed, 0 failed, 5 canceled (the `DebuggerTest` sessions, which cancel when the debugger is compiled out, as before) |
-| `kyo-preludeJVM/test` and `kyo-coreJVM/test` | 2665 passed, 0 failed, run again after edit 18 with the same result, `ChoiceTest` 33 passed |
+| `kyo-kernelJVM/test` | 1836 passed, 0 failed, 5 canceled (the `DebuggerTest` sessions, which cancel when the debugger is compiled out, as before); 1510 at the base plus the 320 cells, the five cases of edit 8 and the case of edit 9 |
+| `kyo-preludeJVM/test` and `kyo-coreJVM/test` | 2665 passed, 0 failed, on the tip with edit 18, `ChoiceTest` 33 passed |
 | `EvalShapeTest` | 320 cells, all green; the multi-shot cells hang at the base |
-| `kyo-netJVM/testOnly RearmSurvivorsTest` | 2 passed after edits 21 and 22 |
+| `kyo-netJVM/testOnly RearmSurvivorsTest` | 2 passed with edits 21 and 22, on this machine; the arm64 container run is in the CI section |
+| `testKyo --dry-run --phase compile-test --modules kyo-kernelJVM,kyo-dataJVM JVM` | the pass reads `kyo-dataJVM/Test/compile; kyo-kernelJVM/Test/compile; kyo-kernelJVM/Jmh/compile`, the benchmark compile for the module that has one and not for the one that does not |
 | `SpanTest` | 237 passed on each of JVM, JS and Wasm after edit 20 |
 
 Benchmarks. `KernelBench`, 49 rows, is the class; `package-check.sh` confirms it references
