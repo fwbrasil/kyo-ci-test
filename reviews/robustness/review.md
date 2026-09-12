@@ -505,3 +505,69 @@ The reviewer read the status report on 2026-09-12 and asked about each; the stat
    live; the benchmark section above is the case for its necessity, and the region-entry floor
    (`contextRegionsPayEntryExit`, `emittingClausesPayRegionRebuild`) is the lever that would lower it
    for every handler, not a lever this change has.
+
+## Second round: the walk from the applied tip, 31 edits
+
+What the full-matrix CI run on the applied tip surfaced, and the fixes, pieces I to N of the
+derivation. The walk starts from `7fedf93c73`, the state the first walk left in the primary tree, and
+ends at `98bdc584b7`; `sequence-2.json` holds the 31 edits in the order below, verified by
+`sequence.py --verify 7fedf93c73 98bdc584b7 reviews/robustness/sequence-2.json`, and `flags-2.md` is
+the adjudication of its 58 flags, none `REMOVE`. Kernel first, then core, then the rest.
+
+1. **`Eval.scala`, `released`:** the `try` body on its own line, the formatter's shape; nothing changes
+   in meaning, and the build would produce it on the first compile anyway.
+2. **`Eval.scala`, the two public `release`:** the unbudgeted one says why a deferral is walked and not
+   run, for an abandonment as much as for a refusal; the reporting one loses its budget and says a
+   join under a deferral is not reported, since nothing under a step that never ran is waited on.
+3. **`Eval.scala`, `ensuring` and the `Defer` arm:** the step arm goes; a settled value is offered to a
+   waiting `Ensure`, and that is the whole debt.
+4. **`Eval.scala`, the walk's end:** the safepoint save around stepping goes with the stepping.
+5. **`EvalTest.scala`, the #1820 pin:** the settled shape the walk serves, `Effect.defer(value, ensure)`.
+6. **`EvalTest.scala`, the installs-rather-than-registers pin and the box pin,** on the same shape, and
+   the negative pin: an acquire the park stopped in front of is neither run nor released.
+7. **`EvalTest.scala`, the reporting block's comment.**
+8. **`EvalTest.scala`, "does not run a deferral to reach the operation behind it"** replaces the two
+   budget pins.
+9. **`Bracket.scala`, the `Cell` comment:** what the release is told besides the ending.
+10. **`Bracket.scala`, `Live[R]`:** the state the release is owed, in the cell rather than a closure.
+11. **`Bracket.scala`, `Live`'s three endings** hand the state to the release.
+12. **`Bracket.scala`, `apply`:** the acquired value goes through the cell, one closure less per run.
+13. **`Bracket.scala`, `ensuring` and `ensuringWith`:** `ensuring` passes unit; `ensuringWith` makes the
+    state in `derive` and hands it to the body as the first step under the region; `region` takes a
+    body at `Finalize & S` for that read.
+14. **`BracketTest.scala`, the dump pin:** a region dumped into the continuation of a park at a region
+    below it is released, through the debt the dump records; holds at the base, pins the path the
+    boundary's join park relies on.
+15. **`BracketTest.scala`, the `ensuringWith` block,** four cases.
+16. **`Safepoint.scala`, `stop`:** the owner's request supersedes a stale pending stop; a stopper on
+    another thread keeps the base's answer.
+17. **`SafepointTest.scala`, three pins:** the running slice's own stop and a wildcard supersede a
+    stale one; a late stop from another thread does not displace the running slice's own.
+18. **`Sync.scala`, `ensure`'s comment:** the region is a node from the start, the slot per run.
+19. **`Sync.scala`, `ensure`'s region:** `Bracket.ensuringWith` with the slot as `init`.
+20. **`Sync.scala`, `ensure`'s body:** the body function, handed the slot; the deferral is gone.
+21. **`Scope.scala`, `Finalizer.close`:** the drain is registered in the step that claims the backlog,
+    through the unsafe `onComplete`, the continuation evaluated as the safe one evaluates it.
+22. **`IOTask.scala`, `abandon`'s documentation:** the join the remainder stands at is linked; one it
+    has not reached is not.
+23. **`ScopeInterruptTest.scala`, the file's comment.**
+24. **`ScopeInterruptTest.scala`, the `acquireReleaseWith` leaf** requests the interrupt in the step
+    that produces the value.
+25. **`ScopeInterruptTest.scala`, the `Scope.acquire` leaf,** the same.
+26. **`ScopeInterruptTest.scala`, the negative leaf:** an acquire interrupted a step before its value
+    produces nothing and releases nothing.
+27. **`CallbackShapesGen.scala`, the transient registry:** keyed by thread in a concurrent map.
+28. **`CallbackShapesGen.scala`, the registry's comment.**
+29. **`CallbackShapesGen.scala`, the trampoline:** the peek inside the `try`, a missing entry reported.
+30. **`FfiGenErrors.scala`, `reportCallbackFailed`:** cannot itself throw.
+31. **`ReactiveUITeardownTest.scala`:** the waiter count is read once it has settled.
+
+Evidence at the tip: `kyo-kernelJVM/test` green, `kyo-kernelJS/test` 1786, `kyo-kernelNative/test`
+1821, `kyo-coreJVM/test` green, `ScopeTest` six consecutive runs green against two failures in six
+before edit 21, `SafepointTest` and `SafepointConcurrencyTest` 27, `ReactiveUITeardownTest` three
+runs, `kyo-ffi-itNative` `ItStructPtrTest` 6, `kyo-sql-postgresJS` `SqlClientInterruptTest` 3 with the
+close in 3 ms where it was 30 008 ms. The full matrix runs as 34716179868 on the tip.
+
+Open for the reviewer: `Bracket.ensuringWith` is the one public addition (piece K), the missing middle
+between `apply` and `ensuring`; the alternative was a carrier thrown through the region for a typed
+failure, which is control flow by exception.
