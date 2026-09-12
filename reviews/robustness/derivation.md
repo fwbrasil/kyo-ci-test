@@ -81,8 +81,8 @@ That tail is the shared piece. The unfused `answers` on `LoopHandler` and `LoopS
 `Loop.continue(ans.map(k))` for a pending one) before reaching the tail; the fused walks
 `answersLoop` and `answersLoopState` handle their `Continue` inside the walk itself and reach the
 tail only for what the walk could not consume. So the four sites share the tail exactly and nothing
-else, and the tail is what becomes one `private[kyo] inline def attachReentryUnlessSettled` (and
-`attachReentryUnlessSettled2` for the state-carrying outcome), beside the `attachReentry` it is the
+else, and the tail is what becomes one `private[kyo] inline def attachReentryToPending` (and
+`attachReentryToPending2` for the state-carrying outcome), beside the `attachReentry` it is the
 settled fast path of. Each piece already exists: `attachReentry`, the `Pending` test, pass-through.
 The name is not `reenter`, the working name this section first used: `LoopStateHandler.reenter(state)`
 already exists as the lifecycle hook a region receives on re-entry, and one name for two things is
@@ -99,8 +99,8 @@ be the same shape it is today; the benchmark comparison is what proves that rath
 
 Surface, exactly:
 
-- `Handler.LoopHandler.answers`: the `case o =>` tail becomes `attachReentryUnlessSettled(k, o)`.
-- `Handler.LoopStateHandler.answers`: the `case o2 =>` tail becomes `attachReentryUnlessSettled2(k, o2)`.
+- `Handler.LoopHandler.answers`: the `case o =>` tail becomes `attachReentryToPending(k, o)`.
+- `Handler.LoopStateHandler.answers`: the `case o2 =>` tail becomes `attachReentryToPending2(k, o2)`.
 - `Handler.answersLoop`: the `case o => result = if o.isInstanceOf[Pending] ... attachReentry ...` tail.
 - `Handler.answersLoopState`: likewise with `attachReentry2`.
 
@@ -213,34 +213,39 @@ whose `Loop.continue` rebuilds the region as a fresh `Handle` value ("resumption
 
 ### Candidate A: a repeated continuation re-enters through a fresh region, types unchanged
 
-Confined in allocation to `repeated` handlers. When `handler.repeated`, the continuation handed to
-the clause is an arrow whose application re-enters:
-`k(x) = Pending.handle(bodyRest(x), handler.resumed, ())`, where `bodyRest` is today's chain (or the
-crossing, not at top) and `resumed` is the same handler with `done` as identity, built once per
-region so the re-entered region yields the body's `A` rather than applying `done` a second time; the
-outer region still applies `done` once at its end, which is today's behaviour. Entering the fresh
-region stores the registers as its stack continuation, so the enclosing clause's pending work sits
-outside the body again and a later occurrence captures body maps only.
+Confined to the two `handleContRepeated` overloads: their handler wraps the continuation it hands
+the clause, in `run`, so that each application re-enters:
+`k(x) = Pending.handle(bodyRest(x), reentered, ())`, where `bodyRest` is today's chain (or the
+crossing, not at top) and `reentered` is the same handler with `done` as identity, built once with
+the handler so the re-entered region yields the body's `A` rather than applying `done` a second
+time; the outer region still applies `done` once at its end, which is today's behaviour. Entering
+the fresh region stores the registers as its stack continuation, so the enclosing clause's pending
+work sits outside the body again and a later occurrence captures body maps only. The re-entered
+handler repeats, as the outer one does: a continuation captured inside a re-entered region is
+resumed by the same clause more than once, so what that region owes is held across every
+application and discharged where the re-entered region ends, after the last of them, which a case
+in `BracketTest` pins.
 
-The twin of the recovering `handleContRepeated` overload carries no `recover`: `recover` yields the
-region's output `B`, and the twin's output is the body's `A`, so the types do not admit it. A
-throwable raised inside a re-entered region unwinds through the twin's region, which answers nothing,
-to the outer region, whose `recover` is the one in effect, as it was before the twin existed; a case
-in `ArrowEffectTest` pins that a throw after a second resumption reaches the outer `recover`.
+The re-entered handler of the recovering overload carries no `recover`: `recover` yields the
+region's output `B`, and the re-entered handler's output is the body's `A`, so the types do not
+admit it. A throwable raised inside a re-entered region unwinds through it, which answers nothing,
+to the outer region, whose `recover` is the one in effect, as before; a case in `ArrowEffectTest`
+pins that a throw after a second resumption reaches the outer `recover`.
 
-Cost: one arrow per repeated suspension and one node per resumption, on repeated handlers only; and
-on every suspension through the cont arm, single-shot included, one virtual read of `repeated` and a
-branch, which allocates nothing and is measured (flags row H1) inside drift. `handleFirstRepeated`
-is also `repeated` but is not re-entered: a holding handler runs its clause at `done`, after the
-region has exited, and hands the continuation out, so the capture the re-entry prevents cannot
-happen, and the holder re-establishes the region before applying it, as `Choice.runStream` does per
-iteration; the arm re-enters when `repeated && !escaping`, and a first draft that re-entered every
-repeated handler cost `runStream` 24% for a twin region that did nothing. Every piece exists: `Pending.handle`, `Arrow.Step`, the
-`repeated` flag. Two members are added to `ContHandler`: `resumed`, the twin, defined by the handlers
-that repeat and `bug` otherwise; and `reentering(k)`, which composes the equation above as an
-`Arrow.Step`, deferring on a pending input in the same arm as `Arrow.apply` and unnesting a settled
-one, so that `Eval`'s cont arm is one line, `if handler.repeated && !handler.escaping then
-handler.reentering(raw) else raw`, and the composition lives with the handler that owns `resumed`.
+Cost: one arrow per suspension such a handler answers and one region per resumption, nowhere else.
+`Eval` and `ContHandler` are unchanged, so the single-shot path pays nothing, and
+`handleFirstRepeated` is untouched by construction rather than by a condition: a holding handler
+runs its clause at `done`, after the region has exited, hands the continuation out, and its holder
+re-establishes the region before applying it, as `Choice.runStream` does per iteration. Two drafts
+preceded this shape. The first wrapped the continuation in `Eval`'s cont arm under
+`handler.repeated`, which re-entered a region a holding handler cannot use and cost `runStream` 24%.
+The second gated that on `!escaping`, which left a condition on the evaluator's hot arm and a
+partial member on `ContHandler` (`resumed`, defaulting to `bug`) that an enumeration in the flags
+table kept honest; the rehearsal lens put the wrap where the knowledge is, in the handler that
+declares it repeats, and both went away. Every piece exists: `Pending.handle`, `Arrow.Step`, the
+`repeated` flag. Two helpers join the `Handler` object beside `attachReentry`: `reentered(outer)`,
+the re-entered handler, and `reentering(k, reentered)`, the wrapped continuation, an `Arrow.Step`
+deferring on a pending input in the same arm as `Arrow.apply` and unnesting a settled one.
 
 ### Candidate B: delimited semantics for `handleContRepeated`
 

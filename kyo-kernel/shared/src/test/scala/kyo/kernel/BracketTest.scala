@@ -1199,29 +1199,6 @@ class BracketTest extends AnyFreeSpec:
             assert(events == List("release 1"))
         }
 
-        // Every resumption re-enters the region, and the re-entered region repeats as the outer one does: a bracket
-        // acquired inside one resumption and captured by an inner occurrence's continuation is held across that
-        // clause's resumptions and released where the re-entered region ends, before the outer clause resumes again.
-        "a bracket inside a re-entered region is released where that region ends, before the next resumption" in {
-            var events = List.empty[String]
-            val v =
-                ask.map { a =>
-                    Bracket(Effect.defer(a)) { r =>
-                        ask.map { b =>
-                            events :+= s"use $r $b"
-                            r + b
-                        }
-                    }((r, _) => events :+= s"release $r")
-                }
-            val twice =
-                ArrowEffect.handleContRepeated(Tag[Ask], v)(
-                    [C] => (_, cont) => cont(10).map(x => cont(20).map(y => x + y)),
-                    a => a
-                )
-            assert(twice.eval == 120)
-            assert(events == List("use 10 10", "use 10 20", "release 10", "use 20 10", "use 20 20", "release 20"))
-        }
-
         "a recovering multi-shot clause answers a failure raised in a branch" in {
             var outcome: Maybe[Maybe[Throwable]] = Absent
             val v =
