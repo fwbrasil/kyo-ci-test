@@ -16,10 +16,10 @@ its first run, which is fixed here as well.
 | piece | what | where |
 |---|---|---|
 | A | downstream suites in the verification rule | `kyo-kernel/CONTRIBUTING.md`, item 13 |
-| B | the shape matrix, with the at-top law as its oracle | `EvalShapeTest.scala`, 224 cells |
+| B | the shape matrix, its values derived by the fusion law | `EvalShapeTest.scala`, 320 cells |
 | fix | multi-shot re-entry is not delimited, found by B | `Handler`, `ArrowEffect`, `Eval`, `ArrowEffectTest` |
 | C | one re-entry path for the four loop tails | `Handler` |
-| bench | `KernelBench` follows the `ContextEffect.handle` signature | `KernelBench.scala` |
+| E | the benchmark class compiles against `ContextEffect.handle`'s signature | `KernelBench.scala` |
 
 Piece D of the derivation, a reference interpreter, was not attempted: the night went to the defect
 B found, and D stays on the list as the long-run item with B's matrix as the subset it would
@@ -69,12 +69,13 @@ One sentence per edit, the sentence to say when applying it.
 
 **B. The matrix**
 
-2. `EvalShapeTest.scala`, new: seven scenarios over the five handler kinds, each hand-derived once
-   for its base configuration and then asserted equal across eight configurations by the three laws
-   the kernel already states (at-top: an inert `ContextEffect` binding or an inert `handleCont`
-   region above the handler changes nothing; fusion: n consecutive occurrences answer independently;
-   suspension: a clause that first performs an effect handled outside the region answers the same),
-   for n in 0 to 3, 224 cells, every one with a concrete expected value.
+2. `EvalShapeTest.scala`, new: ten scenarios, every handler kind with every arm it has, each
+   stating only what its clause does to one occurrence; the fusion law (`law`, `lawState`, `runs`,
+   a fold of that one occurrence over n) derives the value and the clause-run count for n in 0 to
+   3, and the at-top law (an inert `ContextEffect` binding or an inert `handleCont` region above the
+   handler changes nothing) and the suspension law (a clause that first performs an effect handled
+   outside the region answers the same) assert it across eight configurations, 320 cells, every one
+   asserting a concrete value and none written by hand.
 
 **The fix**
 
@@ -92,9 +93,11 @@ One sentence per edit, the sentence to say when applying it.
    `repeated` carried so the twin's region owes and holds as the original does.
 8. `Eval.scala`, cont arm: the continuation handed to the clause is `handler.reentering(raw)` when
    `handler.repeated` and `raw` otherwise, `raw` being today's chain or crossing.
-9. `ArrowEffectTest.scala`: three cases pin the fix, a clause resuming twice over two occurrences
-   (60), `done` running once at the outer end and not per resumption (1060, not 4060), and three
-   occurrences (180).
+9. `ArrowEffectTest.scala`: four cases pin the fix, a clause resuming twice over two occurrences
+   (60), `done` running once at the outer end and not per resumption (1060, not 4060), three
+   occurrences (180), and a throw after a second resumption reaching the outer `recover` (4), since
+   the recovering overload's twin carries no `recover` of its own: its output is the body's `A`, and
+   `recover` yields the region's `B`.
 
 **C. One re-entry path**
 
@@ -109,7 +112,7 @@ One sentence per edit, the sentence to say when applying it.
     the one the site already carried.
 15. `Handler.scala`, `answersLoopState`: the tail becomes the call.
 
-**Bench**
+**E. The benchmark class compiles**
 
 16. `KernelBench.scala`: four `ContextEffect.handle(Tag[X])(...)` calls become
     `ContextEffect.handle(Tag[X], ...)`, the two-group signature every context handler has since
@@ -157,7 +160,7 @@ Verification, on the tip with C:
 | `kyo-kernelJVM/Jmh/compile` | clean |
 | `kyo-kernelJVM/test` | 1737 passed, 0 failed, 5 canceled (the `DebuggerTest` sessions, which cancel when the debugger is compiled out, as before) |
 | `kyo-preludeJVM/test` and `kyo-coreJVM/test` | 2665 passed, 0 failed |
-| `EvalShapeTest` | 224 cells, all green; the multi-shot cells hang at the base |
+| `EvalShapeTest` | 320 cells, all green; the multi-shot cells hang at the base |
 
 Benchmarks. `KernelBench`, 49 rows, is the class; `package-check.sh` confirms it references
 `kyo.kernel`. The rows the fix reaches by name, before running: every row answering through

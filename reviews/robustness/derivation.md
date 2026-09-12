@@ -12,47 +12,60 @@ suite builds, and makes the one rule those bugs circled live in one place.
 
 ### A. Downstream suites in the verification rule (CONTRIBUTING, not kernel source)
 
-`kyo-kernel/CONTRIBUTING.md`, checklist item 13, gains one sentence: a change to the evaluator, the
-handlers or the representation is not verified by the kernel suite alone; `kyo-preludeJVM/test` and
-`kyo-coreJVM/test` run before it is called green, with `Batch.run` as the example of a consumer
-composing the combinators in a shape the kernel suite does not. The kernel skill would be the other
-home, but it is not tracked in this tree.
+`kyo-kernel/CONTRIBUTING.md`, checklist item 13, gains two sentences. The first: a change to the
+evaluator, the handlers or the representation is not verified by the kernel suite alone;
+`kyo-preludeJVM/test` and `kyo-coreJVM/test` run before it is called green, with `Batch.run` as the
+example of a consumer composing the combinators in a shape the kernel suite does not. The second: a
+change to a public signature also runs `kyo-kernelJVM/Jmh/compile`, because the benchmark sources
+are compiled by neither `test` nor CI's test action. The second sentence was added when the first
+was applied: `KernelBench` no longer compiled against `ContextEffect.handle`'s two parameter groups,
+a signature change from before the base that nothing had noticed, which is piece E below. The kernel
+skill would be the other home, but it is not tracked in this tree.
 
 ### B. The shape matrix, with the at-top law as its oracle (test only)
 
 New file `kyo-kernel/shared/src/test/scala/kyo/kernel/internal/EvalShapeTest.scala`, the prefix
 being the source it exercises.
 
-The oracle problem: a hundred generated cells need a hundred expected values, and deriving each by
-hand reintroduces the judgment that missed both bugs. So the expected value is derived once per
-scenario, for its simplest configuration, and every other configuration is asserted equal to it by a
-law the kernel already states:
+The oracle problem: a few hundred cells need a few hundred expected values, and deriving each by
+hand reintroduces the judgment that missed both bugs. So a scenario states only what its clause does
+to one occurrence, and three laws the kernel already states derive every cell from that:
 
+- **fusion law**: n consecutive occurrences answered by a clause are n independent answers. In the
+  file this is `law(resumes, ends)`, a fold of one occurrence over the rest (each resumption
+  contributes its value once per path below it, plus the rest's total; an empty `resumes` ends the
+  region with `ends`), and `lawState` is the same fold for a clause that threads state. The number of
+  times a clause runs is the same fold, `runs`. No value of `prog(n)` is written by hand; the
+  scenario supplies the one-occurrence answer and the law supplies n. This is what puts the fused
+  walks (`answersLoop`, `answersLoopState`) on the same footing as the unfused `answers`.
 - **at-top law** (skill: "a fast path must be observationally equivalent to the law it specialises"):
   a scenario run with the handler at the top of the stack equals the same scenario with an inert
   region pushed above the handler. An inert region is a `ContextEffect` binding for a tag the
   scenario never reads, and separately a `handleCont` region for an arrow effect the scenario never
   performs, so both region kinds are exercised as the interloper.
-- **fusion law**: one occurrence answered equals three consecutive occurrences answered with the
-  same clause, each answer independent. This is what puts the fused walks (`answersLoop`,
-  `answersLoopState`) on the same footing as the unfused `answers`.
 - **suspension law**: a clause that answers immediately equals the same clause that first performs an
   effect handled outside the region and then answers identically. This is the first bug's cell.
 
-Scenario axes, generated:
+Scenarios, enumerated: every handler kind with every arm it has, which is the cross product of the
+axes below restricted to the arms that exist.
 
     handler   in {handleCont, handleContRepeated, handleLoop, handleLoopState, Mask}
-    outcome   in {continue, done-from-clause, done-from-body}   (where the handler has the arm)
-    resume    in {once, twice, never}                           (handleCont and Repeated only)
+    resume    in {once, never}            for handleCont; {once, twice, never} for handleContRepeated
+    outcome   in {continue, done-from-clause}   for handleLoop and handleLoopState
+    Mask      one scenario: a handleCont tunnelled past an inner handler for the same tag
 
-Every cell asserts one concrete value, the hand-derived one for the base configuration, and the
-laws multiply it across configurations rather than asking for new derivations.
+Ten scenarios. The combinations absent are absent because the arm does not exist: a single-shot
+`handleCont` cannot resume twice, `handleLoop` and `handleLoopState` have no resumption count, and
+`Mask` has no clause of its own. Each scenario runs for n in 0 to 3 under eight configurations (the
+base, the two inert regions above, the three suspending variants, and two with an inner handler for
+the same tag between the handler and the program), 320 cells, every one asserting a concrete value.
 
-Beyond the laws, the cells whose expected values are genuinely different are kept as hand-derived
-geography and named for what they pin: an interior region with the *same* tag as the handler (the
-`EvalTest` inner/outer cases, which the crossing rewrite tripped), and a peeled continuation resumed
-with a computation, typed over the computation and typed over `Any` (the two cases from
-`12074d8523`). Those are not generated; they are the reason the generator has the axes it has.
+The inner-handler configuration is the geography the `EvalTest` inner/outer cases pin (the cells the
+crossing rewrite tripped), carried into the matrix as a configuration of every scenario. The other
+geography the two bugs left behind, a peeled continuation resumed with a computation typed over the
+computation and over `Any`, stays where `12074d8523` put it, in `ArrowEffectTest`, and is not
+duplicated here: it is a contract of `Arrow.apply`'s overload pair (fork 1), not a shape of the
+evaluator.
 
 ### C. One re-entry path (kernel source)
 
@@ -96,6 +109,15 @@ Must not change: `attachReentry` and `attachReentry2` themselves (they become ca
 two `Eval` not-at-top arms (they already make a single direct `attachReentry` call on a value known
 to be pending; folding them in would be a change to `Eval` with no duplication to remove), every node
 class, and the public surface.
+
+### E. The benchmark class compiles (`KernelBench.scala`)
+
+Four `ContextEffect.handle(Tag[X])(...)` calls in `kyo-kernel/jvm/src/jmh/scala/kyo/kernel/bench/KernelBench.scala`
+become `ContextEffect.handle(Tag[X], ...)`, the two-group signature every context handler has had
+since before the base; the benchmark sources had not been compiled since, which A's second sentence
+now prevents. No measurement changes. Surface: that file only, and only those four calls. Found by
+applying A, and added to the change because the evidence below needs the class to build on both
+legs.
 
 ### D. A reference interpreter (test only, time-boxed)
 
@@ -183,8 +205,8 @@ whose `Loop.continue` rebuilds the region as a fresh `Handle` value ("resumption
 
 ### Candidate A: a repeated continuation re-enters through a fresh region, types unchanged
 
-Confined to `repeated` handlers, so the single-shot `handleCont` hot path is untouched. When
-`handler.repeated`, the continuation handed to the clause is an arrow whose application re-enters:
+Confined in allocation to `repeated` handlers. When `handler.repeated`, the continuation handed to
+the clause is an arrow whose application re-enters:
 `k(x) = Pending.handle(bodyRest(x), handler.resumed, ())`, where `bodyRest` is today's chain (or the
 crossing, not at top) and `resumed` is the same handler with `done` as identity, built once per
 region so the re-entered region yields the body's `A` rather than applying `done` a second time; the
@@ -192,9 +214,21 @@ outer region still applies `done` once at its end, which is today's behaviour. E
 region stores the registers as its stack continuation, so the enclosing clause's pending work sits
 outside the body again and a later occurrence captures body maps only.
 
-Cost: one arrow per repeated suspension and one node per resumption, on repeated handlers only.
-`handleFirstRepeated` is also `repeated` and gets the same treatment. Every piece exists:
-`Pending.handle`, `Arrow.Step`, the `repeated` flag; `resumed` is a member added to `ContHandler`.
+The twin of the recovering `handleContRepeated` overload carries no `recover`: `recover` yields the
+region's output `B`, and the twin's output is the body's `A`, so the types do not admit it. A
+throwable raised inside a re-entered region unwinds through the twin's region, which answers nothing,
+to the outer region, whose `recover` is the one in effect, as it was before the twin existed; a case
+in `ArrowEffectTest` pins that a throw after a second resumption reaches the outer `recover`.
+
+Cost: one arrow per repeated suspension and one node per resumption, on repeated handlers only; and
+on every suspension through the cont arm, single-shot included, one virtual read of `repeated` and a
+branch, which allocates nothing and is measured (flags row H1) inside drift. `handleFirstRepeated` is
+also `repeated` and gets the same treatment. Every piece exists: `Pending.handle`, `Arrow.Step`, the
+`repeated` flag. Two members are added to `ContHandler`: `resumed`, the twin, defined by the handlers
+that repeat and `bug` otherwise; and `reentering(k)`, which composes the equation above as an
+`Arrow.Step`, deferring on a pending input in the same arm as `Arrow.apply` and unnesting a settled
+one, so that `Eval`'s cont arm is one line, `if handler.repeated then handler.reentering(raw) else
+raw`, and the composition lives with the handler that owns `resumed`.
 
 ### Candidate B: delimited semantics for `handleContRepeated`
 

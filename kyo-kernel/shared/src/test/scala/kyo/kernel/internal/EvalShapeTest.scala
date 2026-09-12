@@ -4,11 +4,14 @@ import kyo.*
 import kyo.kernel.*
 import kyo.kernel.ArrowEffect.Mask
 
-/** The shapes the evaluator has to agree on, generated rather than picked.
+/** The shapes the evaluator has to agree on: every handler kind with every arm it has, each under every configuration the evaluator
+  * distinguishes.
   *
-  * Every scenario derives one value by hand, for its simplest configuration, and the laws below multiply that value across every
-  * configuration the evaluator distinguishes. A cell that disagrees with its scenario's base value is a path the evaluator takes for that
-  * configuration that diverges from the law it specialises.
+  * A scenario states what its clause does to one occurrence, and the laws derive everything else. The fusion law folds that one
+  * occurrence over n consecutive ones, so the value of n occurrences is never written down by hand; the at-top law asserts the value
+  * unchanged under an inert region pushed above the handler; the suspension law asserts it unchanged when the clause first performs an
+  * effect answered outside the region. A cell that disagrees is a path the evaluator takes for that configuration that diverges from the
+  * law it specialises.
   */
 class EvalShapeTest extends Test:
 
@@ -41,13 +44,39 @@ class EvalShapeTest extends Test:
     def innerAbove[A, S](v: A < (Ask & S)): A < S =
         ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, k) => k(1000))
 
+    /** The fusion law: n consecutive occurrences are n independent answers. `resumes` lists the values one occurrence resumes with,
+      * empty when the clause ends the region with `ends`; each resumption contributes its value once per path below it, plus the rest's
+      * total, so `prog(n)` follows from one occurrence by folding.
+      */
+    def law(resumes: List[Int], ends: Int = 0)(n: Int): Int =
+        if n == 0 then 0
+        else if resumes.isEmpty then ends
+        else
+            val paths = (1 until n).foldLeft(1)((acc, _) => acc * resumes.size)
+            resumes.map(r => r * paths + law(resumes, ends)(n - 1)).sum
+
+    /** The fusion law for a clause that threads state: `step` answers one occurrence from the state, or ends the region with `ends`, and
+      * `done` sees the final state and the body's value.
+      */
+    def lawState[St](init: St, step: St => Maybe[(St, Int)], done: (St, Int) => Int, ends: Int = 0)(n: Int): Int =
+        def loop(st: St, acc: Int, i: Int): Int =
+            if i == n then done(st, acc)
+            else
+                step(st) match
+                    case Present(next) => loop(next._1, acc + next._2, i + 1)
+                    case Absent        => ends
+        loop(init, 0, 0)
+    end lawState
+
+    /** How many times a clause runs for n occurrences: once for the first, then once more per resumption for the rest. */
+    def runs(resumes: Int)(n: Int): Int = if n == 0 then 0 else 1 + resumes * runs(resumes)(n - 1)
+
     /** One handler under test.
       *
       * `run` installs it with a clause that answers at once; `suspending` installs the same handler with a clause that performs `say("s")`
-      * and then answers identically, so the two must agree on the value and differ only in the log. `expected(n)` is the hand-derived value
-      * for `prog(n)`, `inner(n)` the value when an inner region for the same tag sits between the handler and the program, and `says(n)`
-      * how many times the suspending clause runs for `prog(n)`: once per occurrence unless the clause ends the region or resumes more
-      * than once.
+      * and then answers identically, so the two must agree on the value and differ only in the log. `expected(n)` is the value of
+      * `prog(n)` by the fusion law, `inner(n)` the value when an inner region for the same tag sits between the handler and the program,
+      * and `says(n)` how many times the suspending clause runs for `prog(n)`.
       */
     final case class Scenario(
         name: String,
@@ -55,25 +84,37 @@ class EvalShapeTest extends Test:
         suspending: (Int < (Ask & Say)) => Int < Say,
         expected: Int => Int,
         inner: Int => Int,
-        says: Int => Int = n => n
+        says: Int => Int
     )
 
+    val counter: (Int, Int) => Int = (st, a) => a * 1000 + st
+
+    // every handler kind with every arm it has: handleCont resumes once or never, handleContRepeated once, twice or never, handleLoop
+    // and handleLoopState continue or end from the clause, Mask has no arm of its own and tunnels a handleCont past an inner handler
     val scenarios: List[Scenario] = List(
         Scenario(
             "handleCont resuming once",
             v => ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, k) => k(7)),
             v => ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, k) => say("s").map(_ => k(7))),
-            n => 7 * n,
-            n => 1000 * n
+            law(List(7)),
+            law(List(1000)),
+            runs(1)
         ),
         Scenario(
             "handleCont never resuming",
             v => ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, _) => -1),
             v => ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, _) => say("s").map(_ => -1)),
-            n => if n == 0 then 0 else -1,
-            n => 1000 * n,
-            // the first occurrence ends the region, so the clause runs once at most
-            says = n => math.min(n, 1)
+            law(Nil, ends = -1),
+            law(List(1000)),
+            runs(0)
+        ),
+        Scenario(
+            "handleContRepeated resuming once",
+            v => ArrowEffect.handleContRepeated(Tag[Ask], v)([C] => (_, k) => k(7), a => a),
+            v => ArrowEffect.handleContRepeated(Tag[Ask], v)([C] => (_, k) => say("s").map(_ => k(7)), a => a),
+            law(List(7)),
+            law(List(1000)),
+            runs(1)
         ),
         Scenario(
             "handleContRepeated resuming twice",
@@ -83,42 +124,53 @@ class EvalShapeTest extends Test:
                     [C] => (_, k) => say("s").map(_ => k(7).map(a => k(8).map(b => a + b))),
                     a => a
                 ),
-            // every path through n binary choices of 7 or 8, summed: each position contributes 2^(n-1) * (7 + 8)
-            n => if n == 0 then 0 else n * (1 << (n - 1)) * 15,
-            n => 1000 * n,
-            // occurrence k is reached once per path through the k-1 choices before it: 1 + 2 + ... + 2^(n-1)
-            says = n => (1 << n) - 1
+            law(List(7, 8)),
+            law(List(1000)),
+            runs(2)
+        ),
+        Scenario(
+            "handleContRepeated never resuming",
+            v => ArrowEffect.handleContRepeated(Tag[Ask], v)([C] => (_, _) => -1, a => a),
+            v => ArrowEffect.handleContRepeated(Tag[Ask], v)([C] => (_, _) => say("s").map(_ => -1), a => a),
+            law(Nil, ends = -1),
+            law(List(1000)),
+            runs(0)
         ),
         Scenario(
             "handleLoop continuing",
             v => ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(7)),
             v => ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => say("s").map(_ => Loop.continue(7))),
-            n => 7 * n,
-            n => 1000 * n
+            law(List(7)),
+            law(List(1000)),
+            runs(1)
         ),
         Scenario(
             "handleLoop ending from the clause",
             v => ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.done(-1), a => a),
             v => ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => say("s").map(_ => Loop.done(-1)), a => a),
-            n => if n == 0 then 0 else -1,
-            n => 1000 * n,
-            says = n => math.min(n, 1)
+            law(Nil, ends = -1),
+            law(List(1000)),
+            runs(0)
         ),
         Scenario(
             "handleLoopState threading a counter",
-            v =>
-                ArrowEffect.handleLoopState(Tag[Ask], 100, v)(
-                    [C] => (st, _) => Loop.continue(st + 1, 7 + st),
-                    (st, a) => a * 1000 + st
-                ),
+            v => ArrowEffect.handleLoopState(Tag[Ask], 100, v)([C] => (st, _) => Loop.continue(st + 1, 7 + st), counter),
             v =>
                 ArrowEffect.handleLoopState(Tag[Ask], 100, v)(
                     [C] => (st, _) => say("s").map(_ => Loop.continue(st + 1, 7 + st)),
-                    (st, a) => a * 1000 + st
+                    counter
                 ),
-            // answers 107, 108, ... 106 + n; then the done arm sees their sum and the final counter
-            n => (0 until n).map(i => 107 + i).sum * 1000 + (100 + n),
-            n => 1000 * n * 1000 + 100
+            lawState(100, st => Present((st + 1, 7 + st)), counter),
+            lawState(100, st => Present((st, 1000)), counter),
+            runs(1)
+        ),
+        Scenario(
+            "handleLoopState ending from the clause",
+            v => ArrowEffect.handleLoopState(Tag[Ask], 100, v)([C] => (_, _) => Loop.done(-1), counter),
+            v => ArrowEffect.handleLoopState(Tag[Ask], 100, v)([C] => (_, _) => say("s").map(_ => Loop.done(-1)), counter),
+            lawState(100, _ => Absent, counter, ends = -1),
+            lawState(100, st => Present((st, 1000)), counter),
+            runs(0)
         ),
         Scenario(
             "Mask tunnelling past an inner handler",
@@ -127,8 +179,9 @@ class EvalShapeTest extends Test:
                 ArrowEffect.handleCont(Tag[Ask], Mask.run[Ask](innerAbove(Mask[Ask](v))))(
                     [C] => (_, k) => say("s").map(_ => k(7))
                 ),
-            n => 7 * n,
-            n => 1000 * n
+            law(List(7)),
+            law(List(1000)),
+            runs(1)
         )
     )
 

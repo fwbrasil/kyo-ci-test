@@ -207,6 +207,18 @@ class ArrowEffectTest extends Test:
             )
             assert(r.eval == 180)
         }
+
+        "a throw after a second resumption reaches the outer recover" in {
+            // the region a resumption re-enters answers nothing on its own: a throwable raised inside it unwinds to the
+            // outer region, whose recover is the one in effect, as before the re-entry existed
+            val v = ask.map(a => ask.map(b => if a + b == 15 then throw new IllegalStateException("boom") else a + b))
+            val r: Int < Any = ArrowEffect.handleContRepeated(Tag[Ask], v)(
+                [C] => (_, k) => k(7).map(x => k(8).map(y => x + y)),
+                a => a,
+                ex => Maybe(ex.getMessage.length)
+            )
+            assert(r.eval == 4)
+        }
     }
 
     "handleFirst" - {
