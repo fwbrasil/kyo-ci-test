@@ -8,7 +8,8 @@ with the exact text an Edit-tool call will replace. For every file the sequence 
 content is taken from `git show <base>:<file>`, the edits are applied in order (each `old` must occur
 exactly once at the moment it is applied), and the result is compared byte for byte with
 `git show <tip>:<file>`. Files changed in the range but absent from the sequence are reported too, so
-an edit the package forgot is visible before the walk starts. No worktree is touched.
+an edit the package forgot is visible before the walk starts; the review package's own files under
+`reviews/` are not part of any walk and are left out of that check. No worktree is touched.
 
 Exit status is nonzero on any mismatch, ambiguity, or omission.
 """
@@ -67,6 +68,8 @@ def main() -> int:
             print(f"OK     {file}: sequence reproduces the tip")
 
     for file in sorted(changed(base, tip) - set(order)):
+        if file.startswith("reviews/"):
+            continue
         print(f"STALE  {file}: changed in the range but absent from the sequence")
         status = 1
 
