@@ -186,6 +186,12 @@ object ArrowEffect:
       * its extent, leaving later resumptions running against something already released; held, it discharges once,
       * where this region ends.
       *
+      * Each application of the continuation re-enters this region: the resumption runs under a fresh region of this
+      * handler, so an operation it performs never captures what the clause itself left pending between two
+      * applications. A bracket acquired inside one resumption belongs to that fresh region and is released where it
+      * ends, before the clause applies the continuation again; only a bracket acquired in the extent this region
+      * holds waits for this region's end.
+      *
       * Only for a clause that really does resume more than once: holding keeps the obligation longer than a
       * single-shot clause needs. A clause that resumes more than once without it is refused at the bracket it
       * re-enters.

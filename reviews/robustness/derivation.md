@@ -8,7 +8,10 @@ answered by a region other than the clause's own, at-top versus not-at-top. Each
 1510 kernel tests and surfaced in a consumer. This change makes that shape a first-class thing the
 suite builds, and makes the one rule those bugs circled live in one place.
 
-## The four pieces
+## The pieces
+
+A to D are the list's items; E and F were added as the work found them, E under this heading and F
+under "What A costs", beside the measurement that motivated it.
 
 ### A. Downstream suites in the verification rule (CONTRIBUTING, not kernel source)
 
@@ -159,7 +162,8 @@ and the driver closed by the test before the write registration was applied; the
 job reported the log without `registerWrite`. The leaf now arms write first, which orders the two
 registrations, and asserts that order in the log, so the property the reorder rests on is pinned
 rather than assumed; what the leaf is there to pin, no rearm under edge-triggered registration, does
-not depend on which direction is armed first. kyo-net is identical to main on this branch.
+not depend on which direction is armed first. kyo-net's sources are identical to main on this
+branch; this leaf is the branch's one kyo-net change.
 
 Neither is a kernel piece; they are the last two edits of the live-review walk, in their own group,
 so the range's surface is fully declared and fully applied.
@@ -279,15 +283,15 @@ through the recovering overload, whose handler and re-entered handler are their 
 flags table has a number for that allocation site rather than a borrowed one) and
 `repeatedClausesPayReentry` (`suspensionBaseline`'s program under a repeated handler, ten thousand
 operations each resumed once). Base against tip with the allocation profiler: the re-entered handler costs 16 bytes and 4.7 ns per region
-entry; the re-entry costs 64 bytes and 61 ns per resumption, which makes the second row 7.2 times
-slower than the base. The mechanism is the design: every application of the continuation enters a
+entry; the re-entry costs 64 bytes and 61 ns per resumption, which makes `repeatedClausesPayReentry` 7.2 times
+slower than the base leg. The mechanism is the design: every application of the continuation enters a
 region, and a region's entry and exit is what the existing rows `contextRegionsPayEntryExit` and
 `emittingClausesPayRegionRebuild` measure at 73 and 89 ns. There is no cheaper frame that would do:
 what stops an inner occurrence from capturing the clause's pending work is a handler on the stack
 above that work, because a crossing packs every stack entry between an occurrence and the handler
 that answers it into the continuation.
 
-The base was flat on that row because it was wrong: a clause with pending work between
+The base leg's number on that row is flat because the base is wrong: a clause with pending work between
 resumptions captured that work into every inner continuation. The tree's one consumer,
 `Choice.run`, paid the delimiter by hand, wrapping each resumption in a fresh `Choice.run`, which is
 why `kyo-prelude`'s suite passed at the base with sequential choices. With the kernel delimiting,
