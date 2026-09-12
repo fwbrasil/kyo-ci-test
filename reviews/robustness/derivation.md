@@ -99,8 +99,8 @@ be the same shape it is today; the benchmark comparison is what proves that rath
 
 Surface, exactly:
 
-- `Handler.LoopHandler.answers`: the `case o =>` tail becomes `reenter(k, o)`.
-- `Handler.LoopStateHandler.answers`: the `case o2 =>` tail becomes `reenter2(k, o2)`.
+- `Handler.LoopHandler.answers`: the `case o =>` tail becomes `attachReentryUnlessSettled(k, o)`.
+- `Handler.LoopStateHandler.answers`: the `case o2 =>` tail becomes `attachReentryUnlessSettled2(k, o2)`.
 - `Handler.answersLoop`: the `case o => result = if o.isInstanceOf[Pending] ... attachReentry ...` tail.
 - `Handler.answersLoopState`: likewise with `attachReentry2`.
 
@@ -239,8 +239,8 @@ repeated handler cost `runStream` 24% for a twin region that did nothing. Every 
 `repeated` flag. Two members are added to `ContHandler`: `resumed`, the twin, defined by the handlers
 that repeat and `bug` otherwise; and `reentering(k)`, which composes the equation above as an
 `Arrow.Step`, deferring on a pending input in the same arm as `Arrow.apply` and unnesting a settled
-one, so that `Eval`'s cont arm is one line, `if handler.repeated then handler.reentering(raw) else
-raw`, and the composition lives with the handler that owns `resumed`.
+one, so that `Eval`'s cont arm is one line, `if handler.repeated && !handler.escaping then
+handler.reentering(raw) else raw`, and the composition lives with the handler that owns `resumed`.
 
 ### Candidate B: delimited semantics for `handleContRepeated`
 
