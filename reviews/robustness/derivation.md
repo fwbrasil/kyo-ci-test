@@ -106,6 +106,17 @@ second interpreter with its own bugs. The decision rule: it ships only if it pas
 independently, on the strength of its own reading of the combinators. If it does not, it is written
 up as a design note with what diverged, and B stands as the robustness measure.
 
+## Also on the branch, outside the kernel
+
+`kyo-data/shared/src/main/scala/kyo/Span.scala`, `Span.updated`: an explicit index check raising the
+`IndexOutOfBoundsException` its scaladoc already promised. The CI matrix for the branch found it: the
+JVM's array store raised the exception, Scala.js treats an out-of-bounds store as undefined behaviour,
+and on the Wasm backend it traps and kills the node process, which ended `kyo-dataWasm`'s test run.
+The `SpanTest` case that reached it is on the branch's ancestry (`c52e4bd8fa`), not on main, so the
+contract was untested off the JVM until now. The check follows `Chunk`'s shape and message. Not a
+kernel piece and not part of the live-review walk; it is listed so the range's surface is fully
+declared.
+
 ## What is not in this change
 
 - The `Arrow.apply(v: A)` / `apply[S2](v: A < S2)` overload pair. At an erased input the static
