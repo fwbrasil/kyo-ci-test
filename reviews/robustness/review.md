@@ -2,9 +2,9 @@
 
 Base `cdefdc9e60`, branch `robustness`, worktree `.claude/worktrees/robustness`. Range and tip are
 re-derived by `package-check.sh` at packaging; the walk below is `sequence.json`, verified against
-the tip by `sequence.py --verify`. Twenty-one edits, applied one at a time with the Edit tool, in
-the order given here: seventeen in the kernel, two in `kyo-prelude` and `kyo-bench` for the consumer
-of the multi-shot fix, and one each in `kyo-data` and `kyo-net` that the branch's CI matrix required.
+the tip by `sequence.py --verify`. Twenty edits, applied one at a time with the Edit tool, in the
+order given here: sixteen in the kernel, two in `kyo-prelude` and `kyo-bench` for the consumer of
+the multi-shot fix, and one each in `kyo-data` and `kyo-net` that the branch's CI matrix required.
 
 ## What this change is
 
@@ -48,14 +48,18 @@ remaining work runs twice; each run re-suspends at the second occurrence with a 
 continuation captures the same pending work again. Geometric. Single-shot never shows it because the
 captured work runs once either way; the README's multi-shot example has one occurrence.
 
-The fix keeps every signature and today's `done` behaviour: when `handler.repeated`, the continuation
-handed to the clause is an arrow whose application re-enters a fresh region through the handler's
-`resumed` twin, the same clause with `done` as identity. Entering the fresh region stores the
-registers as that region's continuation, so the enclosing clause's pending work sits outside the body
-again and a later occurrence captures body maps only. `done` still runs once, at the outer region's
-end. Confined to `repeated` handlers; the single-shot `handleCont` path is untouched. Candidate B, the
-delimited reading with `done` per resumption and a changed `handleContRepeated` signature, is
-recorded in the derivation as the alternative and is fork 4 below.
+The fix keeps every signature and today's `done` behaviour: when the handler repeats and does not
+escape, the continuation handed to the clause is an arrow whose application re-enters a fresh region
+through the handler's `resumed` twin, the same clause with `done` as identity. Entering the fresh
+region stores the registers as that region's continuation, so the enclosing clause's pending work
+sits outside the body again and a later occurrence captures body maps only. `done` still runs once,
+at the outer region's end. Confined in allocation to those handlers: the single-shot cont arm pays
+one virtual read of `repeated`, measured inside drift. A holding handler, `handleFirstRepeated`, is
+not re-entered: it runs its clause at `done`, after the region has exited, and hands the
+continuation out, so the capture cannot happen there and its holder re-establishes the region
+before applying it, as `Choice.runStream` does per iteration. Candidate B, the delimited reading
+with `done` per resumption and a changed `handleContRepeated` signature, is recorded in the
+derivation as the alternative and is fork 4 below.
 
 ## The walk
 
@@ -83,7 +87,8 @@ One sentence per edit, the sentence to say when applying it.
 
 3. `Handler.scala`: `import kyo.bug`, for the next edit.
 4. `Handler.scala`, `ContHandler`: `resumed` is the handler a repeated continuation re-enters through,
-   this handler with `done` as identity, defined only by handlers that repeat and `bug` otherwise;
+   this handler with `done` as identity, defined only by handlers whose clause resumes inside the
+   region and `bug` otherwise;
    `reentering(k)` wraps a continuation so each application re-enters the region through
    `Pending.handle(k(x), resumed, ())`, an `Arrow.Step` deferring on a pending input in the same arm
    shape as `Arrow.apply`.
@@ -91,11 +96,11 @@ One sentence per edit, the sentence to say when applying it.
    `ContHandler` whose `run` delegates to the handler's own through the `outer` self alias and whose
    `done` is identity, built once at region entry.
 6. `ArrowEffect.scala`, the recovering `handleContRepeated` overload: the same twin.
-7. `ArrowEffect.scala`, `handleFirstRepeated`: the same twin over `A | First`, with `escaping` and
-   `repeated` carried so the twin's region owes and holds as the original does.
-8. `Eval.scala`, cont arm: the continuation handed to the clause is `handler.reentering(raw)` when
-   `handler.repeated` and `raw` otherwise, `raw` being today's chain or crossing.
-9. `ArrowEffectTest.scala`: four cases pin the fix, a clause resuming twice over two occurrences
+7. `Eval.scala`, cont arm: the continuation handed to the clause is `handler.reentering(raw)` when
+   the handler repeats and does not escape, and `raw` otherwise, `raw` being today's chain or
+   crossing; a holding handler runs its clause after the region has exited and hands the
+   continuation out, so it is never re-entered, and `escaping` is read only when `repeated` holds.
+8. `ArrowEffectTest.scala`: four cases pin the fix, a clause resuming twice over two occurrences
    (60), `done` running once at the outer end and not per resumption (1060, not 4060), three
    occurrences (180), and a throw after a second resumption reaching the outer `recover` (4), since
    the recovering overload's twin carries no `recover` of its own: its output is the body's `A`, and
@@ -103,51 +108,51 @@ One sentence per edit, the sentence to say when applying it.
 
 **C. One re-entry path**
 
-10. `Handler.scala`: `attachReentryUnlessSettled(reentry, outcome)` is the tail the four loop sites
+9. `Handler.scala`: `attachReentryUnlessSettled(reentry, outcome)` is the tail the four loop sites
     spelled, a pending outcome gets the cont attached through `attachReentry`, a settled one passes
     through without building the arrow, `inline` so the fused walks expand it as the branch they
     carried.
-11. `Handler.scala`: `attachReentryUnlessSettled2`, the same over the state-carrying outcome.
-12. `Handler.scala`, `LoopHandler.answers`: the tail becomes the call.
-13. `Handler.scala`, `LoopStateHandler.answers`: the tail becomes the call.
-14. `Handler.scala`, `answersLoop`: the tail becomes the call; the `k.asInstanceOf` on the line is
+10. `Handler.scala`: `attachReentryUnlessSettled2`, the same over the state-carrying outcome.
+11. `Handler.scala`, `LoopHandler.answers`: the tail becomes the call.
+12. `Handler.scala`, `LoopStateHandler.answers`: the tail becomes the call.
+13. `Handler.scala`, `answersLoop`: the tail becomes the call; the `k.asInstanceOf` on the line is
     the one the site already carried.
-15. `Handler.scala`, `answersLoopState`: the tail becomes the call.
+14. `Handler.scala`, `answersLoopState`: the tail becomes the call.
 
 **E. The benchmark class compiles**
 
-16. `KernelBench.scala`: four `ContextEffect.handle(Tag[X])(...)` calls become
+15. `KernelBench.scala`: four `ContextEffect.handle(Tag[X])(...)` calls become
     `ContextEffect.handle(Tag[X], ...)`, the two-group signature every context handler has since
     `cdefdc9e60`; the benchmark sources had not been compiled since, which item 13 now prevents.
-17. `KernelBench.scala`: two rows enter a multi-shot region, `repeatedClausesPayReentry` (the
+16. `KernelBench.scala`: two rows enter a multi-shot region, `repeatedClausesPayReentry` (the
     `suspensionBaseline` program under `handleContRepeated`, one region, ten thousand operations) and
     `repeatedRegionsPayEntry` (a region per operation), the rows that measure the twin built per
     region and the arrow built per operation, since no row entered such a region before.
 
 **F. The consumer**
 
-18. `Choice.scala`, `run`: the clause is `Kyo.foreach` over the alternatives applied to the
+17. `Choice.scala`, `run`: the clause is `Kyo.foreach` over the alternatives applied to the
     continuation, flattened once; the inner `Choice.run(cont(v))` it wrapped each resumption in was
     the consumer re-entering a region by hand, which the continuation now does on every application,
     so keeping it would enter two regions per resumption.
-19. `ChoiceBench.scala`, new in `kyo-bench`: `run` and `runStream` over ten sequential binary
+18. `ChoiceBench.scala`, new in `kyo-bench`: `run` and `runStream` over ten sequential binary
     choice points, the rows that measure what Choice pays per resumption.
 
 **Outside the kernel**
 
-20. `Span.scala`, `updated`: an explicit index check raising the `IndexOutOfBoundsException` the
+19. `Span.scala`, `updated`: an explicit index check raising the `IndexOutOfBoundsException` the
     scaladoc already promises, in `Chunk`'s shape and message; the JVM's array store delivered it,
     Scala.js treats the store as undefined behaviour and its fatal error ends the node process, and
     the Wasm backend traps with the same effect, which is how the branch's CI matrix found it, on
     every JS and Wasm job, through the `SpanTest` case on the branch's ancestry.
-21. `RearmSurvivorsTest.scala`: the leaf arms write before read, so the write registration precedes
+20. `RearmSurvivorsTest.scala`: the leaf arms write before read, so the write registration precedes
     the read registration in the poller driver's command order and is in the log by the time the
     read event can fire; armed the other way, the EOF event could be dispatched and the driver closed
     before the write registration was applied, which the linux-arm64 JVM job reported as a missing
     `registerWrite`. What the leaf pins, no rearm under edge-triggered registration, does not depend
     on the order.
 
-The name in edits 10 and 11 is not `reenter`, the derivation's working name: `LoopStateHandler.reenter(state)`
+The name in edits 9 and 10 is not `reenter`, the derivation's working name: `LoopStateHandler.reenter(state)`
 already exists as the lifecycle hook a region receives on re-entry, and an uncurried overload of
 `attachReentry` itself would differ from the arrow form `Eval` applies by a comma.
 
@@ -161,15 +166,14 @@ each with a verdict that is a category from the cast ladder, a measurement, a `m
 |----|------|------------|-------|---------|
 | F1 | ArrowEffect.scala:213 | `new Handler.ContHandler[I, O, E, A, A, S & S2]:` | allocation | measured: the `resumed` twin, built once per region entry. `repeatedRegionsPayEntry`, base against tip, `-f 3 -prof gc`: 16 bytes per region, 4.7 ns per region, +8.8% on a row that does nothing but enter and leave such regions (`bench/compare-rows-base-vs-AC.md`) |
 | F2 | ArrowEffect.scala:274 | `new Handler.ContHandler[I, O, E, A, A, S & S2]:` | allocation | measured: as F1, the same object for the recovering overload |
-| F3 | ArrowEffect.scala:990 | `new Handler.ContHandler[I, O, E, A \| First, A \| First, S & S2]:` | allocation | measured: as F1, the same object for `handleFirstRepeated` |
-| F4 | Handler.scala:105 | `new Arrow.Step[O[V], A, E & S]:` | allocation | measured, and the number is a regression: one arrow per operation and one region node per application. `repeatedClausesPayReentry`, base against tip, `-f 3 -prof gc`: 64 bytes and 61 ns per operation, +615% (`bench/compare-rows-base-vs-AC.md`). Every other row is inside drift. The mechanism and what is done about it are in the benchmark section below |
-| F5 | Handler.scala:109 | `case p: Pending[O[V], S3] @unchecked => Effect.defer(p, this, cont2)` | cast | erasure-forced: a typed pattern binding at the arm's type, the runtime test being `Pending` alone; the same arm as `Arrow.apply`'s and `Suspend.crossing`'s |
-| F6 | Handler.scala:386 | `else outcome.asInstanceOf[Outcome[A < (E & S), B < S] < S]` | cast | moved: the pass-through cast `LoopHandler.answers` and `answersLoop` each carried at their tail, written once. Representation assertion: the two outcome types differ only in the `Continue` payload, and a settled outcome reaching the tail is not a `Continue` |
-| F7 | Handler.scala:413 | `else outcome.asInstanceOf[Outcome2[State, A < (E & S), B < S] < S]` | cast | moved: as F6, for the state-carrying outcome |
-| F8 | Handler.scala:478 | `result = attachReentryUnlessSettled[...](k.asInstanceOf[Arrow[O[C], A, E & S]], o)` | cast | moved: the same `k.asInstanceOf` on the same site at the base; erasure-forced, the fused walk rebinding `k` per operation |
-| F9 | Handler.scala:556 | `result = attachReentryUnlessSettled2[...](k.asInstanceOf[Arrow[O[C], A, E & S]], o2)` | cast | moved: as F8 |
-| H1 | Eval.scala, cont arm | `val continuation = if handler.repeated then handler.reentering(raw) else raw` | hot-path cost | measured, inside drift: `repeated` is a virtual `Boolean` on the arm every `handleCont` answer takes; no `handleCont` row outside the 5% band at `-f 1`, and the three rows outside it confirm as noise at `-f 3`; the numbers are in the benchmark section |
-| H2 | Handler.scala:93 | `def resumed: ContHandler[I, O, E, A, A, S] = bug(...)` | claim | justified by construction, with the reach stated: only `reentering` calls `resumed`, only `Eval`'s cont arm calls `reentering`, under `handler.repeated`; six sites override `repeated` at the tip, the three repeated handlers and their three twins, and all six override `resumed`, the twins with `this` |
+| F3 | Handler.scala:106 | `new Arrow.Step[O[V], A, E & S]:` | allocation | measured, and the number is a regression on a row no consumer has: one arrow per operation answered by a clause that resumes inside its region, and one region node per application. `repeatedClausesPayReentry`, base against tip, `-f 3 -prof gc`: 64 bytes and 61 ns per operation, +615% (`bench/compare-rows-base-vs-AC.md`). Every other row is inside drift. The mechanism, the consumer's numbers and the decision are in the benchmark section and open ruling 5 |
+| F4 | Handler.scala:110 | `case p: Pending[O[V], S3] @unchecked => Effect.defer(p, this, cont2)` | cast | erasure-forced: a typed pattern binding at the arm's type, the runtime test being `Pending` alone; the same arm as `Arrow.apply`'s and `Suspend.crossing`'s |
+| F5 | Handler.scala:387 | `else outcome.asInstanceOf[Outcome[A < (E & S), B < S] < S]` | cast | moved: the pass-through cast `LoopHandler.answers` and `answersLoop` each carried at their tail, written once. Representation assertion: the two outcome types differ only in the `Continue` payload, and a settled outcome reaching the tail is not a `Continue` |
+| F6 | Handler.scala:414 | `else outcome.asInstanceOf[Outcome2[State, A < (E & S), B < S] < S]` | cast | moved: as F5, for the state-carrying outcome |
+| F7 | Handler.scala:479 | `result = attachReentryUnlessSettled[...](k.asInstanceOf[Arrow[O[C], A, E & S]], o)` | cast | moved: the same `k.asInstanceOf` on the same site at the base; erasure-forced, the fused walk rebinding `k` per operation |
+| F8 | Handler.scala:557 | `result = attachReentryUnlessSettled2[...](k.asInstanceOf[Arrow[O[C], A, E & S]], o2)` | cast | moved: as F7 |
+| H1 | Eval.scala, cont arm | `val continuation = if handler.repeated && !handler.escaping then handler.reentering(raw) else raw` | hot-path cost | measured, inside drift: `repeated` is a virtual `Boolean` on the arm every `handleCont` answer takes, `escaping` a second read only when `repeated` holds; no row outside the 5% band survives `-f 3`, base against tip over the whole class; the numbers are in the benchmark section |
+| H2 | Handler.scala:93 | `def resumed: ContHandler[I, O, E, A, A, S] = bug(...)` | claim | justified by construction, with the reach stated: only `reentering` calls `resumed`, only `Eval`'s cont arm calls `reentering`, under `repeated && !escaping`; five sites override `repeated` at the tip, the two `handleContRepeated` handlers and their twins, which override `resumed`, and `handleFirstRepeated`, which also overrides `escaping`, so the arm never asks it |
 
 ## Evidence
 
@@ -180,18 +184,19 @@ Verification, on the tip with C:
 | `kyo-kernelJVM/clean` then `compile`, batch | clean |
 | `kyo-kernelJVM/Jmh/compile` | clean |
 | `kyo-kernelJVM/test` | 1737 passed, 0 failed, 5 canceled (the `DebuggerTest` sessions, which cancel when the debugger is compiled out, as before) |
-| `kyo-preludeJVM/test` and `kyo-coreJVM/test` | 2665 passed, 0 failed, run again after edit 18 with the same result, `ChoiceTest` 33 passed |
+| `kyo-preludeJVM/test` and `kyo-coreJVM/test` | 2665 passed, 0 failed, run again after edit 17 with the same result, `ChoiceTest` 33 passed |
 | `EvalShapeTest` | 320 cells, all green; the multi-shot cells hang at the base |
-| `kyo-netJVM/testOnly RearmSurvivorsTest` | 2 passed after edit 21 |
-| `SpanTest` | 237 passed on each of JVM, JS and Wasm after edit 20 |
+| `kyo-netJVM/testOnly RearmSurvivorsTest` | 2 passed after edit 20 |
+| `SpanTest` | 237 passed on each of JVM, JS and Wasm after edit 19 |
 
 Benchmarks. `KernelBench`, 49 rows, is the class; `package-check.sh` confirms it references
 `kyo.kernel`. The rows the fix reaches by name, before running: every row answering through
-`handleCont`, since the arm gained the `repeated` test. The rows C reaches: `handleLoopAnswersInPlace`,
+`handleCont`, since the arm gained the `repeated` test, with `escaping` read only when it holds. The
+rows C reaches: `handleLoopAnswersInPlace`,
 `handleLoopFusesContinuation`, `statefulAnswersPaySuccessor`, and every fusion row, since the tails
 are inside the fused templates.
 
-A first round, the base (`dcadee780d`, the base plus edit 16 alone, so the class compiles) against
+A first round, the base (`dcadee780d`, the base plus edit 15 alone, so the class compiles) against
 the fix alone, same session, back to back, `-f 1`, all 49 rows: `bench/compare-base-vs-A.md`. No
 `handleCont` row outside the 5% band. Three rows outside it, none on a path the fix touches:
 
@@ -204,7 +209,7 @@ the fix alone, same session, back to back, `-f 1`, all 49 rows: `bench/compare-b
 `-f 3` on those three, both legs back to back: `bench/compare-base-vs-A-f3.md`, zero suspects.
 
 Three legs in one session, back to back, `-f 1`, 49 rows each: the base (`dcadee780d`, the base
-plus edit 16 so the class compiles), the fix alone (A, edits 3 to 9), and the tip (edits 10 to 15
+plus edit 15 so the class compiles), the fix alone (A, edits 3 to 8), and the tip (edits 9 to 14
 added). The fix against the tip attributes C alone, one variable (`bench/compare-A-vs-AC.md`): zero
 suspects; the rows the tails sit in, `handleLoopAnswersInPlace` +0.4%, `handleLoopFusesContinuation`
 +0.0%, `statefulAnswersPaySuccessor` -0.9%, and every fusion row within 2%. The base against the tip
@@ -221,7 +226,7 @@ either comparison, all inside their combined errors at `-f 1`, and their `-f 3` 
 `-f 3`, three legs back to back on those four rows: `bench/compare-base-vs-AC-f3.md` and
 `bench/compare-A-vs-AC-f3.md`, zero suspects in both.
 
-**The multi-shot rows, and the regression they show.** Two rows added by edit 17 enter a
+**The multi-shot rows, and the regression they show.** Two rows added by edit 16 enter a
 `handleContRepeated` region, which no row did before. Base against tip, `-f 3 -prof gc`,
 `bench/compare-rows-base-vs-AC.md`:
 
@@ -239,7 +244,7 @@ handler on the stack above that work: a crossing packs every stack entry between
 the handler that answers it into the continuation. The base was flat on this row because it was
 wrong on the shape the matrix found. The tree's one consumer of the repeated handlers, `Choice.run`,
 paid the delimiter by hand, wrapping each resumption in a fresh `Choice.run`; with the kernel
-delimiting, that wrapper is a second region per resumption, and edit 18 removes it. What that nets
+delimiting, that wrapper is a second region per resumption, and edit 17 removes it. What that nets
 for Choice is the `ChoiceBench` comparison below; the decision on the price itself is open ruling 5.
 
 CI, on `fwbrasil/kyo-ci-test`: the full matrix (linux-x64, linux-arm64, windows-x64; JVM, JS, Native,
@@ -247,7 +252,7 @@ Wasm), run 34672876184 on the gated-matrix commit, found every JS and Wasm job d
 `SpanTest`: the branch's ancestry adds an out-of-bounds case for `Span.updated`, whose scaladoc
 promises `IndexOutOfBoundsException` while the code relied on the JVM's array store; on JS the fatal
 undefined-behaviour error escapes the harness and node exits, on Wasm the store traps with the same
-effect. Fixed by edit 20, reproduced locally before the fix (the same run-terminated exception)
+effect. Fixed by edit 19, reproduced locally before the fix (the same run-terminated exception)
 and verified after it: `SpanTest` 237 passed on each of JVM, JS and Wasm, the out-of-bounds case
 included. The matrix's final state is reported with the sweep below.
 
@@ -265,7 +270,7 @@ work and is reported in the summary that proposes this review.
 3. **D not attempted**, per the rule in the derivation; the outcome is reported above.
 4. **Fork 4, ruled A by the author under the overnight autonomy.** The alternative, candidate B, is
    `done` per resumption with a changed `handleContRepeated` signature, the standard delimited
-   reading. Edit 9's second case (1060, not 4060) is the line that pins the ruling; reversing it is a
+   reading. Edit 8's second case (1060, not 4060) is the line that pins the ruling; reversing it is a
    public-surface decision. B would not change the cost in ruling 5: it re-enters a region per
    resumption as well.
 5. **The per-resumption region is the price of a kernel that delimits.** Accepting A means every
@@ -274,6 +279,6 @@ work and is reported in the summary that proposes this review.
    `handleCont`, and no consumer in the tree has that shape. The alternative is the base's contract,
    documented rather than enforced: a repeated clause with pending work between resumptions must
    re-enter a region itself, as `Choice.run` did, and one that does not hangs. Recommendation: A,
-   with edit 18, because the kernel is then correct by construction for the shape the matrix found
+   with edit 17, because the kernel is then correct by construction for the shape the matrix found
    and the one consumer pays what it paid before; the Choice numbers are the evidence for the second
    half of that sentence.

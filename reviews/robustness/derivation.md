@@ -230,8 +230,12 @@ in `ArrowEffectTest` pins that a throw after a second resumption reaches the out
 
 Cost: one arrow per repeated suspension and one node per resumption, on repeated handlers only; and
 on every suspension through the cont arm, single-shot included, one virtual read of `repeated` and a
-branch, which allocates nothing and is measured (flags row H1) inside drift. `handleFirstRepeated` is
-also `repeated` and gets the same treatment. Every piece exists: `Pending.handle`, `Arrow.Step`, the
+branch, which allocates nothing and is measured (flags row H1) inside drift. `handleFirstRepeated`
+is also `repeated` but is not re-entered: a holding handler runs its clause at `done`, after the
+region has exited, and hands the continuation out, so the capture the re-entry prevents cannot
+happen, and the holder re-establishes the region before applying it, as `Choice.runStream` does per
+iteration; the arm re-enters when `repeated && !escaping`, and a first draft that re-entered every
+repeated handler cost `runStream` 24% for a twin region that did nothing. Every piece exists: `Pending.handle`, `Arrow.Step`, the
 `repeated` flag. Two members are added to `ContHandler`: `resumed`, the twin, defined by the handlers
 that repeat and `bug` otherwise; and `reentering(k)`, which composes the equation above as an
 `Arrow.Step`, deferring on a pending input in the same arm as `Arrow.apply` and unnesting a settled
@@ -268,9 +272,9 @@ that wrapper is a second region per resumption, so piece F removes it:
 **F.** `kyo-prelude/shared/src/main/scala/kyo/Choice.scala`, `Choice.run`: the clause becomes
 `Kyo.foreach(alternatives)(v => cont(v)).map(_.flattenChunk)`, one flatten, no inner `run`. Surface:
 that method only. `runStream` keeps its shape: it hands the peeled continuation out and evaluates
-the results outside the clause, under a fresh `handleFirstRepeated` per iteration, and the twin
-region each resumed computation now carries is a second region per element there; the benchmark
-section carries its number. `ChoiceBench` in `kyo-bench` is added for both rows, base against tip.
+the results outside the clause, under a fresh `handleFirstRepeated` per iteration, which is the
+holder re-establishing the region, and the arm does not re-enter for a holding handler, so nothing
+changes for it. `ChoiceBench` in `kyo-bench` is added for both rows, base against tip.
 
 ### Fork 5: the per-resumption region is the price of a kernel that delimits
 
