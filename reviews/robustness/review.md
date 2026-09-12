@@ -458,8 +458,10 @@ The reviewer read the status report on 2026-09-12 and asked about each; the stat
    costs, then: a semantic change in interrupt delivery that the core suite rejects, and a direct
    application of a `recursive`, `Arrow.apply(f)`, `Effect.defer` or `Ensure` arrow paying the
    fused arm. What it buys: one application law and the eight sites stating a computation as
-   data; not the `PollTest` ascriptions. The isolation probe (the experiment plus the
-   `Arrow.apply(f)` override alone) is queued and its core result goes here; the decision is the
+   data; not the `PollTest` ascriptions. Alone on an idle machine the experiment's core suite fails 158 leaves and two
+   kyo-test leak checks (`kyo-coreJVM/test` on `robustness-noapply`), so the failures are the
+   removal's, not load. The isolation probe (the experiment plus the `Arrow.apply(f)` override
+   alone, branch `robustness-probe`) is running and its core result goes here; the decision is the
    reviewer's.
 2. **The `PollTest` ascriptions** are workarounds under the ruling of 2026-08-28 and are left in
    place. The reviewer asked whether they come from the handler method's signature: no signature
