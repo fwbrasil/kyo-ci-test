@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Verifies that a live-review walk exists as data and reproduces the tip.
 
-    sequence.py --verify <base> <tip> [sequence.json]
+    sequence.py --verify [<base> [<tip> [sequence.json]]]
 
-`sequence.json` is a list of edits in application order, each `{"file": ..., "old": ..., "new": ...}`
+`base` defaults to this package's base, `cdefdc9e60`, and `tip` to `HEAD`, which is how
+`package-check.sh` calls it. `sequence.json` is a list of edits in application order, each `{"file": ..., "old": ..., "new": ...}`
 with the exact text an Edit-tool call will replace. For every file the sequence touches, the base
 content is taken from `git show <base>:<file>`, the edits are applied in order (each `old` must occur
 exactly once at the moment it is applied), and the result is compared byte for byte with
@@ -30,10 +31,11 @@ def changed(base: str, tip: str) -> set[str]:
 
 
 def main() -> int:
-    if len(sys.argv) < 4 or sys.argv[1] != "--verify":
+    if len(sys.argv) < 2 or sys.argv[1] != "--verify":
         print(__doc__)
         return 2
-    base, tip = sys.argv[2], sys.argv[3]
+    base = sys.argv[2] if len(sys.argv) > 2 else "cdefdc9e60"
+    tip = sys.argv[3] if len(sys.argv) > 3 else "HEAD"
     path = sys.argv[4] if len(sys.argv) > 4 else "reviews/robustness/sequence.json"
     with open(path) as f:
         edits = json.load(f)
