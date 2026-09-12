@@ -180,8 +180,10 @@ Verification, on the tip with C:
 | `kyo-kernelJVM/clean` then `compile`, batch | clean |
 | `kyo-kernelJVM/Jmh/compile` | clean |
 | `kyo-kernelJVM/test` | 1737 passed, 0 failed, 5 canceled (the `DebuggerTest` sessions, which cancel when the debugger is compiled out, as before) |
-| `kyo-preludeJVM/test` and `kyo-coreJVM/test` | 2665 passed, 0 failed |
+| `kyo-preludeJVM/test` and `kyo-coreJVM/test` | 2665 passed, 0 failed, run again after edit 18 with the same result, `ChoiceTest` 33 passed |
 | `EvalShapeTest` | 320 cells, all green; the multi-shot cells hang at the base |
+| `kyo-netJVM/testOnly RearmSurvivorsTest` | 2 passed after edit 21 |
+| `SpanTest` | 237 passed on each of JVM, JS and Wasm after edit 20 |
 
 Benchmarks. `KernelBench`, 49 rows, is the class; `package-check.sh` confirms it references
 `kyo.kernel`. The rows the fix reaches by name, before running: every row answering through
