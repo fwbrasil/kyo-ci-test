@@ -413,7 +413,7 @@ The eight projects that did not end green, each read to its cause:
 | kyo-pod | 992 passed, 2 failed, both `ContainerItTest` under the `[docker]` runtime scope with `ContainerMissingException`; the podman scope passes |
 | kyo-test-sbt-publish | publishes every module and hit the kernel's doc build failing on the benchmark classes in the main class directory, the defect the `Jmh / classDirectory` change fixes; re-run after that fix reported below |
 | kyo-compat-tests | the sweep ran it without the Scala switch its build declares (`scalaVersion := scala3LTSVersion`), so its dependency's 3.8.4 TASTy was unreadable (`TASTy signature has wrong version`). Rerun as CI's runner does, `++3.3.8 kyo-compat-tests/test`: 270 passed, 0 failed (`sweep/rerun-kyo-compat-tests-lts.log`) |
-| kyo-ffi-plugin | its scripted tests publish the kernel and met the same doc failure, plus one source the formatter rejected; re-run reported below |
+| kyo-ffi-plugin | its tests publish the plugin and its docs locally and met the same doc failure, plus one source the formatter rejected. Rerun on the tip, `kyo-ffi-plugin/test`: 153 passed, 0 failed, the publish and its scaladoc included (`sweep/rerun-kyo_ffi_plugin_test.log`) |
 | kyo-settings, kyo-website-bundle | not sbt projects; the lists carried two names that resolve to nothing |
 
 Every other project passed, kyo-tasty and kyo-doctest among them (1706 and 144 leaves), the two
