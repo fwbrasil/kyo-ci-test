@@ -562,14 +562,32 @@ word held, so the cascade to what the fiber linked and every observer of its res
 pending and refuses the next one there; the retry would otherwise spin. `onInterrupted` is gone: the
 task's take is the override, and the base no-op had no other caller.
 
+A throw that unwinds past the boundary completes the promise with its panic, as before, unless an
+interrupt taken on that slice owns the ending: then the throw is its consequence and the error arm
+completes with the interrupt. The case that found this is `FiberTest` "cooperative interruption:
+onInterrupt fires after carrier is interrupted": the body parks the worker on a promise, the blocking
+monitor interrupts the thread once `needsInterrupt` says so, and `IOPromise.block` throws
+`InterruptedException` out of the slice. With the interrupt already the promise's completion, that panic
+used to lose the race; with the completion deferred it won, through the value path, and `onInterrupt`
+never fired. A fatal completes the promise regardless.
+
 `Fiber.init` interrupts, waits on the promise, and closes the fiber's own scope with the result's error:
 an interrupted lease sees the panic and cancels, a fiber that finished on its own closes clean, and a
 typed failure is what it says, which the `ended` promise could not carry. `Bracket.ensuring` leaves the
 spawn, and with it the bracket every scoped fiber paid for.
 
-Surface: `IOTask` (the word, `interrupt`, `preInterrupt`, `needsInterrupt`, `parkOn`, the boundary arms,
-`run`, `release`, `abandon`), `IOPromise` (`interrupt(p, v)` overridable, `settleInterrupt`, the retry
-guard, `onInterrupted` removed), `Fiber` (`interruptAwait`, `init`). Pins: `FiberTest` "deferred
+Every ending of the body reaches the promise through one method, `finish`, which completes only while
+the ending is still the body's to settle: not after the abort arm settled it, and not once an interrupt
+taken on the slice owns it. The boundary's abort arm, its done lane and `run`'s catch call it; the
+boundary is handed what the value becomes (`restore`) rather than a completion, so the spawn sites
+name no completion of their own. The interrupt's completion is at the release, in `abandon`. The one
+ending outside `finish` is a fatal, which completes the promise regardless, since the release an
+interrupt would wait for never runs after one.
+
+Surface: `IOTask` (the word, `interrupt`, `preInterrupt`, `needsInterrupt`, `parkOn`, `finish`, the
+boundary's arms and its `restore` parameter, the two spawn sites, `run`, `release`, `abandon`),
+`IOPromise` (`interrupt(p, v)` overridable, `settleInterrupt`, the retry guard, `onInterrupted`
+removed), `Fiber` (`interruptAwait`, `init`). Pins: `FiberTest` "deferred
 completion", five cases: the result arrives after the finalizers ran, a second interrupt is refused,
 `interruptAwait` returns once the finalizers ran, an interrupt taken on the running slice owns the ending
 over a body completing after it, and a scoped fiber's own scope closes after the fiber released.

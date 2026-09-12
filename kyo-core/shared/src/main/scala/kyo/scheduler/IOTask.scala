@@ -51,6 +51,16 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     private def interrupted: Boolean = status.isInstanceOf[Result.Error[?]]
 
+    /** The one place an ending of the body completes the promise: a value, an abort, a throw.
+      *
+      * It completes only while the ending is still the body's to settle: not after the abort arm settled it
+      * and answered with a placeholder, and not once an interrupt taken on this slice owns it, since the
+      * promise then completes with the interrupt at `Done`, after the remainder is released. By name, so a
+      * value is not restored for an ending nobody settles.
+      */
+    private def finish(result: => Result[E, A < S2]): Unit =
+        if isPending() && !interrupted then completeDiscard(result)
+
     /** Claims this task for a thread that does not own it yet.
       *
       * An absent handle means a single-threaded runtime, where the read-modify-write is already atomic.
@@ -79,9 +89,10 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
       * reaches it whatever its error type, since each `Abort[E]` is an `Abort[Nothing]`.
       *
       * Here rather than in `Fiber` because none of its decisions are effect interpretation: an abort
-      * completes this promise, a ready join resumes in place, a pending one parks this task.
+      * finishes this task, a ready join resumes in place, a pending one parks this task. Every ending of
+      * the body reaches the promise through `finish`; `restore` is what the body's value becomes.
       */
-    protected def boundary[P](v: P < (Abort[E] & Async))(complete: P => Unit): Unit < Any =
+    protected def boundary[P](v: P < (Abort[E] & Async))(restore: P => A < S2): Unit < Any =
         // Typed at Unit: a fiber answers with its promise, so every exit completes this task or hands the
         // continuation to something that will.
         //
@@ -105,9 +116,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         case error: Result.Error[E] @unchecked =>
                             // Answering without applying the continuation discards the rest of the
                             // computation, so no stop is needed. The answer is never read: the done lane
-                            // below checks whether this task is still pending, and this arm settled it.
-                            // An interrupt that landed first owns the ending, so it is not settled here.
-                            if !interrupted then completeDiscard(error)
+                            // below finishes only while the task is pending, and this arm settled it.
+                            finish(error)
                             null.asInstanceOf[P]
                         case joinInput: Async.JoinInput[C] @unchecked =>
                             // invoking it registers the interrupt cascade on this task before the promise's
@@ -141,10 +151,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         case other =>
                             bug(s"fiber boundary received an operation it does not answer: $other")
             ,
-            // Guarded because the abort arm above settles the task itself and answers with a placeholder, and
-            // because an interrupt that landed on this slice owns the ending: the promise completes with it,
-            // once the remainder is released, not with what the body produced after it.
-            p => if isPending() && !interrupted then complete(p) else ()
+            // The placeholder the abort arm answers with is never restored: `finish` settles nothing then.
+            p => finish(Result.succeed(restore(p)))
             // No call site to name: what a parked fiber reports comes from the operation it stopped at.
         )(using Frame.internal).asInstanceOf[Unit < Any]
     end boundary
@@ -311,9 +319,13 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         Safepoint.endSlice(slot, previousSlice)
                 catch
                     case ex =>
-                        // Completed here because the failure unwound past the boundary. Constructed rather
-                        // than through `Result.panic`, which refuses to hold a fatal.
-                        completeDiscard(new Result.Panic(ex))
+                        // Finished here because the failure unwound past the boundary. A fatal completes the
+                        // promise regardless: the release an interrupt would wait for never runs after one.
+                        // Otherwise a throw is an ending like any other, so an interrupt taken on this slice
+                        // owns it, as with the `InterruptedException` a blocked worker's promise throws once
+                        // the monitor interrupts the thread. Constructed rather than through `Result.panic`,
+                        // which refuses to hold a fatal.
+                        if IsFatal(ex) then completeDiscard(new Result.Panic(ex)) else finish(new Result.Panic(ex))
                         curr = cleared
                         if IsFatal(ex) then
                             // A fatal skips the arms below that release ownership, and ownership never given
@@ -470,7 +482,7 @@ object IOTask:
         start(
             new IOTask[E, A, S2]:
                 protected def prepared =
-                    boundary(isolate.isolate(state, body))(t => completeDiscard(Result.succeed(isolate.restore(t))))
+                    boundary(isolate.isolate(state, body))(t => isolate.restore(t))
             ,
             parent,
             runtime
@@ -486,7 +498,7 @@ object IOTask:
     ): IOTask[E, A, Any] =
         start(
             new IOTask[E, A, Any]:
-                protected def prepared = boundary(body)(a => completeDiscard(Result.succeed(a)))
+                protected def prepared = boundary(body)(a => a)
             ,
             parent,
             runtime
