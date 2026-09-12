@@ -43,11 +43,15 @@ class RearmSurvivorsTest extends Test:
             fillSendBuffer(acceptedFd)
             PosixTestSockets.halfClose(spy, clientFd)
 
-            val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
-            driver.awaitRead(handle, readPromise)
-            // Arm write too: under one-shot this would require a survivor re-arm after the read fires; under ET it must not.
+            // Arm write first: under one-shot the read firing would require a survivor re-arm of this interest; under ET it must not.
+            // The registrations are applied in order on the poll fiber and the read event cannot be dispatched before the read
+            // registration is applied, so arming write first is what guarantees the write registration is in the log by the time the
+            // read promise completes. Armed the other way round, the EOF event could be dispatched and the driver closed by this test
+            // before the write registration was ever applied, which is a race the log then reports as a missing registerWrite.
             val writePromise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
             driver.awaitWritable(handle, writePromise)
+            val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+            driver.awaitRead(handle, readPromise)
 
             // Wait for the read promise to complete (the driver dispatched the EOF read event). Then inspect the call log.
             readPromise.safe.get.map { _ =>
@@ -68,6 +72,11 @@ class RearmSurvivorsTest extends Test:
                 assert(
                     log.exists(_.startsWith("registerWrite")),
                     s"expected a registerWrite entry in call log: $log"
+                )
+                // the order this leaf rests on: registrations are applied in the order they were armed
+                assert(
+                    log.indexWhere(_.startsWith("registerWrite")) < log.indexWhere(_.startsWith("registerRead")),
+                    s"the write registration was armed first and must precede the read registration in the log: $log"
                 )
             }
         }

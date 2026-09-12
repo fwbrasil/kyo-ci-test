@@ -465,9 +465,9 @@ class KernelBench:
         val read: Int < (Cfg3 & Ask) = loop(seed - 1)
         val idle: Int < Cfg3         = ArrowEffect.handleCont(Tag[Ask], read)([C] => (_, cont) => cont(1), a => a)
         run(
-            ContextEffect.handle(Tag[Cfg3])(1, x => x, x => x, (p, _, _) => p)(
-                ContextEffect.handle(Tag[Cfg2])(2, x => x, x => x, (p, _, _) => p)(
-                    ContextEffect.handle(Tag[Cfg])(3, x => x, x => x, (p, _, _) => p)(idle: Int < (Cfg & Cfg2 & Cfg3))
+            ContextEffect.handle(Tag[Cfg3], 1, x => x, x => x, (p, _, _) => p)(
+                ContextEffect.handle(Tag[Cfg2], 2, x => x, x => x, (p, _, _) => p)(
+                    ContextEffect.handle(Tag[Cfg], 3, x => x, x => x, (p, _, _) => p)(idle: Int < (Cfg & Cfg2 & Cfg3))
                 )
             )
         )
@@ -478,7 +478,7 @@ class KernelBench:
         def loop(i: Int): Int < Any =
             if i > NarrowDepth then i
             else
-                ContextEffect.handle(Tag[Cfg])(1, x => x + 1, x => x, (p, _, _) => p)(ContextEffect.suspend(Tag[Cfg]))
+                ContextEffect.handle(Tag[Cfg], 1, x => x + 1, x => x, (p, _, _) => p)(ContextEffect.suspend(Tag[Cfg]))
                     .map(c => loop(i + c))
         run(loop(seed - 1))
     end contextRegionsPayEntryExit
@@ -556,6 +556,37 @@ class KernelBench:
     def collectOverCollection: Int =
         run(Kyo.collect(elements)(a => (if (a & 1) == 0 then Maybe(a) else Maybe.empty): Maybe[Int] < Any).map(_.sum + seed))
     end collectOverCollection
+
+    /** A region whose clause may resume more than once, answering each operation once: `suspensionBaseline` under
+      * `handleContRepeated`, so the delta to that row is what a multi-shot region costs per operation.
+      */
+    @Benchmark
+    def repeatedClausesPayReentry: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else ask.map(a => loop(i + a))
+        run(ArrowEffect.handleContRepeated(Tag[Ask], loop(seed - 1))([C] => (_, cont) => cont(1), a => a))
+    end repeatedClausesPayReentry
+
+    /** The same region entered once per operation, so entry dominates: `contextRegionsPayEntryExit` for a multi-shot region. */
+    @Benchmark
+    def repeatedRegionsPayEntry: Int =
+        def loop(i: Int): Int < Any =
+            if i > NarrowDepth then i
+            else ArrowEffect.handleContRepeated(Tag[Ask], ask)([C] => (_, cont) => cont(1), a => a).map(a => loop(i + a))
+        run(loop(seed - 1))
+    end repeatedRegionsPayEntry
+
+    /** [[repeatedRegionsPayEntry]] through the recovering overload, whose handler and re-entered handler are their own classes. */
+    @Benchmark
+    def repeatedRegionsPayEntryRecovering: Int =
+        def loop(i: Int): Int < Any =
+            if i > NarrowDepth then i
+            else
+                ArrowEffect.handleContRepeated(Tag[Ask], ask)([C] => (_, cont) => cont(1), a => a, _ => Maybe.empty)
+                    .map(a => loop(i + a))
+        run(loop(seed - 1))
+    end repeatedRegionsPayEntryRecovering
 
 end KernelBench
 

@@ -4,9 +4,18 @@ import java.util.concurrent.CountDownLatch
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.concurrent.Eventually.*
 import org.scalatest.freespec.AnyFreeSpec
+import org.scalatest.time.Millis
+import org.scalatest.time.Seconds
+import org.scalatest.time.Span
 import scala.util.control.NoStackTrace
 
 class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
+
+    // Every `eventually` here waits for a worker thread to pick a task up or drain, which on a loaded CI runner
+    // can take longer than ScalaTest's default patience of 150 milliseconds: the windows-x64 job saw the first
+    // attempt of "handles task that throws exception" alone take 254 milliseconds and give up. The wait stays a
+    // poll for a condition that becomes true, bounded well above what a slow runner needs.
+    implicit val patience: PatienceConfig = PatienceConfig(timeout = Span(10, Seconds), interval = Span(10, Millis))
 
     "schedule" - {
         "enqueues tasks to workers" in withScheduler { scheduler =>

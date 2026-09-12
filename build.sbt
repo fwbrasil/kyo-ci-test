@@ -799,6 +799,10 @@ lazy val `kyo-kernel` =
             // UseCompactObjectHeaders from kyo-settings, and a collector-dependent layout
             // flag must not be baked into the canonical numbers.
             Jmh / javaOptions := (Test / javaOptions).value.filterNot(_ == "-XX:+UseCompactObjectHeaders"),
+            // The benchmark classes compile into their own directory: scaladoc reads every TASTy file in
+            // the main class directory, and a benchmark class there, one against a framework that is
+            // only on the jmh classpath, fails the doc build once Jmh/compile has run.
+            Jmh / classDirectory := crossTarget.value / "jmh-classes",
             // The comparison benches under bench/cross; jmh-scoped so the frameworks stay off
             // the Compile and Test classpaths.
             libraryDependencies ++= Seq(
