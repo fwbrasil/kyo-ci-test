@@ -115,7 +115,11 @@ up as a design note with what diverged, and B stands as the robustness measure.
 2. **The `PollTest` ascriptions** (`4c64b3e6fb`) are workarounds under the 2026-08-28 ruling. They
    are left in place in this change because their root cause is fork 1, and the fix belongs with
    that ruling rather than as a third spelling.
-3. **Whether D ships.** Decided by the rule in D, and reported either way.
+3. **Whether D ships.** Decided by the rule in D, and reported either way. Outcome: not attempted this
+   round. B found a real defect on its first run and the night went to reproducing, fixing and
+   measuring it, which is the better use of the hours than a second interpreter whose trust would
+   itself need establishing. D stays on the robustness list as the long-run item, with B's matrix
+   as the concrete subset it would generalise.
 
 ## Evidence the package will carry
 
