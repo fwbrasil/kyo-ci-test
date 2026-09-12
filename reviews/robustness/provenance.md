@@ -1,4 +1,8 @@
-# Provenance of the benchmark classes this package names
+# Provenance of the commits and benchmark classes this package names
+
+dcadee780d: the base leg of every benchmark comparison, the base `cdefdc9e60` plus edit 16 alone so
+`KernelBench` compiles, a local commit in the throwaway worktree `robustness-base`; outside the
+range by construction and named as the base of the numbers, not as a date.
 
 `KernelBench` (`kyo-kernel/jvm/src/jmh`) references `kyo.kernel` and is the evidence for every
 kernel edit: base against the fix, the fix against the tip, and the two multi-shot rows.
