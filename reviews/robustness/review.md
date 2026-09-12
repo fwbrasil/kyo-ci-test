@@ -621,4 +621,42 @@ then the pins.
 Evidence at the tip: `kyo-coreJVM/test` 42 suites green, `FiberTest` 117 including "cooperative
 interruption: onInterrupt fires after carrier is interrupted", which timed out until edit 11: the
 blocking monitor's `InterruptedException` used to lose the race to the interrupt's completion and won
-it once the completion was deferred. `kyo-coreJS/test` and the CI matrix on this tip follow.
+it once the completion was deferred. `kyo-coreJS/test` 37 suites green; the downstream JVM suites,
+prelude, combinators, STM and actor, 39 suites green.
+
+## Fourth walk: an answer that already arrived is delivered, and the pool's permit, 12 edits
+
+Pieces P and Q of the derivation. The walk starts from the third walk's end, `b0a9d4a666`, and ends at
+`a5b7d2a512`; `sequence-4.json` holds the 12 edits below, verified by `sequence.py --verify b0a9d4a666
+a5b7d2a512 reviews/robustness/sequence-4.json`, and `flags-4.md` adjudicates its 22 flags, none
+`REMOVE`. The walk first, then its pins, then the task's reporter, then the pool.
+
+1. **`Eval.scala`, the two public `release`:** the unbudgeted one's reporter answers nothing; the
+   reporting one's reporter may answer, and the documentation says what the walk does with an answer.
+2. **`Eval.scala`, `ensuring` and the walk's signature:** the `delivered` flag, spent on the first
+   settled deferral, whose first arrow is the step fused with the delivery.
+3. **`Eval.scala`, the `Park` arm and the operation arm:** the flag passes through; an operation the
+   reporter answers is delivered to its own continuation, and what that produces is walked with the
+   fused step allowed once.
+4. **`EvalTest.scala`, the acquire-parked pin:** its reporter answers nothing.
+5. **`EvalTest.scala`, `seeing`:** the reporter that records an operation's input and holds no answer,
+   typed at each pin, and the first reporting pin on it.
+6. **`EvalTest.scala`, "sees through a context region",** on `seeing`.
+7. **`EvalTest.scala`, "sees through a parked slice" and the two map-chain pins,** on `seeing`.
+8. **`EvalTest.scala`, "peels a stateless and a stateful region node",** on `seeing`.
+9. **`EvalTest.scala`, the deferral pin on `seeing`, and the three delivery pins:** the answer reaches
+   the release waiting on it; it goes through the operation's own continuation; nothing past the fused
+   step runs.
+10. **`IOTask.scala`, `abandon`'s reporter:** links the join as before, and hands back the promise's
+    result when it holds one, dropping the link as the boundary does for a completed promise.
+11. **`ScopeInterruptTest.scala`, the async-acquire pin:** the interrupt is registered on the child after
+    the parent parked, so the promise's last-registered-first order runs it before the parent's wakeup;
+    the acquired value is released.
+12. **`SqlConnectionPool.scala`, `withSlot`:** the take under `Scope.acquireRelease`, so the permit's
+    return is registered in the step the take delivers it; `Scope.run` moves outward and closes where it
+    did, at the body's end; the timeout logging and the body's failure routing are as they were.
+
+Evidence at the tip: `kyo-kernelJVM/test` 1848 green; `ScopeInterruptTest`, `ScopeTest`, `FiberTest`,
+`AsyncTest` green; `kyo-sql-postgresJVM/test` 82 suites and `kyo-sql-mysqlJVM/test` 57 suites green
+against the real backends. Full core JVM, kernel JS and Native, core JS and the JS SQL interrupt test
+run as this is written; the CI matrix on this tip follows the one in progress on `98bdc584b7`.
