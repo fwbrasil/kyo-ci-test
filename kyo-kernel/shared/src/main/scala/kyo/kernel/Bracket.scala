@@ -31,7 +31,9 @@ object Bracket:
     // The region a bracket runs its use body under; `Cell` is its state and the exactly-once release guard.
     sealed private[kyo] trait Finalize extends ContextEffect[Cell]
 
-    // Not parameterised by the use value: the release is told how the extent ended, not what it produced.
+    // Not parameterised by the use value: the release is told how the extent ended, not what it produced. What
+    // it is told besides the ending is the state the region was entered with: the acquired value for `apply`, a
+    // state made for the run for `ensuringWith`, nothing for `ensuring`.
     //
     // Two shapes rather than one with a flag: a bracket's own state, and the inert one handed to an isolated
     // child. A recording instance would carry the first crossing's ending into every later one.
@@ -46,7 +48,7 @@ object Bracket:
 
     private[kyo] object Cell:
 
-        final class Live(fin: Maybe[Throwable] => Unit) extends Cell:
+        final class Live[R](val state: R, fin: (R, Maybe[Throwable]) => Unit) extends Cell:
             // Set when the region is re-installed from a continuation the handler above dumped: the continuation can
             // be resumed again, so a release fired at the first ending would run under the resumptions that follow.
             // While set, an ending only records, and the handler that owes this region fires the release when it ends.
@@ -59,19 +61,19 @@ object Bracket:
 
             private[kyo] def complete(): Unit =
                 ended = true
-                if !borrowed && compareAndSet(false, true) then fin(Absent)
+                if !borrowed && compareAndSet(false, true) then fin(state, Absent)
 
             // The release is owed the failure that unwound its extent, and the fatal keeps propagating. An unwind wins
             // over an ending that already ran, or a release that commits on success would commit over it.
             private[kyo] def drain(ex: Throwable): Unit =
-                if compareAndSet(false, true) then fin(Maybe(ex))
+                if compareAndSet(false, true) then fin(state, Maybe(ex))
 
             // The owner ended normally, so the extent's own endings are final. Never having ended means the discard
             // signal is what the release is owed.
             private[kyo] def discharge(ex: Throwable): Unit =
                 if compareAndSet(false, true) then
-                    if ended then fin(Absent)
-                    else fin(Maybe(ex))
+                    if ended then fin(state, Absent)
+                    else fin(state, Maybe(ex))
 
             private[kyo] def endedItsExtent: Boolean = ended
         end Live
@@ -108,7 +110,7 @@ object Bracket:
         val ensure = new Arrow.Ensure[A, B, S1 & S2]:
             def frame = _frame
             override def apply(a: A) =
-                val cell = new Cell.Live(outcome => release(a, outcome))
+                val cell = new Cell.Live(a, release)
                 val body =
                     try use(a)
                     catch
@@ -134,10 +136,37 @@ object Bracket:
         val b =
             try body
             catch case ex => Effect.defer(throw ex)
-        region(new Cell.Live(release), b)
+        val fin: (Unit, Maybe[Throwable]) => Unit = (_, outcome) => release(outcome)
+        region(new Cell.Live((), fin), b)
     end ensuring
 
-    private def region[B, S](cell: => Cell, body: B < S)(using _frame: Frame): B < S =
+    /** Runs `release` when `body`'s extent ends, told a state made for that run, with nothing to acquire first.
+      *
+      * The state is made as the region is entered, so the region is a node from the start as in [[ensuring]], and
+      * `body` is handed the state as its first step under it. This is for a release that is owed something the
+      * extent produced which the kernel does not carry: a typed failure a handler inside the extent answered, as
+      * `Sync.ensure` records. Each run makes a state of its own, so a value run twice, or by two fibers at once,
+      * shares nothing between the runs, and a computation abandoned before it ran a step is released with a state
+      * nothing ever wrote.
+      *
+      * @param init
+      *   Makes the state, once per run, as the region is entered
+      * @param release
+      *   Runs once when the extent ends, told the run's state and how the extent ended
+      * @param body
+      *   The extent, handed the run's state
+      */
+    def ensuringWith[R, B, S](init: => R)(release: (R, Maybe[Throwable]) => Unit)(body: R => B < S)(using _frame: Frame): B < S =
+        region(
+            new Cell.Live(init, release),
+            ContextEffect.suspendWith(Tag[Finalize]) { cell =>
+                // Erasure-forced: the read is the first step under the region above, which bound the cell it made
+                // with `init`, so this is that cell and `R` is what it holds.
+                body(cell.asInstanceOf[Cell.Live[R]].state)
+            }
+        )
+
+    private def region[B, S](cell: => Cell, body: B < (Finalize & S))(using _frame: Frame): B < S =
         val h = new Handler.ContextHandler[Cell, Finalize, B, S]:
             def tag                                                             = Tag[Finalize]
             def derive(outer: Maybe[Cell])                                      = cell

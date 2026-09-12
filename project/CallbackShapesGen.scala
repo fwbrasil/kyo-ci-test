@@ -255,12 +255,18 @@ object CallbackShapesGen {
         sb.append("        else if backpressureEnabled then waitForSlot(shape, bits, q)\n")
         sb.append("        else exhausted(shape)\n")
         sb.append("    end claimOrBlock\n\n")
-        sb.append("    private def newTransientStack(): ThreadLocal[java.util.ArrayDeque[AnyRef]] =\n")
-        sb.append("        new ThreadLocal[java.util.ArrayDeque[AnyRef]]:\n")
-        sb.append("            override def initialValue(): java.util.ArrayDeque[AnyRef] =\n")
-        sb.append("                new java.util.ArrayDeque[AnyRef]()\n\n")
-        sb.append("    private def mustPeek(stack: ThreadLocal[java.util.ArrayDeque[AnyRef]], shape: String): AnyRef =\n")
-        sb.append("        val v = stack.get().nn.peek()\n")
+        // The per-thread stacks are keyed on the `Thread` object in a concurrent map rather than held in a
+        // `ThreadLocal`: on Scala Native a `ThreadLocal` was seen to lose its entry between the push before a
+        // downcall and the pop in its `finally`, on one thread, in one synchronous call (the pop then found a
+        // fresh, empty deque and threw). The thread's identity stayed stable across the same window, so the
+        // map is what the push, the trampoline's peek and the pop can all agree on. Entries live as long as
+        // the process: one small deque per thread that ever carried a transient callback.
+        sb.append("    private type TransientStacks = java.util.concurrent.ConcurrentHashMap[Thread, java.util.ArrayDeque[AnyRef]]\n")
+        sb.append("    private def newTransientStack(): TransientStacks = new TransientStacks()\n")
+        sb.append("    private def transientStackOf(stacks: TransientStacks): java.util.ArrayDeque[AnyRef] =\n")
+        sb.append("        stacks.computeIfAbsent(Thread.currentThread(), _ => new java.util.ArrayDeque[AnyRef]()).nn\n\n")
+        sb.append("    private def mustPeek(stacks: TransientStacks, shape: String): AnyRef =\n")
+        sb.append("        val v = transientStackOf(stacks).peek()\n")
         sb.append("        if v == null then\n")
         sb.append("            throw new IllegalStateException(\n")
         sb.append(
@@ -322,7 +328,7 @@ object CallbackShapesGen {
         sb.append("    // before the zero default is returned, see README 'Callback exception handling'.\n\n")
 
         // Transient per-shape
-        sb.append("    // Transient: per-shape ThreadLocal LIFO stack + push/pop/peek + top-level trampoline def.\n")
+        sb.append("    // Transient: per-shape, per-thread LIFO stack keyed on the thread + push/pop/peek + top-level trampoline def.\n")
         sb.append("    // The stack stores a `TaggedCallback` pair so the trampoline can name the binding + method when the user\n")
         sb.append("    // callback throws.\n")
         shapes.foreach { s =>
@@ -337,23 +343,31 @@ object CallbackShapesGen {
                 case CType.D => "0.0"
                 case CType.P => "null"
             }
-            sb.append(s"    private[internal] val transientStack_$n: ThreadLocal[java.util.ArrayDeque[AnyRef]] = newTransientStack()\n")
+            sb.append(s"    private[internal] val transientStack_$n: TransientStacks = newTransientStack()\n")
             sb.append(s"    def pushTransient_$n(bindingFqn: String, methodName: String, f: ${s.userFnType}): Unit =\n")
             sb.append(
-                s"""        transientStack_$n.get().nn.push(new TaggedCallback(bindingFqn, methodName, "transient", f.asInstanceOf[AnyRef]))"""
+                s"""        transientStackOf(transientStack_$n).push(new TaggedCallback(bindingFqn, methodName, "transient", f.asInstanceOf[AnyRef]))"""
             )
             sb.append("\n")
             sb.append(s"    def popTransient_$n(): Unit =\n")
-            sb.append(s"        val _ = transientStack_$n.get().nn.pop()\n")
+            sb.append(s"        val _ = transientStackOf(transientStack_$n).pop()\n")
             sb.append(
                 "    private def peekTransient_" + n + "(): TaggedCallback = mustPeek(transientStack_" + n + ", \"" + n + "\").asInstanceOf[TaggedCallback]\n"
             )
+            // The lookup sits inside the `try`: an empty per-thread stack is reported through the same reporter and
+            // answered with the zero default, because an exception that escapes this frame lands in C, where the
+            // runtime cannot unwind (on macOS it aborts the process). The reporter is total for the same reason.
             sb.append(s"    def trampolineT_$n(${s.paramListDecl}): ${s.result.scala} =\n")
-            sb.append(s"        val tagged = peekTransient_$n()\n")
-            sb.append(s"        try $applyCall\n")
+            sb.append(s"        var tagged: TaggedCallback = null\n")
+            sb.append(s"        try\n")
+            sb.append(s"            tagged = peekTransient_$n()\n")
+            sb.append(s"            $applyCall\n")
             sb.append(s"        catch\n")
             sb.append(s"            case t: Throwable =>\n")
-            sb.append(s"                FfiGenErrors.reportCallbackFailed(tagged.bindingFqn, tagged.methodName, tagged.kind, t)\n")
+            sb.append(
+                "                if tagged eq null then FfiGenErrors.reportCallbackFailed(\"<unknown>\", \"trampolineT_" + n + "\", \"transient\", t)\n"
+            )
+            sb.append(s"                else FfiGenErrors.reportCallbackFailed(tagged.bindingFqn, tagged.methodName, tagged.kind, t)\n")
             sb.append(s"                $zeroExpr\n")
             sb.append(s"    end trampolineT_$n\n\n")
         }

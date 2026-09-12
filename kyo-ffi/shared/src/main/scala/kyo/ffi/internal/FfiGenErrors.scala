@@ -15,10 +15,25 @@ private[ffi] object FfiGenErrors:
         s"[kyo-ffi] callback failed in '$bindingFqn.$methodName' ($kind): $cls$msg, returning zero default to C."
     end callbackFailed
 
-    /** Print the `callbackFailed` diagnostic and stack trace to stderr. Shared entry point for all platform callback trampolines. */
+    /** Print the `callbackFailed` diagnostic and stack trace to stderr. Shared entry point for all platform callback trampolines.
+      *
+      * Total: it runs inside a C frame, where a second failure (a trace that cannot be rendered, a stream that throws) would
+      * escape into C and, on Scala Native, abort the process. A secondary failure is reported on one line and the original
+      * throwable's trace is not touched again.
+      */
     def reportCallbackFailed(bindingFqn: String, methodName: String, kind: String, t: Throwable): Unit =
-        java.lang.System.err.println(callbackFailed(bindingFqn, methodName, kind, t))
-        if t != null then t.printStackTrace()
+        try
+            java.lang.System.err.println(callbackFailed(bindingFqn, methodName, kind, t))
+            if t != null then t.printStackTrace()
+        catch
+            case secondary: Throwable =>
+                try
+                    val cls = if t == null then "<null>" else t.getClass.getName
+                    java.lang.System.err.println(
+                        s"[kyo-ffi] callback failure report for '$bindingFqn.$methodName' ($kind) could not be rendered: " +
+                            s"original $cls, secondary ${secondary.getClass.getName}"
+                    )
+                catch case _: Throwable => ()
     end reportCallbackFailed
 
     // --- FfiMalformedResult ---

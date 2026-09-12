@@ -312,12 +312,13 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         end if
     end run
 
-    /** Releases what an abandoned remainder still holds, and links what it was about to wait on.
+    /** Releases what an abandoned remainder still holds, and links what it stands waiting on.
       *
       * A parked computation carries its owed releases rather than running them, and this fiber will not
-      * resume, so they are run here. The link comes first: an interrupt arriving before the fiber reached
-      * its join finds a remainder standing in front of one, with the promise behind it not yet tied to this
-      * fiber.
+      * resume, so they are run here. The link comes first: an interrupt arriving as the fiber reached its
+      * join can find a remainder standing at one whose promise is not yet tied to this fiber. A join the
+      * remainder has not reached is not linked, since nothing under a step that never ran is waited on yet,
+      * and the release runs no step of the remainder to find one.
       *
       * Only reached by a thread owning the task, so the release happens once. `Done` keeps a later schedule
       * from resuming what was just released.

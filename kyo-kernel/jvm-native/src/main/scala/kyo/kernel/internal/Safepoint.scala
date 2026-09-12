@@ -228,7 +228,12 @@ object Safepoint:
                         case owner: Thread if owner eq thread =>
                             slots.compareAndSet(idx, owner, new Stop(thread, slice)) || loop(i, probes)
                         case pending: Stop if pending.thread eq thread =>
-                            true
+                            // A pending stop answers this request only where it is honored wherever this one
+                            // would be: a wildcard is, and so is one naming the same slice. One naming another
+                            // slice is a late delivery to work that has ended, and leaving it in place would
+                            // leave this request unhonored for as long as the slice runs.
+                            (pending.slice eq null) || (pending.slice eq slice) ||
+                            slots.compareAndSet(idx, pending, new Stop(thread, slice)) || loop(i, probes)
                         case _ =>
                             loop(i + 1, probes + 1)
                     end match

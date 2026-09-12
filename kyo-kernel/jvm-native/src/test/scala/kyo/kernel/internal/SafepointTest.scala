@@ -70,6 +70,36 @@ class SafepointTest extends AnyFreeSpec:
         Safepoint.endSlice(slot, prev2)
     }
 
+    // A stop aimed at a slice that has ended can land after the next slice began, and it then sits in the slot
+    // unhonored. A stop the running slice requests for itself must still land: a fiber boundary asks for one
+    // as it parks on a join, and one that never lands re-raises the join every round, nesting a continuation
+    // per round until the promise completes and the delivery overflows the stack.
+    "a stop for the running slice supersedes a stale one left by a departed slice" in {
+        val slot     = Safepoint.get()
+        val departed = new AnyRef
+        val slice    = new AnyRef
+        val prev     = Safepoint.beginSlice(slot, slice)
+        assert(Safepoint.stop(Thread.currentThread(), departed))
+        assert(!Safepoint.stopped(slot))
+        assert(Safepoint.stop(Thread.currentThread(), slice))
+        assert(Safepoint.stopped(slot))
+        assert(Safepoint.consumeStopped(slot))
+        assert(!Safepoint.consumeStopped(slot))
+        Safepoint.endSlice(slot, prev)
+    }
+
+    "a wildcard stop supersedes a stale one left by a departed slice" in {
+        val slot     = Safepoint.get()
+        val departed = new AnyRef
+        val prev     = Safepoint.beginSlice(slot, new AnyRef)
+        assert(Safepoint.stop(Thread.currentThread(), departed))
+        assert(!Safepoint.stopped(slot))
+        assert(Safepoint.stop(Thread.currentThread()))
+        assert(Safepoint.stopped(slot))
+        assert(Safepoint.consumeStopped(slot))
+        Safepoint.endSlice(slot, prev)
+    }
+
     "a wildcard stop is honored inside a slice" in {
         val slot = Safepoint.get()
         val prev = Safepoint.beginSlice(slot, new AnyRef)

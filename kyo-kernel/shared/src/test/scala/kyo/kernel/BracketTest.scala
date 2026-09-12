@@ -91,6 +91,28 @@ class BracketTest extends AnyFreeSpec:
             assert(seen.exists(_.exists(_ eq Boom)))
         }
 
+        // A fiber's regions stand above its boundary, so an operation the boundary answers dumps them into
+        // the continuation it parks with, and the park itself holds only what stood at or below the
+        // answering region. Abandoning that park must still release what the continuation carries.
+        "releases a region dumped into the continuation of a park at a region below it" in {
+            var seen            = Maybe.empty[Maybe[Throwable]]
+            val body: Int < Ask = Bracket(Effect.defer(7))(a => ask.map(_ + a))((_, outcome) => seen = Maybe(outcome))
+            val handled: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], body)(
+                    [C] =>
+                        (_, cont) =>
+                            requestStop()
+                            ArrowEffect.suspendWith[Any](Tag[Ask], ())(r => cont(r))
+                    ,
+                    a => a
+                )
+            val parked = Eval.partial(handled)
+            assert(parked.isInstanceOf[Pending.Park[?, ?]])
+            assert(seen.isEmpty)
+            Eval.release(parked, Boom)
+            assert(seen.exists(_.exists(_ eq Boom)))
+        }
+
         "a resumed parked bracket completes and releases with Absent" in {
             var seen = Maybe.empty[Maybe[Throwable]]
             val v = Bracket(Effect.defer(7)) { a =>
@@ -1728,6 +1750,63 @@ class BracketTest extends AnyFreeSpec:
                 }
             assert(intercept[OutOfMemoryError](v.eval) eq boom)
             assert(order == List("release"))
+        }
+    }
+
+    "ensuringWith" - {
+        "makes a state for the run, hands it to the body, and releases with it" in {
+            var seen = Maybe.empty[(AnyRef, Maybe[Throwable])]
+            var got  = Maybe.empty[AnyRef]
+            val v = Bracket.ensuringWith(new AnyRef)((s, outcome) => seen = Maybe((s, outcome))) { s =>
+                Effect.defer {
+                    got = Maybe(s)
+                    1
+                }
+            }
+            assert(v.eval == 1)
+            assert(got.isDefined && seen.isDefined)
+            assert(seen.get._1 eq got.get)
+            assert(seen.get._2.isEmpty)
+        }
+
+        "each run makes a state of its own" in {
+            val states = ListBuffer[AnyRef]()
+            val v      = Bracket.ensuringWith(new AnyRef)((s, _) => discard(states += s))(_ => Effect.defer(1))
+            assert(v.eval == 1)
+            assert(v.eval == 1)
+            assert(states.size == 2)
+            assert(states(0) ne states(1))
+        }
+
+        "releases with the failure and the state when the body throws" in {
+            var seen = Maybe.empty[(Int, Maybe[Throwable])]
+            val v = Bracket.ensuringWith(7)((s, outcome) => seen = Maybe((s, outcome))) { _ =>
+                Effect.defer((throw Boom): Int)
+            }
+            val ex = intercept[RuntimeException](v.eval)
+            assert(ex eq Boom)
+            assert(seen == Maybe((7, Maybe(Boom))))
+        }
+
+        // The region is a node from the start, so a computation abandoned before it ran a single step still
+        // owes the release, told a state made for that run which nothing ever wrote.
+        "releases with a fresh state when abandoned before a step" in {
+            var made = 0
+            var seen = Maybe.empty[(Int, Maybe[Throwable])]
+            var ran  = false
+            val v = Bracket.ensuringWith {
+                made += 1
+                made
+            }((s, outcome) => seen = Maybe((s, outcome))) { _ =>
+                Effect.defer {
+                    ran = true
+                    1
+                }
+            }
+            Eval.release(v, Boom)
+            assert(!ran)
+            assert(made == 1)
+            assert(seen == Maybe((1, Maybe(Boom))))
         }
     }
 
