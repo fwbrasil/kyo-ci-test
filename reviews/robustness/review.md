@@ -247,6 +247,21 @@ paid the delimiter by hand, wrapping each resumption in a fresh `Choice.run`; wi
 delimiting, that wrapper is a second region per resumption, and edit 17 removes it. What that nets
 for Choice is the `ChoiceBench` comparison below; the decision on the price itself is open ruling 5.
 
+`ChoiceBench`, ten sequential binary choice points, throughput, higher is better, `-f 3`, base
+against tip in one session, `bench/compare-choice-base-vs-AC.md`:
+
+| row | base | tip | |
+|---|---|---|---|
+| `run` | 1,273 ops/s | 4,063 ops/s | 3.2 times faster: the kernel's twin region replaces the base's inner `Choice.run` per resumption and its second flatten, and edit 17 drops that inner region |
+| `runStream` | 5,208 ops/s | 5,042 ops/s | -3.2%, inside the combined error |
+
+A first draft re-entered every repeated handler, `handleFirstRepeated` included. On that draft
+`run` was already 2.2 times faster than the base before edit 17 (1,280 against 2,860 ops/s), and
+`runStream` was 24% slower (4,936 against 3,721 ops/s), because every resumed computation carried a
+twin region on top of the fresh `handleFirstRepeated` the stream's loop installs per iteration, a
+region that could not prevent anything. That measurement is what produced the condition in edit 7,
+and `runStream` is back at the base with it.
+
 CI, on `fwbrasil/kyo-ci-test`: the full matrix (linux-x64, linux-arm64, windows-x64; JVM, JS, Native,
 Wasm), run 34672876184 on the gated-matrix commit, found every JS and Wasm job dying in `kyo-data`'s
 `SpanTest`: the branch's ancestry adds an out-of-bounds case for `Span.updated`, whose scaladoc
@@ -280,5 +295,5 @@ work and is reported in the summary that proposes this review.
    documented rather than enforced: a repeated clause with pending work between resumptions must
    re-enter a region itself, as `Choice.run` did, and one that does not hangs. Recommendation: A,
    with edit 17, because the kernel is then correct by construction for the shape the matrix found
-   and the one consumer pays what it paid before; the Choice numbers are the evidence for the second
-   half of that sentence.
+   and the one consumer pays less than it paid before: `Choice.run` 3.2 times faster than the base,
+   `runStream` unchanged.
