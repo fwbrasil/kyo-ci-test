@@ -114,8 +114,8 @@ JVM's array store raised the exception, Scala.js treats an out-of-bounds store a
 and on the Wasm backend it traps and kills the node process, which ended `kyo-dataWasm`'s test run.
 The `SpanTest` case that reached it is on the branch's ancestry (`c52e4bd8fa`), not on main, so the
 contract was untested off the JVM until now. The check follows `Chunk`'s shape and message. Not a
-kernel piece and not part of the live-review walk; it is listed so the range's surface is fully
-declared.
+kernel piece; it is the last edit of the live-review walk, in its own group, so the range's surface
+is fully declared and fully applied.
 
 ## What is not in this change
 
