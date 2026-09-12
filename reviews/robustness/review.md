@@ -228,8 +228,8 @@ category from the cast ladder, a measurement, a `moved` provenance or `REMOVE`. 
 
 | id | site | added line | class | verdict |
 |----|------|------------|-------|---------|
-| F1 | Handler.scala:333 | `new ContHandler[I, O, E, A, A, S]:` | allocation | measured on this shape: the re-entered handler, built once per region entry by `Handler.reentered(outer)` and captured by the handler's `val`. `repeatedRegionsPayEntry` and `repeatedRegionsPayEntryRecovering` (a `handleContRepeated` region per operation, 1000 per invocation, through each overload), base against tip, `-f 3 -prof gc`, `bench/compare-rows-base-vs-tip.md`: 88,104 B/op against 104,120 B/op on both rows, 16 bytes per region, the one object; time 56.2 us against 59.9 us (+6.6%) and 59.0 us against 60.5 us (+2.6%), 3.7 and 1.5 ns per region. The session's base leg ran beside a compile, so the clean rerun of the three rows, `bench/compare-rows-base-vs-tip-clean.md`, replaces the time cells |
-| F2 | Handler.scala:352 | `new Arrow.Step[O[X0], A, E & S]:` | allocation | measured on this shape, and the number is a regression on a row no consumer has: one arrow per suspension a repeated handler answers, built in the handler's `run`, and one region entered per application. `repeatedClausesPayReentry` (`suspensionBaseline` under `handleContRepeated`, 10,000 operations, each resumed once), base against tip, `-f 3 -prof gc`, `bench/compare-rows-base-vs-tip.md`: 480,121 B/op against 720,141 B/op, 24 bytes per operation (64 on the earlier shape, whose wrap lived in `Eval`); time 100.8 us (the base at `-f 1`, `bench/compare-base-vs-tip.md`; the session's `-f 3` base leg carries a 39% error from a compile run beside it) against 657.1 us, 56 ns per operation, 6.5 times. The clean rerun, `bench/compare-rows-base-vs-tip-clean.md`, replaces the time cells. The mechanism, the consumer's numbers and the decision are in the package's benchmark section and its open ruling 5; this row is not closed by this table |
+| F1 | Handler.scala:333 | `new ContHandler[I, O, E, A, A, S]:` | allocation | measured on this shape: the re-entered handler, built once per region entry by `Handler.reentered(outer)` and captured by the handler's `val`. Allocation, exact, from the profiler runs' `gc.alloc.rate.norm` lines (`bench/base-rows-3.log`, `bench/tip-rows-3.log`, base against tip, `-f 3 -prof gc`): `repeatedRegionsPayEntry` and `repeatedRegionsPayEntryRecovering` (a `handleContRepeated` region per operation, 1000 per invocation, through each overload) 88,104 B/op against 104,120 B/op on both rows, 16 bytes per region, the one object. Time, same session both legs, `-f 3`, `bench/compare-base-vs-tip-f3.md`: `repeatedRegionsPayEntry` 56.1 us against 58.2 us, +3.7%, 2.1 ns per region. The recovering row's time is in `bench/compare-rows-base-vs-tip.md` only, 59.0 us against 60.5 us, +2.6%, whose base leg ran beside a compile; a clean rerun of the three rows is queued and will replace that one cell |
+| F2 | Handler.scala:352 | `new Arrow.Step[O[X0], A, E & S]:` | allocation | measured on this shape, and the number is a regression on a row no consumer has: one arrow per suspension a repeated handler answers, built in the handler's `run`, and one region entered per application. `repeatedClausesPayReentry` (`suspensionBaseline` under `handleContRepeated`, 10,000 operations, each resumed once). Allocation, exact, from the profiler runs' `gc.alloc.rate.norm` lines (`bench/base-rows-3.log`, `bench/tip-rows-3.log`): 480,121 B/op against 720,141 B/op, 24 bytes per operation (64 on the earlier shape, whose wrap lived in `Eval`). Time, same session both legs, `-f 3`, `bench/compare-base-vs-tip-f3.md`: 99.8 ± 0.3 us against 636.1 ± 7.4 us, 54 ns per operation, 6.4 times. The mechanism, the consumer's numbers and the decision are in the package's benchmark section and its open ruling 5; this row is not closed by this table |
 | F3 | Handler.scala:356 | `case p: Pending[O[X0], S3] @unchecked => Effect.defer(p, this, cont2)` | cast | erasure-forced: a typed pattern binding at the arm's type, the runtime test being `Pending` alone; the same arm as `Arrow.apply`'s and `Suspend.crossing`'s |
 | F4 | Handler.scala:399 | `else outcome.asInstanceOf[Outcome[A < (E & S), B < S] < S]` | cast | moved: the pass-through cast `LoopHandler.answers` and `answersLoop` each carried at their tail, written once. Representation assertion: the two outcome types differ only in the `Continue` payload, and a settled outcome reaching the tail is not a `Continue` |
 | F5 | Handler.scala:426 | `else outcome.asInstanceOf[Outcome2[State, A < (E & S), B < S] < S]` | cast | moved: as F4, for the state-carrying outcome |
@@ -324,17 +324,20 @@ inside their errors, and the suspect confirmed at a tight 6.4 times:
 
 **The multi-shot rows, and the regression they show.** Three rows added by edit 22 enter a
 `handleContRepeated` region, which no row did before. Base against tip, `-f 3 -prof gc`,
-`bench/compare-rows-base-vs-tip.md` (the earlier shape's session, `bench/compare-rows-base-vs-AC.md`,
-is kept for the derivation's record); the session's base leg ran beside a compile, so the time cells
-are the clean rerun's, `bench/compare-rows-base-vs-tip-clean.md`, where they differ:
+allocation from the profiler runs' `gc.alloc.rate.norm` lines (`bench/base-rows-3.log`,
+`bench/tip-rows-3.log`; the earlier shape's session, `bench/compare-rows-base-vs-AC.md`, is kept for
+the derivation's record). Time is the same-session `-f 3` confirmation above,
+`bench/compare-base-vs-tip-f3.md`, for the two rows it carries; the recovering row's time is the
+profiler session's, whose base leg ran beside a compile, and a clean rerun of the three rows is
+queued for that one cell:
 
 | row | base | tip | per unit |
 |---|---|---|---|
-| `repeatedRegionsPayEntry`, 1000 regions of one operation | 56.2 us, 88,104 B | 59.9 us, 104,120 B | +3.7 ns and 16 B per region: the re-entered handler |
+| `repeatedRegionsPayEntry`, 1000 regions of one operation | 56.1 us, 88,104 B | 58.2 us, 104,120 B | +2.1 ns and 16 B per region: the re-entered handler |
 | `repeatedRegionsPayEntryRecovering`, the same through the recovering overload | 59.0 us, 88,104 B | 60.5 us, 104,120 B | +1.5 ns and 16 B per region |
-| `repeatedClausesPayReentry`, one region of 10,000 operations | 100.8 us (`-f 1`), 480,121 B | 657.1 us, 720,141 B | +56 ns and 24 B per resumption: one region entered per application |
+| `repeatedClausesPayReentry`, one region of 10,000 operations | 99.8 us, 480,121 B | 636.1 us, 720,141 B | +54 ns and 24 B per resumption: one region entered per application |
 
-The third is a regression of 6.5 times on that row, and nobody has accepted it. The mechanism is
+The third is a regression of 6.4 times on that row, and nobody has accepted it. The mechanism is
 the design: every application of a repeated handler's continuation enters a region, and a region's
 entry and exit is what `contextRegionsPayEntryExit` and `emittingClausesPayRegionRebuild` already
 measure at 73 and 89 ns per region, so the row sits at the floor, not above it. No cheaper frame
@@ -471,7 +474,7 @@ The reviewer read the status report on 2026-09-12 and asked about each; the stat
    is exactly the delimiting the kernel now does. Edit 13's cases and the matrix in B are that shape,
    and the base hangs or blows up on them. A stands unless the reviewer rules B.
 5. **The per-resumption region is the price of a kernel that delimits.** Accepting A means every
-   multi-shot resumption enters a region, 56 ns and 24 bytes, and a clause that resumes exactly once
+   multi-shot resumption enters a region, 54 ns and 24 bytes, and a clause that resumes exactly once
    under `handleContRepeated` pays it where the base ran flat; such a clause belongs under
    `handleCont`, and no consumer in the tree has that shape. The alternative is the base's contract,
    documented rather than enforced: a repeated clause with pending work between resumptions must

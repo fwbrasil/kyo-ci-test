@@ -299,8 +299,8 @@ Three rows added to `KernelBench` enter a `handleContRepeated` region, which no 
 through the recovering overload, whose handler and re-entered handler are their own classes, so the
 flags table has a number for that allocation site rather than a borrowed one) and
 `repeatedClausesPayReentry` (`suspensionBaseline`'s program under a repeated handler, ten thousand
-operations each resumed once). Base against tip with the allocation profiler: the re-entered handler costs 16 bytes and 3.7 ns per region
-entry; the re-entry costs 24 bytes and 56 ns per resumption, which makes `repeatedClausesPayReentry` 6.5 times
+operations each resumed once). Base against tip with the allocation profiler: the re-entered handler costs 16 bytes and 2.1 ns per region
+entry; the re-entry costs 24 bytes and 54 ns per resumption, which makes `repeatedClausesPayReentry` 6.4 times
 slower than the base leg (the earlier shape, with the wrap in `Eval`, cost 64 bytes and 61 ns, 7.2 times). The mechanism is the design: every application of the continuation enters a
 region, and a region's entry and exit is what the existing rows `contextRegionsPayEntryExit` and
 `emittingClausesPayRegionRebuild` measure at 73 and 89 ns. There is no cheaper frame that would do:
@@ -323,7 +323,7 @@ changes for it. `ChoiceBench` in `kyo-bench` is added for both rows, base agains
 
 ### Fork 5: the per-resumption region is the price of a kernel that delimits
 
-Open for the user. Accepting A means every multi-shot resumption enters a region, 56 ns and 24
+Open for the user. Accepting A means every multi-shot resumption enters a region, 54 ns and 24
 bytes, and a clause that resumes exactly once under `handleContRepeated` pays it too, where the base
 ran flat; such a clause belongs under `handleCont`, and no consumer in the tree has that shape. The
 alternative is the base's contract, documented rather than enforced: a repeated clause with pending
