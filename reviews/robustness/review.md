@@ -360,18 +360,32 @@ whose CI-only failures on the final-code run are in the CI table.
 
 ## Open rulings
 
+The reviewer read the status report on 2026-09-12 and asked about each; the state after that exchange.
+
 1. **The overload pair.** `Arrow.apply(v: A)` against `apply[S2](v: A < S2)`: at an erased input the
    static argument type picks the semantics. Evidence: the `Batch` regression, the two `PollTest`
    ascriptions, and the contract cases in `ArrowEffectTest`. The matrix in B does not reach the
-   pair: its scenarios type their continuations. Declared, not touched.
+   pair: its scenarios type their continuations. Declared, not touched. The reviewer asked whether
+   the version that takes a plain value can be removed and what it would cost; a static analysis of
+   every call site is in `lenses/fork1-apply-pair.md`, and the measurement it names (the
+   `KernelBench` rows whose hot path applies a settled continuation) is the next step, outside this
+   package's range.
 2. **The `PollTest` ascriptions** are workarounds under the ruling of 2026-08-28 and are left in
-   place because their root cause is fork 1.
-3. **D not attempted**, per the rule in the derivation; the outcome is reported above.
-4. **Fork 4, ruled A by the author under the overnight autonomy.** The alternative, candidate B, is
-   `done` per resumption with a changed `handleContRepeated` signature, the standard delimited
-   reading. Edit 12's second case (1060, not 4060) is the line that pins the ruling; reversing it is a
-   public-surface decision. B would not change the cost in ruling 5: it re-enters a region per
-   resumption as well.
+   place because their root cause is fork 1. The reviewer asked whether they come from the handler
+   method's signature: they come from overload resolution on the continuation's `apply` pair at the
+   clause's erased element type, which item 9 of the robustness list exposed by regrouping the
+   cases; the handler signature is unchanged.
+3. **D**, the reference interpreter: dropped by the reviewer ("drop"). The derivation keeps the
+   record of why it was not attempted; nothing else in the package depends on it.
+4. **Fork 4, A over B.** The alternative, candidate B, is `done` per resumption with a changed
+   `handleContRepeated` signature, the standard delimited reading. Edit 13's second case (1060, not
+   4060) is the line that pins A; reversing it is a public-surface decision. B would not change the
+   cost in ruling 5: it re-enters a region per resumption as well. The reviewer asked how the kernel
+   and prelude suites passed at the base if the base is wrong: no case in either suite had a repeated
+   clause resuming twice over two or more occurrences with pending work between the resumptions, and
+   the tree's one consumer, `Choice.run`, re-entered a region by hand around every resumption, which
+   is exactly the delimiting the kernel now does. Edit 13's cases and the matrix in B are that shape,
+   and the base hangs or blows up on them. A stands unless the reviewer rules B.
 5. **The per-resumption region is the price of a kernel that delimits.** Accepting A means every
    multi-shot resumption enters a region, 61 ns and 64 bytes, and a clause that resumes exactly once
    under `handleContRepeated` pays it where the base ran flat; such a clause belongs under
@@ -380,4 +394,7 @@ whose CI-only failures on the final-code run are in the CI table.
    re-enter a region itself, as `Choice.run` did, and one that does not hangs. Recommendation: A,
    with edit 23, because the kernel is then correct by construction for the shape the matrix found
    and the one consumer pays less than it paid before: `Choice.run` 3.2 times faster than the base,
-   `runStream` unchanged.
+   `runStream` unchanged. The reviewer's position: a necessary price is acceptable, to be discussed
+   live; the benchmark section above is the case for its necessity, and the region-entry floor
+   (`contextRegionsPayEntryExit`, `emittingClausesPayRegionRebuild`) is the lever that would lower it
+   for every handler, not a lever this change has.
