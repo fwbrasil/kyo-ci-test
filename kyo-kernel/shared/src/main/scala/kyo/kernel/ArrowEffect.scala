@@ -266,7 +266,7 @@ object ArrowEffect:
                         new Handler.ContHandler[I, O, E, A, B, S & S2]:
                             def tag = effectTag
                             // as the overload above; the re-entered region carries no recover, its output being the body's A
-                            // where recover yields the region's B, so a throw inside it unwinds to this handler's
+                            // where recover yields the region's B, so a throw inside it unwinds to this handler's recover
                             val reentered = Handler.reentered(this)
                             def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                                 Region.discharge(handle[X](input, Handler.reentering[I, O, E, A, S & S2, X](next, reentered)))

@@ -1,0 +1,328 @@
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::arrayBaseOffset has been called by net.openhft.hashing.UnsafeAccess (file:/Users/fwbrasil/.sbt/boot/scala-2.12.21/org.scala-sbt/sbt/1.12.13/zero-allocation-hashing-0.16.jar)
+WARNING: Please consider reporting this to the maintainers of class net.openhft.hashing.UnsafeAccess
+WARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.scalasbt.ipcsocket.NativeLoader in an unnamed module (file:/Users/fwbrasil/.sbt/boot/scala-2.12.21/org.scala-sbt/sbt/1.12.13/ipcsocket-1.7.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+[info] welcome to sbt 1.12.13 (Eclipse Adoptium Java 25.0.3)
+[info] loading settings for project robustness-base-build from build.sbt, plugins.sbt...
+[info] loading project definition from /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/project
+[info] loading settings for project kyoJVM from build.sbt...
+[info] resolving key references (261692 settings) ...
+[info] set current project to kyoJVM (in build file:/Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/)
+[info] set current project to kyoJVM (in build file:/Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/)
+[info] running (fork) org.openjdk.jmh.generators.bytecode.JmhBytecodeGenerator /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/kyo-kernel/jvm/target/scala-3.8.4/classes /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/kyo-kernel/jvm/target/scala-3.8.4/src_managed/jmh /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/kyo-kernel/jvm/target/scala-3.8.4/resource_managed/jmh default
+[info] Processing 1550 classes from /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/kyo-kernel/jvm/target/scala-3.8.4/classes with "reflection" generator
+[info] Writing out Java source to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/kyo-kernel/jvm/target/scala-3.8.4/src_managed/jmh and resources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/kyo-kernel/jvm/target/scala-3.8.4/resource_managed/jmh
+[info] compiling 2 Java sources to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/kyo-kernel/jvm/target/scala-3.8.4/classes ...
+[info] done compiling
+[info] running (fork) org.openjdk.jmh.Main -f 3 -prof gc -rf json -rff /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/reviews/robustness/bench/base-rows.json kyo.kernel.bench.KernelBench.repeatedClausesPayReentry kyo.kernel.bench.KernelBench.repeatedRegionsPayEntry
+[error] WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+[error] WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/target/bg-jobs/sbt_60032676/target/3e4520b7/1296d6b9/jmh-core-1.37.jar)
+[error] WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+[error] WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[info] # JMH version: 1.37
+[info] # VM version: JDK 25.0.3, OpenJDK 64-Bit Server VM, 25.0.3+9-LTS
+[info] # VM invoker: /Users/fwbrasil/.sdkman/candidates/java/25.0.3-tem/bin/java
+[info] # VM options: --add-opens=java.base/java.lang=ALL-UNNAMED -Dkyo.http.client.defaultIdleTimeout=2seconds -XX:-UseCompactObjectHeaders
+[info] # Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+[info] # Warmup: 5 iterations, 1 s each
+[info] # Measurement: 5 iterations, 1 s each
+[info] # Timeout: 10 min per iteration
+[info] # Threads: 1 thread, will synchronize iterations
+[info] # Benchmark mode: Average time, time/op
+[info] # Benchmark: kyo.kernel.bench.KernelBench.repeatedClausesPayReentry
+[info] # Run progress: 0.00% complete, ETA 00:01:00
+[info] # Fork: 1 of 3
+[info] WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+[info] WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/target/bg-jobs/sbt_60032676/target/3e4520b7/1296d6b9/jmh-core-1.37.jar)
+[info] WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+[info] WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[info] # Warmup Iteration   1: 125.147 us/op
+[info] # Warmup Iteration   2: 98.724 us/op
+[info] # Warmup Iteration   3: 99.152 us/op
+[info] # Warmup Iteration   4: 98.673 us/op
+[info] # Warmup Iteration   5: 98.479 us/op
+[info] Iteration   1: 98.629 us/op
+[info]                  gc.alloc.rate:      4641.792 MB/sec
+[info]                  gc.alloc.rate.norm: 480120.689 B/op
+[info]                  gc.count:           5.000 counts
+[info]                  gc.time:            3.000 ms
+[info] Iteration   2: 98.136 us/op
+[info]                  gc.alloc.rate:      4664.861 MB/sec
+[info]                  gc.alloc.rate.norm: 480120.685 B/op
+[info]                  gc.count:           5.000 counts
+[info]                  gc.time:            2.000 ms
+[info] Iteration   3: 99.619 us/op
+[info]                  gc.alloc.rate:      4595.594 MB/sec
+[info]                  gc.alloc.rate.norm: 480120.695 B/op
+[info]                  gc.count:           5.000 counts
+[info]                  gc.time:            2.000 ms
+[info] Iteration   4: 98.256 us/op
+[info]                  gc.alloc.rate:      4659.317 MB/sec
+[info]                  gc.alloc.rate.norm: 480120.681 B/op
+[info]                  gc.count:           6.000 counts
+[info]                  gc.time:            3.000 ms
+[info] Iteration   5: 98.681 us/op
+[info]                  gc.alloc.rate:      4639.419 MB/sec
+[info]                  gc.alloc.rate.norm: 480120.690 B/op
+[info]                  gc.count:           5.000 counts
+[info]                  gc.time:            3.000 ms
+[info] # Run progress: 16.67% complete, ETA 00:00:51
+[info] # Fork: 2 of 3
+[info] WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+[info] WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/target/bg-jobs/sbt_60032676/target/3e4520b7/1296d6b9/jmh-core-1.37.jar)
+[info] WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+[info] WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[info] # Warmup Iteration   1: 123.567 us/op
+[info] # Warmup Iteration   2: 98.760 us/op
+[info] # Warmup Iteration   3: 99.702 us/op
+[info] # Warmup Iteration   4: 98.473 us/op
+[info] # Warmup Iteration   5: 98.356 us/op
+[info] Iteration   1: 98.111 us/op
+[info]                  gc.alloc.rate:      4666.198 MB/sec
+[info]                  gc.alloc.rate.norm: 480120.680 B/op
+[info]                  gc.count:           5.000 counts
+[info]                  gc.time:            3.000 ms
+[info] Iteration   2: 98.346 us/op
+[info]                  gc.alloc.rate:      4655.059 MB/sec
+[info]                  gc.alloc.rate.norm: 480120.682 B/op
+[info]                  gc.count:           5.000 counts
+[info]                  gc.time:            2.000 ms
+[info] Iteration   3: 98.633 us/op
+[info]                  gc.alloc.rate:      4641.469 MB/sec
+[info]                  gc.alloc.rate.norm: 480120.685 B/op
+[info]                  gc.count:           6.000 counts
+[info]                  gc.time:            3.000 ms
+[info] Iteration   4: 98.218 us/op
+[info]                  gc.alloc.rate:      4661.124 MB/sec
+[info]                  gc.alloc.rate.norm: 480120.681 B/op
+[info]                  gc.count:           5.000 counts
+[info]                  gc.time:            2.000 ms
+[info] Iteration   5: 98.354 us/op
+[info]                  gc.alloc.rate:      4654.704 MB/sec
+[info]                  gc.alloc.rate.norm: 480120.688 B/op
+[info]                  gc.count:           5.000 counts
+[info]                  gc.time:            3.000 ms
+[info] # Run progress: 33.33% complete, ETA 00:00:41
+[info] # Fork: 3 of 3
+[info] WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+[info] WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/target/bg-jobs/sbt_60032676/target/3e4520b7/1296d6b9/jmh-core-1.37.jar)
+[info] WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+[info] WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[info] # Warmup Iteration   1: 124.749 us/op
+[info] # Warmup Iteration   2: 98.759 us/op
+[info] # Warmup Iteration   3: 99.411 us/op
+[info] # Warmup Iteration   4: 100.116 us/op
+[info] # Warmup Iteration   5: 99.219 us/op
+[info] Iteration   1: 98.776 us/op
+[info]                  gc.alloc.rate:      4634.849 MB/sec
+[info]                  gc.alloc.rate.norm: 480120.689 B/op
+[info]                  gc.count:           5.000 counts
+[info]                  gc.time:            3.000 ms
+[info] Iteration   2: 98.741 us/op
+[info]                  gc.alloc.rate:      4636.360 MB/sec
+[info]                  gc.alloc.rate.norm: 480120.684 B/op
+[info]                  gc.count:           5.000 counts
+[info]                  gc.time:            2.000 ms
+[info] Iteration   3: 99.508 us/op
+[info]                  gc.alloc.rate:      4600.748 MB/sec
+[info]                  gc.alloc.rate.norm: 480120.694 B/op
+[info]                  gc.count:           5.000 counts
+[info]                  gc.time:            2.000 ms
+[info] Iteration   4: 99.444 us/op
+[info]                  gc.alloc.rate:      4603.715 MB/sec
+[info]                  gc.alloc.rate.norm: 480120.690 B/op
+[info]                  gc.count:           5.000 counts
+[info]                  gc.time:            3.000 ms
+[info] Iteration   5: 99.518 us/op
+[info]                  gc.alloc.rate:      4600.391 MB/sec
+[info]                  gc.alloc.rate.norm: 480120.690 B/op
+[info]                  gc.count:           6.000 counts
+[info]                  gc.time:            3.000 ms
+[info] Result "kyo.kernel.bench.KernelBench.repeatedClausesPayReentry":
+[info]   98.731 ±(99.9%) 0.576 us/op [Average]
+[info]   (min, avg, max) = (98.111, 98.731, 99.619), stdev = 0.539
+[info]   CI (99.9%): [98.155, 99.307] (assumes normal distribution)
+[info] Secondary result "kyo.kernel.bench.KernelBench.repeatedClausesPayReentry:gc.alloc.rate":
+[info]   4637.040 ±(99.9%) 26.923 MB/sec [Average]
+[info]   (min, avg, max) = (4595.594, 4637.040, 4666.198), stdev = 25.184
+[info]   CI (99.9%): [4610.117, 4663.963] (assumes normal distribution)
+[info] Secondary result "kyo.kernel.bench.KernelBench.repeatedClausesPayReentry:gc.alloc.rate.norm":
+[info]   480120.687 ±(99.9%) 0.005 B/op [Average]
+[info]   (min, avg, max) = (480120.680, 480120.687, 480120.695), stdev = 0.005
+[info]   CI (99.9%): [480120.682, 480120.692] (assumes normal distribution)
+[info] Secondary result "kyo.kernel.bench.KernelBench.repeatedClausesPayReentry:gc.count":
+[info]   78.000 ±(99.9%) 0.001 counts [Sum]
+[info]   (min, avg, max) = (5.000, 5.200, 6.000), stdev = 0.414
+[info]   CI (99.9%): [78.000, 78.000] (assumes normal distribution)
+[info] Secondary result "kyo.kernel.bench.KernelBench.repeatedClausesPayReentry:gc.time":
+[info]   39.000 ±(99.9%) 0.001 ms [Sum]
+[info]   (min, avg, max) = (2.000, 2.600, 3.000), stdev = 0.507
+[info]   CI (99.9%): [39.000, 39.000] (assumes normal distribution)
+[info] # JMH version: 1.37
+[info] # VM version: JDK 25.0.3, OpenJDK 64-Bit Server VM, 25.0.3+9-LTS
+[info] # VM invoker: /Users/fwbrasil/.sdkman/candidates/java/25.0.3-tem/bin/java
+[info] # VM options: --add-opens=java.base/java.lang=ALL-UNNAMED -Dkyo.http.client.defaultIdleTimeout=2seconds -XX:-UseCompactObjectHeaders
+[info] # Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+[info] # Warmup: 5 iterations, 1 s each
+[info] # Measurement: 5 iterations, 1 s each
+[info] # Timeout: 10 min per iteration
+[info] # Threads: 1 thread, will synchronize iterations
+[info] # Benchmark mode: Average time, time/op
+[info] # Benchmark: kyo.kernel.bench.KernelBench.repeatedRegionsPayEntry
+[info] # Run progress: 50.00% complete, ETA 00:00:30
+[info] # Fork: 1 of 3
+[info] WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+[info] WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/target/bg-jobs/sbt_60032676/target/3e4520b7/1296d6b9/jmh-core-1.37.jar)
+[info] WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+[info] WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[info] # Warmup Iteration   1: 48.409 us/op
+[info] # Warmup Iteration   2: 47.292 us/op
+[info] # Warmup Iteration   3: 48.208 us/op
+[info] # Warmup Iteration   4: 54.240 us/op
+[info] # Warmup Iteration   5: 55.358 us/op
+[info] Iteration   1: 54.007 us/op
+[info]                  gc.alloc.rate:      1555.579 MB/sec
+[info]                  gc.alloc.rate.norm: 88104.381 B/op
+[info]                  gc.count:           2.000 counts
+[info]                  gc.time:            2.000 ms
+[info] Iteration   2: 54.438 us/op
+[info]                  gc.alloc.rate:      1543.212 MB/sec
+[info]                  gc.alloc.rate.norm: 88104.380 B/op
+[info]                  gc.count:           2.000 counts
+[info]                  gc.time:            2.000 ms
+[info] Iteration   3: 53.004 us/op
+[info]                  gc.alloc.rate:      1585.024 MB/sec
+[info]                  gc.alloc.rate.norm: 88104.370 B/op
+[info]                  gc.count:           2.000 counts
+[info]                  gc.time:            3.000 ms
+[info] Iteration   4: 53.081 us/op
+[info]                  gc.alloc.rate:      1582.668 MB/sec
+[info]                  gc.alloc.rate.norm: 88104.368 B/op
+[info]                  gc.count:           1.000 counts
+[info]                  gc.time:            1.000 ms
+[info] Iteration   5: 51.355 us/op
+[info]                  gc.alloc.rate:      1635.822 MB/sec
+[info]                  gc.alloc.rate.norm: 88104.357 B/op
+[info]                  gc.count:           2.000 counts
+[info]                  gc.time:            1.000 ms
+[info] # Run progress: 66.67% complete, ETA 00:00:20
+[info] # Fork: 2 of 3
+[info] WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+[info] WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/target/bg-jobs/sbt_60032676/target/3e4520b7/1296d6b9/jmh-core-1.37.jar)
+[info] WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+[info] WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[info] # Warmup Iteration   1: 48.213 us/op
+[info] # Warmup Iteration   2: 47.226 us/op
+[info] # Warmup Iteration   3: 50.350 us/op
+[info] # Warmup Iteration   4: 52.201 us/op
+[info] # Warmup Iteration   5: 55.053 us/op
+[info] Iteration   1: 57.477 us/op
+[info]                  gc.alloc.rate:      1461.667 MB/sec
+[info]                  gc.alloc.rate.norm: 88104.404 B/op
+[info]                  gc.count:           2.000 counts
+[info]                  gc.time:            2.000 ms
+[info] Iteration   2: 54.986 us/op
+[info]                  gc.alloc.rate:      1527.806 MB/sec
+[info]                  gc.alloc.rate.norm: 88104.382 B/op
+[info]                  gc.count:           2.000 counts
+[info]                  gc.time:            2.000 ms
+[info] Iteration   3: 50.217 us/op
+[info]                  gc.alloc.rate:      1672.982 MB/sec
+[info]                  gc.alloc.rate.norm: 88104.351 B/op
+[info]                  gc.count:           2.000 counts
+[info]                  gc.time:            3.000 ms
+[info] Iteration   4: 53.742 us/op
+[info]                  gc.alloc.rate:      1563.262 MB/sec
+[info]                  gc.alloc.rate.norm: 88104.372 B/op
+[info]                  gc.count:           1.000 counts
+[info]                  gc.time:            1.000 ms
+[info] Iteration   5: 53.247 us/op
+[info]                  gc.alloc.rate:      1577.713 MB/sec
+[info]                  gc.alloc.rate.norm: 88104.371 B/op
+[info]                  gc.count:           2.000 counts
+[info]                  gc.time:            1.000 ms
+[info] # Run progress: 83.33% complete, ETA 00:00:10
+[info] # Fork: 3 of 3
+[info] WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+[info] WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness-base/target/bg-jobs/sbt_60032676/target/3e4520b7/1296d6b9/jmh-core-1.37.jar)
+[info] WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+[info] WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[info] # Warmup Iteration   1: 50.985 us/op
+[info] # Warmup Iteration   2: 51.066 us/op
+[info] # Warmup Iteration   3: 51.604 us/op
+[info] # Warmup Iteration   4: 54.174 us/op
+[info] # Warmup Iteration   5: 55.413 us/op
+[info] Iteration   1: 54.217 us/op
+[info]                  gc.alloc.rate:      1549.539 MB/sec
+[info]                  gc.alloc.rate.norm: 88104.382 B/op
+[info]                  gc.count:           2.000 counts
+[info]                  gc.time:            2.000 ms
+[info] Iteration   2: 52.875 us/op
+[info]                  gc.alloc.rate:      1588.832 MB/sec
+[info]                  gc.alloc.rate.norm: 88104.366 B/op
+[info]                  gc.count:           1.000 counts
+[info]                  gc.time:            1.000 ms
+[info] Iteration   3: 52.594 us/op
+[info]                  gc.alloc.rate:      1597.325 MB/sec
+[info]                  gc.alloc.rate.norm: 88104.364 B/op
+[info]                  gc.count:           2.000 counts
+[info]                  gc.time:            2.000 ms
+[info] Iteration   4: 54.239 us/op
+[info]                  gc.alloc.rate:      1548.867 MB/sec
+[info]                  gc.alloc.rate.norm: 88104.377 B/op
+[info]                  gc.count:           2.000 counts
+[info]                  gc.time:            3.000 ms
+[info] Iteration   5: 55.646 us/op
+[info]                  gc.alloc.rate:      1509.704 MB/sec
+[info]                  gc.alloc.rate.norm: 88104.386 B/op
+[info]                  gc.count:           2.000 counts
+[info]                  gc.time:            1.000 ms
+[info] Result "kyo.kernel.bench.KernelBench.repeatedRegionsPayEntry":
+[info]   53.675 ±(99.9%) 1.841 us/op [Average]
+[info]   (min, avg, max) = (50.217, 53.675, 57.477), stdev = 1.722
+[info]   CI (99.9%): [51.834, 55.516] (assumes normal distribution)
+[info] Secondary result "kyo.kernel.bench.KernelBench.repeatedRegionsPayEntry:gc.alloc.rate":
+[info]   1566.667 ±(99.9%) 53.686 MB/sec [Average]
+[info]   (min, avg, max) = (1461.667, 1566.667, 1672.982), stdev = 50.218
+[info]   CI (99.9%): [1512.980, 1620.353] (assumes normal distribution)
+[info] Secondary result "kyo.kernel.bench.KernelBench.repeatedRegionsPayEntry:gc.alloc.rate.norm":
+[info]   88104.374 ±(99.9%) 0.014 B/op [Average]
+[info]   (min, avg, max) = (88104.351, 88104.374, 88104.404), stdev = 0.013
+[info]   CI (99.9%): [88104.360, 88104.388] (assumes normal distribution)
+[info] Secondary result "kyo.kernel.bench.KernelBench.repeatedRegionsPayEntry:gc.count":
+[info]   27.000 ±(99.9%) 0.001 counts [Sum]
+[info]   (min, avg, max) = (1.000, 1.800, 2.000), stdev = 0.414
+[info]   CI (99.9%): [27.000, 27.000] (assumes normal distribution)
+[info] Secondary result "kyo.kernel.bench.KernelBench.repeatedRegionsPayEntry:gc.time":
+[info]   27.000 ±(99.9%) 0.001 ms [Sum]
+[info]   (min, avg, max) = (1.000, 1.800, 3.000), stdev = 0.775
+[info]   CI (99.9%): [27.000, 27.000] (assumes normal distribution)
+[info] # Run complete. Total time: 00:01:01
+[info] REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+[info] why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+[info] experiments, perform baseline and negative tests that provide experimental control, make sure
+[info] the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+[info] Do not assume the numbers tell you what you want them to tell.
+[info] NOTE: Current JVM experimentally supports Compiler Blackholes, and they are in use. Please exercise
+[info] extra caution when trusting the results, look into the generated code to check the benchmark still
+[info] works, and factor in a small probability of new VM bugs. Additionally, while comparisons between
+[info] different JVMs are already problematic, the performance difference caused by different Blackhole
+[info] modes can be very significant. Please make sure you use the consistent Blackhole mode for comparisons.
+[info] Benchmark                                                 Mode  Cnt       Score    Error   Units
+[info] KernelBench.repeatedClausesPayReentry                     avgt   15      98.731 ±  0.576   us/op
+[info] KernelBench.repeatedClausesPayReentry:gc.alloc.rate       avgt   15    4637.040 ± 26.923  MB/sec
+[info] KernelBench.repeatedClausesPayReentry:gc.alloc.rate.norm  avgt   15  480120.687 ±  0.005    B/op
+[info] KernelBench.repeatedClausesPayReentry:gc.count            avgt   15      78.000           counts
+[info] KernelBench.repeatedClausesPayReentry:gc.time             avgt   15      39.000               ms
+[info] KernelBench.repeatedRegionsPayEntry                       avgt   15      53.675 ±  1.841   us/op
+[info] KernelBench.repeatedRegionsPayEntry:gc.alloc.rate         avgt   15    1566.667 ± 53.686  MB/sec
+[info] KernelBench.repeatedRegionsPayEntry:gc.alloc.rate.norm    avgt   15   88104.374 ±  0.014    B/op
+[info] KernelBench.repeatedRegionsPayEntry:gc.count              avgt   15      27.000           counts
+[info] KernelBench.repeatedRegionsPayEntry:gc.time               avgt   15      27.000               ms
+[info] Benchmark result is saved to /Users/fwbrasil/workspace/kyo/.claude/worktrees/robustness/reviews/robustness/bench/base-rows.json
+[success] Total time: 67 s (0:01:07.0), completed Sep 12, 2026, 3:13:17 AM
