@@ -2,7 +2,7 @@
 
 Base `cdefdc9e60`, branch `robustness`, worktree `.claude/worktrees/robustness`. Range and tip are
 re-derived by `package-check.sh` at packaging; the walk below is `sequence.json`, verified against
-the tip by `sequence.py --verify`. Twenty-seven edits, applied one at a time with the Edit tool, in
+the tip by `sequence.py --verify`. Twenty-eight edits, applied one at a time with the Edit tool, in
 the order given here: twenty-one in the kernel and the build (its test runner and the benchmark
 configuration), two in `kyo-prelude` and `kyo-bench` for the consumer of the multi-shot fix, two in
 `kyo-data` and `kyo-bench` for the Span fix and its number, and two in `kyo-net`, the last four being
@@ -109,42 +109,47 @@ One sentence per edit, the sentence to say when applying it.
    that region ends. `reentering(k, reentered)` is the continuation wrapped so that each application
    re-enters, `Pending.handle(k(x), reentered, ())`, an `Arrow.Step` deferring on a pending input in
    the same arm shape as `Arrow.apply` and unnesting a settled one.
-10. `ArrowEffect.scala`, `handleContRepeated`: the handler builds its re-entered form once, as a
+10. `ArrowEffect.scala`, `handleContRepeated`'s scaladoc: each application of the continuation
+   re-enters the region, a bracket acquired inside one resumption is released where that
+   resumption's region ends, before the clause applies the continuation again, and only one acquired
+   in the extent the region holds waits for the region's end; the recovering overload's scaladoc
+   inherits this by reference.
+11. `ArrowEffect.scala`, `handleContRepeated`: the handler builds its re-entered form once, as a
    `val`, and wraps the continuation it hands the clause in `run`, so the re-entry lives with the
    handler that declares it repeats and nothing in `Eval` or `ContHandler` changes.
-11. `ArrowEffect.scala`, the recovering overload: the same, and its re-entered form carries no
+12. `ArrowEffect.scala`, the recovering overload: the same, and its re-entered form carries no
    `recover`, since `recover` yields the region's `B` where the re-entered region yields the body's
    `A`, so a throw inside a re-entered region unwinds to this handler's `recover`.
-12. `ArrowEffectTest.scala`: five cases pin the fix, a clause resuming twice over two occurrences
+13. `ArrowEffectTest.scala`: five cases pin the fix, a clause resuming twice over two occurrences
    (60), `done` running once at the outer end and not per resumption (1060, not 4060), three
    occurrences (180), a throw after a second resumption reaching the outer `recover` (4), and a
    hundred thousand sequential operations under the repeated handler, which now nests a region per
    resumption, stack safe like every sibling handler's depth case.
-13. `BracketTest.scala`: a bracket acquired inside one resumption and captured by an inner
+14. `BracketTest.scala`: a bracket acquired inside one resumption and captured by an inner
    occurrence's continuation is released once, where the re-entered region ends, before the outer
    clause resumes again, which is what `reentered`'s `repeated` buys and where the release moved to.
 
 **C. One re-entry path**
 
-14. `Handler.scala`: `attachReentryToPending(reentry, outcome)` is the tail the four loop sites
+15. `Handler.scala`: `attachReentryToPending(reentry, outcome)` is the tail the four loop sites
     spelled, a pending outcome gets the cont attached through `attachReentry`, a settled one passes
     through without building the arrow, `inline` so the fused walks expand it as the branch they
     carried. C is item 4 of the robustness list, one re-entry path rather than four spellings of it;
     it is not part of the fix and travels with it because the tails are where a loop region's
     re-entry is attached, the same rule the fix applies to a repeated region.
-15. `Handler.scala`: `attachReentryToPending2`, the same over the state-carrying outcome.
-16. `Handler.scala`, `LoopHandler.answers`: the tail becomes the call.
-17. `Handler.scala`, `LoopStateHandler.answers`: the tail becomes the call.
-18. `Handler.scala`, `answersLoop`: the tail becomes the call; the `k.asInstanceOf` on the line is
+16. `Handler.scala`: `attachReentryToPending2`, the same over the state-carrying outcome.
+17. `Handler.scala`, `LoopHandler.answers`: the tail becomes the call.
+18. `Handler.scala`, `LoopStateHandler.answers`: the tail becomes the call.
+19. `Handler.scala`, `answersLoop`: the tail becomes the call; the `k.asInstanceOf` on the line is
     the one the site already carried.
-19. `Handler.scala`, `answersLoopState`: the tail becomes the call.
+20. `Handler.scala`, `answersLoopState`: the tail becomes the call.
 
 **E. The benchmark class compiles**
 
-20. `KernelBench.scala`: four `ContextEffect.handle(Tag[X])(...)` calls become
+21. `KernelBench.scala`: four `ContextEffect.handle(Tag[X])(...)` calls become
     `ContextEffect.handle(Tag[X], ...)`, the two-group signature every context handler has since
     `cdefdc9e60`; the benchmark sources had not been compiled since, which edits 2 and 3 now catch.
-21. `KernelBench.scala`: three rows enter a multi-shot region, `repeatedClausesPayReentry` (the
+22. `KernelBench.scala`: three rows enter a multi-shot region, `repeatedClausesPayReentry` (the
     `suspensionBaseline` program under `handleContRepeated`, one region, ten thousand operations),
     `repeatedRegionsPayEntry` (a region per operation) and `repeatedRegionsPayEntryRecovering` (the
     same through the recovering overload), the rows that measure the re-entered handler built per
@@ -152,30 +157,30 @@ One sentence per edit, the sentence to say when applying it.
 
 **F. The consumer**
 
-22. `Choice.scala`, `run`: the clause is `Kyo.foreach` over the alternatives applied to the
+23. `Choice.scala`, `run`: the clause is `Kyo.foreach` over the alternatives applied to the
     continuation, flattened once; the inner `Choice.run(cont(v))` it wrapped each resumption in was
     the consumer re-entering a region by hand, which the continuation now does on every application,
     so keeping it would enter two regions per resumption.
-23. `ChoiceBench.scala`, new in `kyo-bench`: `run` and `runStream` over ten sequential binary
+24. `ChoiceBench.scala`, new in `kyo-bench`: `run` and `runStream` over ten sequential binary
     choice points, the rows that measure what Choice pays per resumption.
 
 **Outside the kernel**
 
-24. `Span.scala`, `updated`: an explicit index check raising the `IndexOutOfBoundsException` the
+25. `Span.scala`, `updated`: an explicit index check raising the `IndexOutOfBoundsException` the
     scaladoc already promises, in `Chunk`'s shape and message; the JVM's array store delivered it,
     Scala.js treats the store as undefined behaviour and its fatal error ends the node process, and
     the Wasm backend traps with the same effect, which is how the branch's CI matrix found it, on
     every JS and Wasm job, through the `SpanTest` case on the branch's ancestry.
-25. `SpanBench.scala`, new in `kyo-bench`: `updated` over a sixteen-element span, every index in
+26. `SpanBench.scala`, new in `kyo-bench`: `updated` over a sixteen-element span, every index in
     bounds, the row that prices the check the JVM now makes twice, the array store's own being
     dominated by it.
-26. `RearmSurvivorsTest.scala`: the leaf arms write before read, so the write registration precedes
+27. `RearmSurvivorsTest.scala`: the leaf arms write before read, so the write registration precedes
     the read registration in the poller driver's command order and is in the log by the time the
     read event can fire; armed the other way, the EOF event could be dispatched and the driver closed
     before the write registration was applied, which the linux-arm64 JVM job reported as a missing
     `registerWrite`. What the leaf pins, no rearm under edge-triggered registration, does not depend
     on the order.
-27. `RearmSurvivorsTest.scala`: the leaf also asserts that the write registration precedes the read
+28. `RearmSurvivorsTest.scala`: the leaf also asserts that the write registration precedes the read
     registration in the log, so the order it now rests on is pinned rather than assumed.
 
 The name in edits 14 and 15 is not `reenter`, the derivation's working name: `LoopStateHandler.reenter(state)`
