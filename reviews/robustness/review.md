@@ -209,8 +209,11 @@ through.
 
 **G. The tooling**
 
-The kernel skill's `SKILL.md` names three files beside it that did not exist yet; this change wrote them
-and they are new files, applied whole.
+The kernel skill's pipeline names three files that did not exist; this change wrote them and they
+are new files, applied whole. In the user's tree they are written under
+`.dev/kyo-kernel/.claude/skills/kernel/`, untracked, where the repository's rule (`76c675ea94`)
+puts the kernel skill's artifacts; the branch tracks them under `kyo-kernel/.claude/skills/kernel/`
+for preservation only.
 
 32. `flags.sh`, new: emits one row per construct of concern on a diff's added lines (casts, `Any`,
    `@unchecked`, allocations on hot paths, terminology), the skeleton `flags.md` adjudicates.

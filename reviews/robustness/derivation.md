@@ -165,16 +165,22 @@ the spelling `answersLoop`'s settled arm already uses.
 
 ### G. The kernel skill's tooling (not kernel source)
 
-`kyo-kernel/.claude/skills/kernel/SKILL.md` describes a pipeline whose three companion files did not
-exist in this tree: `flags.sh`, which emits one row per construct of concern on a diff's added lines
+The kernel skill (`SKILL.md`, the document this work ran under) is not in this tree: the repository
+untracked `kyo-kernel/.claude/` and every other agent artifact in `76c675ea94`, which moved them to
+`.dev/`, gitignored, and set the rule that only module sources, READMEs and CONTRIBUTING files are
+tracked; the primary worktree's copy of the skill is gone since. Its pipeline section names three
+companion files that did not exist anywhere: `flags.sh`, which emits one row per construct of concern on a diff's added lines
 (casts, `Any` carriers, `@unchecked`, allocations, terminology), the skeleton `flags.md` adjudicates;
 `package-check.sh`, which re-derives every mechanical claim a package makes (tip, commit count,
 surface, clean tree, the flag count against the table, the walk reproducing the tip, each benchmark
 class named referencing the package under review) as OK, CHECK or STALE lines; and `rulings.md`, the
 reviewer's objections verbatim and dated, the rehearsal lens's rubric, carrying the 2026-09-12 entry
-from this change's status report. This change writes the three, whole, as new files. Surface: those
-three files and nothing in `SKILL.md`. No equation: they are tooling, and the package's own checks
-(`package-check.sh` over this package, the flags table) are their first run.
+from this change's status report. This change writes the three, whole, as new files. On this branch they are tracked, force-added
+against that rule, so that a session boundary cannot lose them; that is preservation on a working
+branch and nothing else. At the live review they are written under
+`.dev/kyo-kernel/.claude/skills/kernel/` in the user's tree, where the repository's rule puts the
+kernel skill's artifacts, untracked. Surface: those three files; no equation, they are tooling, and
+the package's own checks (`package-check.sh` over this package, the flags table) are their first run.
 
 ## Also on the branch, outside the kernel
 
@@ -198,8 +204,16 @@ rather than assumed; what the leaf is there to pin, no rearm under edge-triggere
 not depend on which direction is armed first. kyo-net's sources are identical to main on this
 branch; this leaf is the branch's one kyo-net change.
 
-Neither is a kernel piece; they are the last two edits of the live-review walk, in their own group,
-so the range's surface is fully declared and fully applied.
+Neither is a kernel piece; they are two edits of the live-review walk, in their own group, so the
+range's surface is fully declared and fully applied.
+
+Tracking on this branch, declared because the range shows it: `reviews/robustness/`, this package,
+is tracked on the branch (35 files, force-added), and so are piece G's three files, both against
+the repository's rule in `76c675ea94` that such artifacts live under `.dev/`, gitignored. The
+reason is preservation across sessions on a working branch that is never merged as it stands: the
+walk is what crosses to the user's tree, and nothing under `reviews/` is part of it. The package
+itself belongs under `.dev/reviews/robustness/` in the user's tree, untracked, once the review has
+run.
 
 ## What is not in this change
 
