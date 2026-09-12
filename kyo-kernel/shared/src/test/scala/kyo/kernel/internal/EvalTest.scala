@@ -667,6 +667,29 @@ class EvalTest extends AnyFreeSpec:
             assert(released == Maybe(7), s"the release never ran for what the acquire produced, it saw $released")
         }
 
+        // A resource that is itself a computation is carried boxed once it settles, and every settled arm unnests
+        // before delivering. The walk above hands the settled value to the waiting `Ensure` as it found it, so a
+        // release for such a resource would see the box rather than what the acquire produced.
+        "a release for a resource that is itself a computation receives the computation, not its box" in {
+            val resource: Int < Ask = ask
+            var released            = Maybe.empty[Any]
+            val v: Int < Any =
+                Bracket(Effect.defer {
+                    requestStop()
+                    Effect.defer(Kyo.lift(resource))
+                })(_ => Effect.defer(1)) { (a, _) =>
+                    released = Maybe(a)
+                }
+            val parked = Eval.partial(v)
+            assert(released.isEmpty, "the premise is that the stop parked before the bracket installed its region")
+            Eval.release(parked, new RuntimeException("abandoned"), Tag[Ask])([C] => (_: Unit) => ())
+            assert(released.isDefined, "the release never ran")
+            assert(
+                released.get.asInstanceOf[AnyRef] eq resource.asInstanceOf[AnyRef],
+                s"the release saw ${released.get}, not the resource"
+            )
+        }
+
         "a stateful region parked mid-loop resumes at the parked state" in {
             val body: Int < Ask =
                 ask.map { a =>

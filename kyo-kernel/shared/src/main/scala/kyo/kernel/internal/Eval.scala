@@ -628,9 +628,10 @@ import scala.collection.mutable.ArrayBuffer
         val collected = ArrayBuffer.empty[AnyRef]
 
         // An `Arrow.Ensure` waiting on an already-settled value is a release nobody will run, so the cont is
-        // carried down and offered the value when one is reached. Only an `Ensure` may run here. A chain's head
-        // is its left arrow, itself a chain when one was built onto another, so walking `head` down finds the
-        // step that would have received the value.
+        // carried down and offered the value when one is reached, unnested as every settled arm delivers it,
+        // since a value that is itself a computation is carried boxed. Only an `Ensure` may run here. A chain's
+        // head is its left arrow, itself a chain when one was built onto another, so walking `head` down finds
+        // the step that would have received the value.
         @tailrec def leftmost(cont: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
             val h = cont.head
             // Erasure-forced: the type joining a chain's links is existential from out here.
@@ -642,7 +643,7 @@ import scala.collection.mutable.ArrayBuffer
         // `Bracket` does, has only just created what owes it. So the result is walked too, at no budget.
         def ensuring(v: Any, cont: Arrow[Any, Any, Any]): Unit =
             leftmost(cont) match
-                case step: Arrow.Ensure[Any, Any, Any] @unchecked => collect(step(v), Arrow.id, 0)
+                case step: Arrow.Ensure[Any, Any, Any] @unchecked => collect(step(Nested.unnest[Any](v)), Arrow.id, 0)
                 case _                                            => ()
 
         @tailrec def collect(v: Any, cont: Arrow[Any, Any, Any], fuel: Int): Unit =
