@@ -252,7 +252,7 @@ either comparison, all inside their combined errors at `-f 1`, and their `-f 3` 
 
 | row | base | tip | per unit |
 |---|---|---|---|
-| `repeatedRegionsPayEntry`, 1000 regions of one operation | 53.7 us, 88,104 B | 58.4 us, 104,120 B | +4.7 ns and 16 B per region: the twin |
+| `repeatedRegionsPayEntry`, 1000 regions of one operation | 53.7 us, 88,104 B | 58.4 us, 104,120 B | +4.7 ns and 16 B per region: the re-entered handler |
 | `repeatedClausesPayReentry`, one region of 10,000 operations | 98.7 us, 480,121 B | 706.4 us, 1,120,181 B | +61 ns and 64 B per resumption: one region entered per application |
 
 The second is a regression of 7.2 times on that row, and nobody has accepted it. The mechanism is
@@ -272,13 +272,13 @@ against tip in one session, `bench/compare-choice-base-vs-AC.md`:
 
 | row | base | tip | |
 |---|---|---|---|
-| `run` | 1,273 ops/s | 4,063 ops/s | 3.2 times faster: the kernel's twin region replaces the base's inner `Choice.run` per resumption and its second flatten, and edit 18 drops that inner region |
+| `run` | 1,273 ops/s | 4,063 ops/s | 3.2 times faster: the kernel's re-entered region replaces the base's inner `Choice.run` per resumption and its second flatten, and edit 18 drops that inner region |
 | `runStream` | 5,208 ops/s | 5,042 ops/s | -3.2%, inside the combined error |
 
 A first draft re-entered every repeated handler, `handleFirstRepeated` included. On that draft
 `run` was already 2.2 times faster than the base before edit 17 (1,280 against 2,860 ops/s), and
 `runStream` was 24% slower (4,936 against 3,721 ops/s), because every resumed computation carried a
-twin region on top of the fresh `handleFirstRepeated` the stream's loop installs per iteration, a
+re-entered region on top of the fresh `handleFirstRepeated` the stream's loop installs per iteration, a
 region that could not prevent anything. That measurement is what moved the wrap into the two
 handlers that resume inside their region, and `runStream` is back at the base with it.
 

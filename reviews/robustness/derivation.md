@@ -251,7 +251,7 @@ deferring on a pending input in the same arm as `Arrow.apply` and unnesting a se
 
 Make the multi-shot clause live outside the region, as `handleLoop`'s does: `k` returns the region's
 output `B` with `done` applied per resumption, and the clause returns `B < (S & S2)`. This is the
-standard algebraic-effects reading and needs no twin, but it changes `handleContRepeated`'s
+standard algebraic-effects reading and needs no re-entered handler, but it changes `handleContRepeated`'s
 signature and makes `done` run per resumption rather than once, which is a public-surface decision.
 
 ### What A costs, measured, and piece F
@@ -259,7 +259,7 @@ signature and makes `done` run per resumption rather than once, which is a publi
 Two rows added to `KernelBench` enter a `handleContRepeated` region, which no row did before:
 `repeatedRegionsPayEntry` (a region per operation) and `repeatedClausesPayReentry`
 (`suspensionBaseline`'s program under a repeated handler, ten thousand operations each resumed
-once). Base against tip with the allocation profiler: the twin costs 16 bytes and 4.7 ns per region
+once). Base against tip with the allocation profiler: the re-entered handler costs 16 bytes and 4.7 ns per region
 entry; the re-entry costs 64 bytes and 61 ns per resumption, which makes the second row 7.2 times
 slower than the base. The mechanism is the design: every application of the continuation enters a
 region, and a region's entry and exit is what the existing rows `contextRegionsPayEntryExit` and
