@@ -119,8 +119,9 @@ One sentence per edit, the sentence to say when applying it.
 
 17. `Span.scala`, `updated`: an explicit index check raising the `IndexOutOfBoundsException` the
     scaladoc already promises, in `Chunk`'s shape and message; the JVM's array store delivered it,
-    Scala.js treats the store as undefined behaviour, and the Wasm backend traps and kills node, which
-    is how the branch's CI matrix found it through the `SpanTest` case on the branch's ancestry.
+    Scala.js treats the store as undefined behaviour and its fatal error ends the node process, and
+    the Wasm backend traps with the same effect, which is how the branch's CI matrix found it, on
+    every JS and Wasm job, through the `SpanTest` case on the branch's ancestry.
 
 The name in edits 10 and 11 is not `reenter`, the derivation's working name: `LoopStateHandler.reenter(state)`
 already exists as the lifecycle hook a region receives on re-entry, and an uncurried overload of
@@ -180,10 +181,11 @@ The fix against C (edits 10 to 15) is the leg that attributes C alone, one varia
 this section as `bench/compare-A-vs-AC.md` once run.
 
 CI, on `fwbrasil/kyo-ci-test`: the full matrix (linux-x64, linux-arm64, windows-x64; JVM, JS, Native,
-Wasm) on the gated-matrix commit `bfd4351ff2` found `kyo-dataWasm`'s run dying in `SpanTest`: the
-branch's ancestry adds an out-of-bounds case for `Span.updated`, whose scaladoc promises
-`IndexOutOfBoundsException` while the code relied on the JVM's array store; on Wasm the store traps and
-kills node. Fixed by edit 17, reproduced locally before the fix (the same run-terminated exception)
+Wasm) on the gated-matrix commit `bfd4351ff2` found every JS and Wasm job dying in `kyo-data`'s
+`SpanTest`: the branch's ancestry adds an out-of-bounds case for `Span.updated`, whose scaladoc
+promises `IndexOutOfBoundsException` while the code relied on the JVM's array store; on JS the fatal
+undefined-behaviour error escapes the harness and node exits, on Wasm the store traps with the same
+effect. Fixed by edit 17, reproduced locally before the fix (the same run-terminated exception)
 and verified after it: `SpanTest` 237 passed on each of JVM, JS and Wasm, the out-of-bounds case
 included. The matrix's final state is reported with the sweep below.
 
