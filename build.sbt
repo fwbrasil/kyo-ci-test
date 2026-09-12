@@ -799,6 +799,10 @@ lazy val `kyo-kernel` =
             // UseCompactObjectHeaders from kyo-settings, and a collector-dependent layout
             // flag must not be baked into the canonical numbers.
             Jmh / javaOptions := (Test / javaOptions).value.filterNot(_ == "-XX:+UseCompactObjectHeaders"),
+            // The benchmark classes compile into their own directory: scaladoc reads every TASTy file in
+            // the main class directory, and a benchmark class there, one against a framework that is
+            // only on the jmh classpath, fails the doc build once Jmh/compile has run.
+            Jmh / classDirectory := crossTarget.value / "jmh-classes",
             // The comparison benches under bench/cross; jmh-scoped so the frameworks stay off
             // the Compile and Test classpaths.
             libraryDependencies ++= Seq(
@@ -1390,7 +1394,9 @@ lazy val `kyo-ffi-bench` =
             `kyo-settings`,
             publish / skip := true,
             Compile / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
-            run / fork := true
+            run / fork := true,
+            // as kyo-kernel: the benchmark classes stay out of the directory scaladoc reads
+            Jmh / classDirectory := crossTarget.value / "jmh-classes"
         )
 
 lazy val `kyo-direct` =
@@ -3197,6 +3203,8 @@ lazy val `kyo-bench` =
             `kyo-settings`,
             publish / skip                          := true,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
+            // as kyo-kernel: the benchmark classes stay out of the directory scaladoc reads
+            Jmh / classDirectory := crossTarget.value / "jmh-classes",
             // The Jmh fork runs on the background-job service's re-materialized classpath, where an
             // internal dependency travels as its packageBin jar, and kyo-net's main jar carries no
             // natives (P2b: they ship in per-platform classifier jars). Without them the transport
