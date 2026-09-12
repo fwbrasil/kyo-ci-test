@@ -14,8 +14,9 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
     // Every `eventually` here waits for a worker thread to pick a task up or drain, which on a loaded CI runner
     // can take longer than ScalaTest's default patience of 150 milliseconds: the windows-x64 job saw the first
     // attempt of "handles task that throws exception" alone take 254 milliseconds and give up. The wait stays a
-    // poll for a condition that becomes true, bounded well above what a slow runner needs.
-    implicit val patience: PatienceConfig = PatienceConfig(timeout = Span(10, Seconds), interval = Span(10, Millis))
+    // poll for a condition that becomes true, bounded well above what a slow runner needs. Named as the
+    // imported one is, so this definition shadows it rather than standing beside it as a second implicit.
+    implicit val patienceConfig: PatienceConfig = PatienceConfig(timeout = Span(10, Seconds), interval = Span(10, Millis))
 
     "schedule" - {
         "enqueues tasks to workers" in withScheduler { scheduler =>
