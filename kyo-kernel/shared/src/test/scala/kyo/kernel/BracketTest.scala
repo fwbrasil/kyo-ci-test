@@ -1785,7 +1785,7 @@ class BracketTest extends AnyFreeSpec:
             }
             val ex = intercept[RuntimeException](v.eval)
             assert(ex eq Boom)
-            assert(seen == Maybe((7, Maybe(Boom))))
+            assert(seen.exists((s, outcome) => s == 7 && outcome.exists(_ eq Boom)))
         }
 
         // The region is a node from the start, so a computation abandoned before it ran a single step still
@@ -1806,7 +1806,7 @@ class BracketTest extends AnyFreeSpec:
             Eval.release(v, Boom)
             assert(!ran)
             assert(made == 1)
-            assert(seen == Maybe((1, Maybe(Boom))))
+            assert(seen.exists((s, outcome) => s == 1 && outcome.exists(_ eq Boom)))
         }
     }
 

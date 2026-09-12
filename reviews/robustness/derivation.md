@@ -381,3 +381,151 @@ fix: the two-occurrence shape (60), `done` once at the outer end against per-res
 and a hundred thousand sequential operations, which every sibling handler's block carries and which
 matters here because a repeated region now nests a region per resumption. The matrix runs the
 shape across every configuration.
+
+## Second round: what the full-matrix CI run surfaced
+
+Run 34703603537 on tip 8b6055f0d4 failed on every Linux job and passed on Windows: `SqlClientInterruptTest`
+on JS and Wasm (both arches), `TypeAdtFidelity2Test` on x64 JVM, `ReactiveUITeardownTest` on arm64 JVM,
+`ItStructPtrTest` on both Native jobs. Each was reproduced or traced to a mechanism before anything
+changed, and each has a pin. Pieces continue the lettering above.
+
+### I. The release walk runs nothing (kernel source)
+
+The equation. Releasing an abandoned computation releases what it holds: the regions installed around
+the node in hand, the debts those regions carry, and an `Ensure` that already has its value. A deferral
+holds its body in an arrow and has not run it, so it holds nothing to release, and a join under it is not
+waited on yet, so there is nothing to link:
+
+    release(defer(thunk))          = ()
+    release(defer(v, ensure))      = ensure(v)                  v settled: the obligation has its value
+    release(Handle(h, body))       = release(body); release(h)
+    release(Park(v, entries, owed)) = release(v); release(owed); release(entries)
+
+The base spent a budget of sixteen steps running deferrals to reach an operation under them (5b629308cb,
+"reach a fiber's join through the deferrals above it"). A step is the caller's code. One such step was
+`Channel.take`'s deferral: kyo-sql's `takeSlot` wraps the take in `Async.timeoutWithError`, which spawns a
+fiber; interrupting the query before that fiber's first slice abandoned it, the walk ran its first
+deferral, which polled the permit out of the slot channel, and stopped, with the continuation that
+registers the permit's return never applied. The pool then waited its whole close grace for a permit
+nobody held, which is the 30 second `SqlClientInterruptTest` hang on JS and Wasm, where the runtime is
+single-threaded and the interrupt always lands before that fiber's first slice. On the JVM the fiber
+usually runs first, which is why the suite was green there.
+
+Why the suites did not catch it: the commit that added the budget recorded a `MeterTest` permit leak as
+red and undiagnosed, and `SyncTest`'s "runs its finalizer for a fiber abandoned before its first slice"
+says in its own comment that the walk stops at a deferral. The four `EvalTest` pins that asserted stepping
+were written against the budget: three park in front of an acquire that is an unrun thunk and demand the
+walk run it to obtain a value to release, one asserts a deferral is run to reach the operation behind it.
+
+Surface: `Eval.release`, the private walk and the two public overloads' documentation. The step arm, the
+budget parameter and the safepoint save around the walk go; `ensuring` stays, since an `Ensure` whose
+value is in hand is a release owed. `IOTask.abandon`'s documentation follows: the join it stands at is
+linked, one it has not reached is not.
+
+Pins: `EvalTest` "a release waiting on a value that already arrived is found on abandonment", "a release
+the abandoned Ensure installs rather than registers is still run", and "a release for a resource that is
+itself a computation receives the computation, not its box" take the settled shape the walk serves,
+built with `Effect.defer(value, Arrow.ensure(...))`; "an acquire the park stopped in front of is neither
+run nor released on abandonment" is the negative; "does not run a deferral to reach the operation behind
+it" replaces the two budget pins. `BracketTest` "releases a region dumped into the continuation of a park
+at a region below it" pins the debt path the boundary's join park relies on, which was the first
+hypothesis and holds at the base. Evidence: `kyo-kernelJVM/test` 1838 green, kernel JS pins green,
+`kyo-sql-postgresJS` `SqlClientInterruptTest` green, close in 3 ms where it was 30 008 ms.
+
+Every "spawn or claim, then register in a later step" shape in kyo-core is exposed by this, since the
+budget used to run the later step for free. `Async.timeoutWithError` already registers in the step that
+spawns (its own comment says so); `Sync.ensure` (K) and `Scope.Finalizer.close` (L) did not.
+
+### J. A stale stop is superseded by the running slice's own (kernel jvm-native)
+
+`Safepoint.stop` on jvm-native answered a request for a thread that already had a pending stop with
+`true` and no replacement. A stop addressed to a slice that has ended can land after the next slice began
+on that thread, and it then sits in the slot unhonored, since `honored` checks the slice. The fiber
+boundary requests a stop for its own slice as it parks on a join; that request found the stale one, was
+answered `true`, and the evaluator's check saw a stop it could not honor, so the join was re-raised and
+dispatched straight back to the boundary, every round nesting the previous re-raise's continuation
+inside the next. The rounds continued until the promise completed, and delivering the value then
+recursed through every level: the `StackOverflowError` on a scheduler worker in `TypeAdtFidelity2Test`,
+1068 frames of `IOTask$$anon$2.apply` over `SuspendArrowWith.apply` in the CI log, capped by the JVM's
+trace depth.
+
+Equation: a request from the slice's owner for its own slice supersedes a pending stop that names another
+slice, and a wildcard supersedes any addressed one; a pending wildcard, or one naming the same slice,
+already answers the request. Surface: the `pending: Stop` arm of `Safepoint.stop`. Pins: `SafepointTest`
+"a stop for the running slice supersedes a stale one left by a departed slice" and "a wildcard stop
+supersedes a stale one left by a departed slice".
+
+Open on the replacement's scope: a stopper on another thread cannot tell a stale pending stop from the
+running slice's own, since `slices` is owner-only, so a late delivery from another thread must not
+replace; the owner can tell, because only one slice runs on its thread. The replacement is restricted to
+the owner (`thread eq Thread.currentThread()`); a request from another thread against a pending stop
+keeps the base's answer. That restriction is applied after the scope run below completes, since a
+kernel edit under a running build is not a state to measure.
+
+### K. `Bracket.ensuringWith`, and `Sync.ensure` on it (kernel and core)
+
+With I in place, `SyncTest` "runs its finalizer for a fiber abandoned before its first slice" timed out:
+`Sync.ensure` built its region inside `Sync.Unsafe.defer`, to make the slot its finalizer reads per run,
+so the region sat under a deferral and a fiber abandoned before its first slice never reached it. Its own
+comment claims the region is a node from the start, which the deferral broke; the budget used to step
+through.
+
+The piece with no counterpart: a region installed from the start whose release is owed a value the body
+produces per run, which the kernel's `Maybe[Throwable]` release channel does not carry. `Bracket.apply`
+has per-run state but installs its region only when the acquire settles; `ensuring` installs from the
+start but has no state. `ensuringWith(init)(release)(body)` is the missing middle: the state is made in
+`derive`, as the region is entered, and the body reads it back from the region as its first step, so
+nothing sits between the region and what it owes. `Cell.Live` carries the state; `apply` passes the
+acquired value through it, saving the closure it built per run; `ensuring` passes unit.
+
+Surface: `Bracket.scala` (`Cell.Live[R]`, `apply`, `ensuring`, the new `ensuringWith`, `region`'s body row
+now `Finalize & S`), `Sync.ensure`. Pins: `BracketTest` "ensuringWith" block, four cases: the state reaches
+the body and the release, each run makes its own, a throw releases with the state, and an abandonment
+before a step releases with a fresh state and runs nothing. Evidence: `SyncTest` 44 green, `FiberTest`
+112 green, `MeterTest` 42 green, kernel pins 250 green.
+
+Cast: `cell.asInstanceOf[Cell.Live[R]]` in the read is erasure-forced; the read is the first step under
+the region that bound the cell it made with `init`.
+
+### L. `Scope.Finalizer.close` registers its drain in the step that claims the backlog (core)
+
+With K in place, `ScopeTest` "an interrupt racing the close does not stop the drain" (#1928) timed out in
+two of six runs, with registered 1000 and released 998 polled forever. Traced with per-scope prints: in
+every lost round the fiber's own close claimed the queue's backlog, the abandonment's close arrived
+before the claim's promise completed, and no drain fiber was ever spawned. `close` was two steps:
+`queue.close()` claims the backlog and completes the promise, then `.safe.onComplete`, which is
+`Sync.Unsafe.defer(...)`, registers the drain as a step of its own. A stop landing between them parks
+the fiber on the registration deferral; the abandonment then runs nothing, and the backlog sits
+completed with nobody to drain it. The budget used to run that deferral during abandonment, which is
+why the base passed. Same class as #1820: claim and registration must be one step.
+
+Surface: `Finalizer.Unsafe.init`'s `close`: the unsafe `onComplete`, registered synchronously inside the
+same `Sync.Unsafe.defer`, evaluating the continuation with `Sync.Unsafe.evalOrThrow` as the safe
+`onComplete` does. The guard is the existing #1928 leaf's thousand rounds, which caught it; a
+deterministic pin needs a stop delivered between the claim and the registration, and no seam exists
+to place one there, so the rounds stay the pin.
+
+### M. kyo-ffi Native transient callback registry (build definition and kyo-ffi)
+
+`ItStructPtrTest` "struct with opaque field" failed with `NoSuchElementException` on both Native jobs,
+the same class as the kyo-ffi Native abort traced in `analysis/ffi-native-trace.md`: a Scala Native
+`ThreadLocal` lost an entry mid-call, on the same thread. The transient stacks are keyed by thread in a
+`ConcurrentHashMap` instead, the trampoline's peek is inside its `try` so a missing entry is reported
+rather than aborting the process, and `FfiGenErrors.reportCallbackFailed` cannot itself throw. Surface:
+`project/CallbackShapesGen.scala`, `FfiGenErrors.scala`. Evidence: the kyo-ffi Native suite, 159 passed,
+0 failed, 6 cancelled. Not yet rerun: `kyo-ffi-itNative`.
+
+### N. `ReactiveUITeardownTest` reads the waiter count once it has settled (ui test)
+
+"bound element replacement does not recursively subscribe to itself" read `ref.waiters` right after the
+second render, inside the gap where the observer re-registers on the signal's fresh promise, and asserted
+one. The observe loop is the repairing form, which re-reads `current` after every wake and reconciles a
+missed wakeup within the repair interval, so the gap cannot lose an update; the read was the race. The
+test now waits for the count to settle before reading it, as its first read already did; a recursive
+subscription would hold the count above one and fail the wait. Not yet rerun locally.
+
+### Not in this round
+
+The deferred fiber completion the user directed (`Finalizing` status in `IOTask`, the promise completed
+only after the remainder is released, `Fiber.interruptAwait`, `Fiber.init` without its `ended` promise)
+is designed and not built; it follows this package.

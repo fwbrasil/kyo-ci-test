@@ -314,40 +314,46 @@ object Scope:
                             // The handover is asynchronous because an `ensure` that began before this close may still
                             // be committing its task. A continuation rather than a wait keeps this `Sync`, which both
                             // of `run`'s close paths need.
-                            queue.close().safe.onComplete { backlog =>
-                                backlog.foldError(
-                                    _.map {
-                                        case Absent         => Kyo.unit
-                                        case Present(tasks) =>
-                                            // Children close and are waited for before this scope's own releases run.
-                                            // Closing, not just waiting, frees a child whose computation is blocked;
-                                            // see `addChild`.
-                                            val nested =
-                                                Sync.Unsafe.defer(children.close()).map(_.safe.get).map {
-                                                    case Present(cs) =>
-                                                        Async.foreachDiscard(cs) { child =>
-                                                            child.close(ex).andThen(child.await)
-                                                        }
-                                                    case Absent => Kyo.unit
-                                                }
-                                            val own =
-                                                if tasks.isEmpty then Kyo.unit
-                                                else
-                                                    Async.foreachDiscard(tasks.reverse, parallelism) { task =>
-                                                        Abort.run[Throwable](task(ex))
-                                                            .map(_.foldError(
-                                                                _ => (),
-                                                                ex => Log.error("Scope finalizer failed", ex.exception)
-                                                            ))
+                            //
+                            // Registered in this step, the one that claims the backlog, and not as a step of its own: a
+                            // park landing between the claim and the registration leaves the backlog completed with
+                            // nobody to drain it, and a remainder abandoned there runs nothing further.
+                            queue.close().onComplete { backlog =>
+                                Sync.Unsafe.evalOrThrow {
+                                    backlog.foldError(
+                                        _.map {
+                                            case Absent         => Kyo.unit
+                                            case Present(tasks) =>
+                                                // Children close and are waited for before this scope's own releases run.
+                                                // Closing, not just waiting, frees a child whose computation is blocked;
+                                                // see `addChild`.
+                                                val nested =
+                                                    Sync.Unsafe.defer(children.close()).map(_.safe.get).map {
+                                                        case Present(cs) =>
+                                                            Async.foreachDiscard(cs) { child =>
+                                                                child.close(ex).andThen(child.await)
+                                                            }
+                                                        case Absent => Kyo.unit
                                                     }
-                                            nested.andThen(own)
-                                                .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
-                                                .map(promise.becomeDiscard)
-                                    },
-                                    // The backlog handover is completed with a success by whoever wins the drain, so this is
-                                    // unreachable; leaving `promise` alone lets `await` surface the real failure.
-                                    _ => Kyo.unit
-                                )
+                                                val own =
+                                                    if tasks.isEmpty then Kyo.unit
+                                                    else
+                                                        Async.foreachDiscard(tasks.reverse, parallelism) { task =>
+                                                            Abort.run[Throwable](task(ex))
+                                                                .map(_.foldError(
+                                                                    _ => (),
+                                                                    ex => Log.error("Scope finalizer failed", ex.exception)
+                                                                ))
+                                                        }
+                                                nested.andThen(own)
+                                                    .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
+                                                    .map(promise.becomeDiscard)
+                                        },
+                                        // The backlog handover is completed with a success by whoever wins the drain, so this is
+                                        // unreachable; leaving `promise` alone lets `await` surface the real failure.
+                                        _ => Kyo.unit
+                                    )
+                                }
                             }
                         }
 

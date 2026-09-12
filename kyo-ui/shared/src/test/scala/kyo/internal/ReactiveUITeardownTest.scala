@@ -63,6 +63,9 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
             _              <- ref.set("next")
             _              <- assertEventually(renders.get.map(_ == 2))
             finalRenders   <- renders.get
+            // The observer re-registers on the signal's fresh promise after it renders, so the count is read
+            // once it has settled, as the initial one is: a recursive subscription would hold it above one.
+            _              <- assertEventually(ref.waiters.map(_ == 1))
             finalWaiters   <- ref.waiters
             _              <- fiber.interrupt
             _              <- fiber.getResult
