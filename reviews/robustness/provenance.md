@@ -12,3 +12,8 @@ because piece F changes `kyo.Choice`, the tree's one consumer of the repeated ha
 measure what that consumer pays per resumption before and after the kernel's re-entry and F's
 simplification. They are evidence about F and about the cost of the kernel change to a consumer,
 not about any kernel row, and the package presents them under that heading only.
+
+`SpanBench` (`kyo-bench/src/main/scala/kyo/bench/SpanBench.scala`) does not reference `kyo.kernel`
+either. It is named because edit 24 changes `kyo.Span.updated` in `kyo-data`, and its one row prices
+the index check that method now makes on the JVM, base against tip. It is evidence about that edit
+and nothing in the kernel.
