@@ -45,14 +45,17 @@ class EvalShapeTest extends Test:
       *
       * `run` installs it with a clause that answers at once; `suspending` installs the same handler with a clause that performs `say("s")`
       * and then answers identically, so the two must agree on the value and differ only in the log. `expected(n)` is the hand-derived value
-      * for `prog(n)`, and `inner(n)` the value when an inner region for the same tag sits between the handler and the program.
+      * for `prog(n)`, `inner(n)` the value when an inner region for the same tag sits between the handler and the program, and `says(n)`
+      * how many times the suspending clause runs for `prog(n)`: once per occurrence unless the clause ends the region or resumes more
+      * than once.
       */
     final case class Scenario(
         name: String,
         run: (Int < (Ask & Say)) => Int < Say,
         suspending: (Int < (Ask & Say)) => Int < Say,
         expected: Int => Int,
-        inner: Int => Int
+        inner: Int => Int,
+        says: Int => Int = n => n
     )
 
     val scenarios: List[Scenario] = List(
@@ -68,7 +71,9 @@ class EvalShapeTest extends Test:
             v => ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, _) => -1),
             v => ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, _) => say("s").map(_ => -1)),
             n => if n == 0 then 0 else -1,
-            n => 1000 * n
+            n => 1000 * n,
+            // the first occurrence ends the region, so the clause runs once at most
+            says = n => math.min(n, 1)
         ),
         Scenario(
             "handleContRepeated resuming twice",
@@ -80,7 +85,9 @@ class EvalShapeTest extends Test:
                 ),
             // every path through n binary choices of 7 or 8, summed: each position contributes 2^(n-1) * (7 + 8)
             n => if n == 0 then 0 else n * (1 << (n - 1)) * 15,
-            n => 1000 * n
+            n => 1000 * n,
+            // occurrence k is reached once per path through the k-1 choices before it: 1 + 2 + ... + 2^(n-1)
+            says = n => (1 << n) - 1
         ),
         Scenario(
             "handleLoop continuing",
@@ -94,7 +101,8 @@ class EvalShapeTest extends Test:
             v => ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.done(-1), a => a),
             v => ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => say("s").map(_ => Loop.done(-1)), a => a),
             n => if n == 0 then 0 else -1,
-            n => 1000 * n
+            n => 1000 * n,
+            says = n => math.min(n, 1)
         ),
         Scenario(
             "handleLoopState threading a counter",
@@ -126,7 +134,7 @@ class EvalShapeTest extends Test:
 
     for s <- scenarios do
         s.name - {
-            for n <- List(0, 1, 3) do
+            for n <- List(0, 1, 2, 3) do
                 s"$n occurrences" - {
 
                     "base" in {
@@ -144,15 +152,15 @@ class EvalShapeTest extends Test:
 
                     // suspension law: a clause that performs an outer effect and then answers equals one that answers at once
                     "the clause suspends first" in {
-                        assert(record(s.suspending(prog(n))).eval == ((List.fill(n)("s"), s.expected(n))))
+                        assert(record(s.suspending(prog(n))).eval == ((List.fill(s.says(n))("s"), s.expected(n))))
                     }
 
                     "the clause suspends first, with a binding above" in {
-                        assert(record(s.suspending(cfgAbove(prog(n)))).eval == ((List.fill(n)("s"), s.expected(n))))
+                        assert(record(s.suspending(cfgAbove(prog(n)))).eval == ((List.fill(s.says(n))("s"), s.expected(n))))
                     }
 
                     "the clause suspends first, with a region above" in {
-                        assert(record(s.suspending(idleAbove(prog(n)))).eval == ((List.fill(n)("s"), s.expected(n))))
+                        assert(record(s.suspending(idleAbove(prog(n)))).eval == ((List.fill(s.says(n))("s"), s.expected(n))))
                     }
 
                     // geography: an inner handler for the same tag answers, and this handler's clause never runs
