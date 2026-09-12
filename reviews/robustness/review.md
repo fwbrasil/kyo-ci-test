@@ -183,7 +183,9 @@ CI, on `fwbrasil/kyo-ci-test`: the full matrix (linux-x64, linux-arm64, windows-
 Wasm) on the gated-matrix commit `bfd4351ff2` found `kyo-dataWasm`'s run dying in `SpanTest`: the
 branch's ancestry adds an out-of-bounds case for `Span.updated`, whose scaladoc promises
 `IndexOutOfBoundsException` while the code relied on the JVM's array store; on Wasm the store traps and
-kills node. Fixed by edit 17. The matrix's final state is reported with the sweep below.
+kills node. Fixed by edit 17, reproduced locally before the fix (the same run-terminated exception)
+and verified after it: `SpanTest` 237 passed on each of JVM, JS and Wasm, the out-of-bounds case
+included. The matrix's final state is reported with the sweep below.
 
 The module-by-module sweep of every sbt project on the final tree is the last item of the overnight
 work and is reported in the summary that proposes this review.
