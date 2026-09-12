@@ -68,8 +68,14 @@ That tail is the shared piece. The unfused `answers` on `LoopHandler` and `LoopS
 `Loop.continue(ans.map(k))` for a pending one) before reaching the tail; the fused walks
 `answersLoop` and `answersLoopState` handle their `Continue` inside the walk itself and reach the
 tail only for what the walk could not consume. So the four sites share the tail exactly and nothing
-else, and the tail is what becomes one `private[kyo] inline def reenter` (and `reenter2` for the
-state-carrying outcome). Each piece already exists: `attachReentry`, the `Pending` test, pass-through.
+else, and the tail is what becomes one `private[kyo] inline def attachReentryUnlessSettled` (and
+`attachReentryUnlessSettled2` for the state-carrying outcome), beside the `attachReentry` it is the
+settled fast path of. Each piece already exists: `attachReentry`, the `Pending` test, pass-through.
+The name is not `reenter`, the working name this section first used: `LoopStateHandler.reenter(state)`
+already exists as the lifecycle hook a region receives on re-entry, and one name for two things is
+the new-terminology rule broken from the other side. An uncurried overload of `attachReentry` itself
+was the other candidate and is rejected because `attachReentry(k)(o)` in `Eval` and
+`attachReentry(k, o)` in `Handler` would differ by a comma.
 The two unfused `Continue` arms stay as they are, which the earlier draft of this section got wrong
 by folding them in; the fused walks cannot take a `reenter` that covers `Continue` without being
 restructured, and restructuring a fused template is not a consolidation.
