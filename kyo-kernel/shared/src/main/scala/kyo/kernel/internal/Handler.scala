@@ -331,10 +331,10 @@ end Handler
         outer: ContHandler[I, O, E, A, B, S]
     ): ContHandler[I, O, E, A, A, S] =
         new ContHandler[I, O, E, A, A, S]:
-            def tag                                            = outer.tag
+            def tag                                              = outer.tag
             def run[X](input: I[X], next: Arrow[O[X], A, E & S]) = outer.run(input, next)
-            def done(state: Unit, v: A)                        = v
-            override def repeated                              = true
+            def done(state: Unit, v: A)                          = v
+            override def repeated                                = true
 
     /** Wraps the continuation a clause may resume more than once, so that each application re-enters the region,
       * through [[reentered]].
