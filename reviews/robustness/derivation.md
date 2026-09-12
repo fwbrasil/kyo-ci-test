@@ -23,8 +23,16 @@ sentence was added when the first was applied: `KernelBench` no longer compiled 
 had noticed, which is piece E below. The CI step is `project/TestKyo.scala`: in the compile-test
 phase, `testKyo` adds `Jmh/compile` for every selected module whose project carries the `jmh`
 configuration, found from the build rather than listed, which the rehearsal lens asked for in place
-of a sentence to remember (R3). The kernel skill would be the other home for the rule, but it is
-not tracked in this tree.
+of a sentence to remember (R3). That step made a latent defect ordinary: the JMH plugin compiled
+the benchmark classes into the main class directory, and the kernel's scaladoc, which reads every
+TASTy file there, failed on a cross-framework benchmark whose dependency is only on the jmh
+classpath, so any sequence of compile-test then doc in one workspace broke (the sweep's publish
+module found it). `build.sbt` gives the `Jmh` configuration its own class directory in the three
+JMH projects (`Jmh / classDirectory := crossTarget.value / "jmh-classes"`); verified by a clean
+build, `Jmh/compile`, a one-fork `Jmh/run` and `doc` in sequence. One doc link in
+`EffectTrace`'s scaladoc, `[[splice]]`, resolved to nothing because `splice` lives on the companion;
+it now reads `[[EffectTrace.splice]]`, the only warning that build emitted for the kernel. The
+kernel skill would be the other home for the rule, but it is not tracked in this tree.
 
 ### B. The shape matrix, with the at-top law as its oracle (test only)
 
