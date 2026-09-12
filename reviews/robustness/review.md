@@ -306,20 +306,21 @@ band: `handleLoopAnswersInPlace` -1.0%, `handleLoopFusesContinuation` -1.6%,
 `statefulAnswersPaySuccessor` +0.6%, `contextRegionsPayEntryExit` +1.3%,
 `emittingClausesPayRegionRebuild` -1.1%, `bracketPerRound` +1.4%. Nine rows sit outside the band
 at `-f 1`, each inside its own error bars, and `-f 3` on those nine and the suspect, both legs back to
-back, is `bench/compare-base-vs-tip-f3.md`:
+back on an otherwise idle machine, is `bench/compare-base-vs-tip-f3.md`: seven inside the band, two
+inside their errors, and the suspect confirmed at a tight 6.4 times:
 
 | row | -f 1, base against tip | -f 3 |
 |---|---|---|
-| `pureIterationViaArrow` | -8.1%, errors of 48 and 39 percent | pending |
-| `collectOverCollection` | -7.2%, error of 7 percent on the base | pending |
-| `foreignCrossingsPayRotation` | -6.2%, error of 39 percent on the base | pending |
-| `nestedPayloadsUnwrapInMaps` | -5.8%, error of 45 percent on the base | pending |
-| `suspensionBaselineAltEnv` | +5.2%, error of 20 percent on the tip | pending |
-| `trailingMapsStayLinear` | +7.1%, error of 9 percent on the tip | pending |
-| `repeatedRegionsPayEntry` | +16.7%, error of 59 percent on the tip | pending |
-| `bracketAroundLoop` | +17.1%, error of 37 percent on the base | pending |
-| `continuationBodiesFuse` | +19.4%, error of 17 percent on the tip | pending |
-| `repeatedClausesPayReentry` | +589%, the suspect | pending |
+| `pureIterationViaArrow` | -8.1%, errors of 48 and 39 percent | +13.5%, errors of 16 and 10 percent, noise on the row that is always noisy |
+| `collectOverCollection` | -7.2%, error of 7 percent on the base | +5.6%, inside the combined error (14.08 ± 0.37 against 14.87 ± 0.64) |
+| `foreignCrossingsPayRotation` | -6.2%, error of 39 percent on the base | +1.8% |
+| `nestedPayloadsUnwrapInMaps` | -5.8%, error of 45 percent on the base | -2.5% |
+| `suspensionBaselineAltEnv` | +5.2%, error of 20 percent on the tip | -0.6% |
+| `trailingMapsStayLinear` | +7.1%, error of 9 percent on the tip | +2.5% |
+| `repeatedRegionsPayEntry` | +16.7%, error of 59 percent on the tip | +3.7% (56.1 against 58.2 us) |
+| `bracketAroundLoop` | +17.1%, error of 37 percent on the base | -1.9% |
+| `continuationBodiesFuse` | +19.4%, error of 17 percent on the tip | +3.8% |
+| `repeatedClausesPayReentry` | +589%, the suspect | +537%, 99.8 ± 0.3 against 636.1 ± 7.4 us: 54 ns per resumption, 6.4 times, the priced row |
 
 **The multi-shot rows, and the regression they show.** Three rows added by edit 22 enter a
 `handleContRepeated` region, which no row did before. Base against tip, `-f 3 -prof gc`,
