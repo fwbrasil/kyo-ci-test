@@ -2,8 +2,9 @@
 
 Base `cdefdc9e60`, branch `robustness`, worktree `.claude/worktrees/robustness`. Range and tip are
 re-derived by `package-check.sh` at packaging; the walk below is `sequence.json`, verified against
-the tip by `sequence.py --verify`. Seventeen edits, applied one at a time with the Edit tool, in the
-order given here: sixteen in the kernel and one in `kyo-data` that the branch's CI matrix required.
+the tip by `sequence.py --verify`. Nineteen edits, applied one at a time with the Edit tool, in the
+order given here: seventeen in the kernel, and one each in `kyo-data` and `kyo-net` that the branch's
+CI matrix required.
 
 ## What this change is
 
@@ -117,14 +118,24 @@ One sentence per edit, the sentence to say when applying it.
 16. `KernelBench.scala`: four `ContextEffect.handle(Tag[X])(...)` calls become
     `ContextEffect.handle(Tag[X], ...)`, the two-group signature every context handler has since
     `cdefdc9e60`; the benchmark sources had not been compiled since, which item 13 now prevents.
+17. `KernelBench.scala`: two rows enter a multi-shot region, `repeatedClausesPayReentry` (the
+    `suspensionBaseline` program under `handleContRepeated`, one region, ten thousand operations) and
+    `repeatedRegionsPayEntry` (a region per operation), the rows that measure the twin built per
+    region and the arrow built per operation, since no row entered such a region before.
 
 **Outside the kernel**
 
-17. `Span.scala`, `updated`: an explicit index check raising the `IndexOutOfBoundsException` the
+18. `Span.scala`, `updated`: an explicit index check raising the `IndexOutOfBoundsException` the
     scaladoc already promises, in `Chunk`'s shape and message; the JVM's array store delivered it,
     Scala.js treats the store as undefined behaviour and its fatal error ends the node process, and
     the Wasm backend traps with the same effect, which is how the branch's CI matrix found it, on
     every JS and Wasm job, through the `SpanTest` case on the branch's ancestry.
+19. `RearmSurvivorsTest.scala`: the leaf arms write before read, so the write registration precedes
+    the read registration in the poller driver's command order and is in the log by the time the
+    read event can fire; armed the other way, the EOF event could be dispatched and the driver closed
+    before the write registration was applied, which the linux-arm64 JVM job reported as a missing
+    `registerWrite`. What the leaf pins, no rearm under edge-triggered registration, does not depend
+    on the order.
 
 The name in edits 10 and 11 is not `reenter`, the derivation's working name: `LoopStateHandler.reenter(state)`
 already exists as the lifecycle hook a region receives on re-entry, and an uncurried overload of
@@ -188,7 +199,7 @@ Wasm), run 34672876184 on the gated-matrix commit, found every JS and Wasm job d
 `SpanTest`: the branch's ancestry adds an out-of-bounds case for `Span.updated`, whose scaladoc
 promises `IndexOutOfBoundsException` while the code relied on the JVM's array store; on JS the fatal
 undefined-behaviour error escapes the harness and node exits, on Wasm the store traps with the same
-effect. Fixed by edit 17, reproduced locally before the fix (the same run-terminated exception)
+effect. Fixed by edit 18, reproduced locally before the fix (the same run-terminated exception)
 and verified after it: `SpanTest` 237 passed on each of JVM, JS and Wasm, the out-of-bounds case
 included. The matrix's final state is reported with the sweep below.
 

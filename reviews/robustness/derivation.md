@@ -135,9 +135,17 @@ up as a design note with what diverged, and B stands as the robustness measure.
 JVM's array store raised the exception, Scala.js treats an out-of-bounds store as undefined behaviour,
 and on the Wasm backend it traps and kills the node process, which ended `kyo-dataWasm`'s test run.
 The `SpanTest` case that reached it is on the branch's ancestry (`c52e4bd8fa`), not on main, so the
-contract was untested off the JVM until now. The check follows `Chunk`'s shape and message. Not a
-kernel piece; it is the last edit of the live-review walk, in its own group, so the range's surface
-is fully declared and fully applied.
+contract was untested off the JVM until now. The check follows `Chunk`'s shape and message.
+
+`kyo-net/jvm-native/src/test/scala/kyo/net/internal/posix/RearmSurvivorsTest.scala`: the leaf that
+asserts no rearm under edge-triggered registration armed read before write, and the poller driver
+applies registrations in command order on its poll fiber, so the EOF read event could be dispatched
+and the driver closed by the test before the write registration was applied; the linux-arm64 JVM
+job reported the log without `registerWrite`. The leaf now arms write first, which orders the two
+registrations; nothing it pins depends on the order. kyo-net is identical to main on this branch.
+
+Neither is a kernel piece; they are the last two edits of the live-review walk, in their own group,
+so the range's surface is fully declared and fully applied.
 
 ## What is not in this change
 
