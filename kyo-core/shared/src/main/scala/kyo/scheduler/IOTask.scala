@@ -25,23 +25,31 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
       */
     private var curr: Unit < Any = cleared
 
-    /** Who owns this task, and whether it is still alive. Four states, never two at once:
+    /** Who owns this task, and whether it is still alive. Five states, never two at once:
       *
       *   - `Idle`: owned by nobody, between slices. `curr` holds what a resumption runs.
       *   - `Thread`: a worker is inside a slice, on that thread. Stops are delivered per thread, so this is
       *     how a preemption or interrupt reaches a slice in flight.
       *   - `IOPromise`: parked on that promise, not to be rescheduled; naming it lets the wakeup be
       *     registered and later unlinked.
+      *   - `Result.Error`: interrupted with that error, the remainder not yet released. The promise stays
+      *     pending until it is, so a fiber's result is available once its finalizers have run. The error is
+      *     the one the interrupt carried, held as it is.
       *   - `Done`: terminal, and what the remainder held has been released.
       *
-      * Invariant: `Idle` is the only state another thread may take this task out of; every other transition
-      * is made by the owner. Only the two claims out of `Idle` (`run`, `onInterrupted`) are contended, and
-      * both go through `casStatus`, which makes a redundant schedule free: an interrupt need not know
-      * whether a slice is in flight.
+      * Invariant: `Idle` and the error are the only states another thread may take this task out of; every
+      * other transition is made by the owner, and each one out of a slice is a CAS, since an interrupt may
+      * have taken the word meanwhile. An interrupt lands under any owner: over `Idle` it takes the task and
+      * schedules a run, which claims the error and releases; over the thread or the promise it takes the
+      * word and leaves the release to the owner, who is still inside the slice and finds the error at its
+      * end. So a run is never scheduled for a slice in flight, and the two claims, out of `Idle` and out of
+      * the error, are the only contended ones, which makes a redundant schedule free.
       *
       * `AnyRef` rather than `Status` because the platform handle must name the field's erased type.
       */
     @volatile private var status: AnyRef = Idle
+
+    private def interrupted: Boolean = status.isInstanceOf[Result.Error[?]]
 
     /** Claims this task for a thread that does not own it yet.
       *
@@ -98,7 +106,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                             // Answering without applying the continuation discards the rest of the
                             // computation, so no stop is needed. The answer is never read: the done lane
                             // below checks whether this task is still pending, and this arm settled it.
-                            completeDiscard(error)
+                            // An interrupt that landed first owns the ending, so it is not settled here.
+                            if !interrupted then completeDiscard(error)
                             null.asInstanceOf[P]
                         case joinInput: Async.JoinInput[C] @unchecked =>
                             // invoking it registers the interrupt cascade on this task before the promise's
@@ -132,8 +141,10 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         case other =>
                             bug(s"fiber boundary received an operation it does not answer: $other")
             ,
-            // Guarded because the abort arm above settles the task itself and answers with a placeholder.
-            p => if isPending() then complete(p) else ()
+            // Guarded because the abort arm above settles the task itself and answers with a placeholder, and
+            // because an interrupt that landed on this slice owns the ending: the promise completes with it,
+            // once the remainder is released, not with what the body produced after it.
+            p => if isPending() && !interrupted then complete(p) else ()
             // No call site to name: what a parked fiber reports comes from the operation it stopped at.
         )(using Frame.internal).asInstanceOf[Unit < Any]
     end boundary
@@ -148,7 +159,9 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
       * is promoted and renamed, while the platform handle finds `status` by name.
       */
     private def parkOn(promise: IOPromise[?, ?], frame: Frame): Unit =
-        status = promise
+        // A CAS rather than a store: an interrupt that landed on this slice holds the word, and the park is
+        // then released at the slice's end rather than armed.
+        discard(casStatus(Thread.currentThread(), promise))
         joinFrame = frame
     end parkOn
 
@@ -169,20 +182,54 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         super.doPreempt()
         stopSlice()
 
-    final override def onInterrupted(): Unit =
-        stopSlice()
+    /** Takes an interrupt: the word holds the error until the remainder is released, and the promise stays
+      * pending until then, so the result is available once the finalizers have run.
+      *
+      * Over `Idle` nobody owns the task, so this schedules the run that claims the error and releases. Over
+      * the thread the slice is in flight: it is stopped, and its owner finds the error at the slice's end.
+      * Over the promise the slice is still unwinding from its park, with a stop already requested, and the
+      * same owner finds it. First to land wins; a later one finds the error, or `Done`, through
+      * `preInterrupt` and is refused, as it would be by a completed promise.
+      */
+    final override protected def interrupt(p: IOPromise.Pending[E, A < S2], error: Result.Error[E]): Boolean =
+        @tailrec def loop(): Boolean =
+            status match
+                case _: Idle.type =>
+                    (casStatus(Idle, error) && {
+                        taken()
+                        Scheduler.get.schedule(this)
+                        true
+                    }) || loop()
+                case thread: Thread =>
+                    (casStatus(thread, error) && {
+                        // Addressed to this task; see `stopSlice`.
+                        discard(Safepoint.stop(thread, this))
+                        taken()
+                        true
+                    }) || loop()
+                case promise: IOPromise[?, ?] =>
+                    (casStatus(promise, error) && {
+                        taken()
+                        true
+                    }) || loop()
+                case _ =>
+                    false
+        loop()
+    end interrupt
+
+    // Runs promptly from here: the release is what frees the worker and the finalizers, and the runtime this
+    // task accumulated would otherwise deprioritize it.
+    private def taken(): Unit =
         Scheduler.get.notifyInterrupt()
-        // A slice in flight observes the interrupt through the stop above. One that is not running has
-        // nothing to stop, the promise that would have resumed it may never see this interrupt, and the park
-        // it holds carries releases only a resumption can run. So make it runnable and let `run` decide,
-        // keeping abandonment at the single site that owns the task. Unconditional: a schedule landing
-        // during a slice loses the claim and returns, and reading the status here would be the same race in
-        // disguise.
-        Scheduler.get.schedule(this)
-    end onInterrupted
+        resetRuntime()
+
+    final override def preInterrupt(): Boolean =
+        status match
+            case _: Result.Error[?] | _: Done.type => false
+            case _                                 => true
 
     final override def needsInterrupt(): Boolean =
-        !isPending()
+        interrupted || !isPending()
 
     /** Where this fiber currently stands, as one rendered frame, or empty where there is none.
       *
@@ -235,13 +282,16 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
     end render
 
     final def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
-        if !casStatus(Idle, Thread.currentThread()) then
-            // Owned by somebody else, who finishes or releases it, so dropping this entry loses nothing.
+        val thread = Thread.currentThread()
+        if !casStatus(Idle, thread) then
+            // Owned by somebody else, who finishes or releases it, unless the word holds an interrupt taken
+            // while the task was idle: this is the run that interrupt scheduled, and it releases.
+            release()
             Task.Done
         else if !isPending() then
             // Completed between slices without an interrupt, so no claim was made on its behalf and this
             // one releases the remainder.
-            abandon()
+            abandon(Absent)
             Task.Done
         else
             val previous = IOTask.current.get()
@@ -272,6 +322,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                             throw ex
                         end if
                         cleared
+            // Every exit from the slice is a CAS out of the state this owner left the word in: one that
+            // fails found an interrupt there, and the owner releases on its behalf.
             status match
                 case promise: IOPromise[?, ?] =>
                     // `next` is the park, carrying the regions above it and the releases they owe, kept
@@ -281,49 +333,70 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                     curr = next
                     // Read out before the wakeup closes over it; see `parkOn`.
                     val frame = joinFrame
-                    status = Idle
-                    promise.onComplete { _ =>
-                        removeInterrupt(promise)(using frame)
-                        Scheduler.get.schedule(this)
-                    }
-                    // An interrupt landing while this slice unwound left the task alone, the remainder not
-                    // existing yet. It does now, and the wakeup may never come, so claim it here.
-                    if !isPending() && casStatus(Idle, Done) then abandon()
+                    if casStatus(promise, Idle) then
+                        promise.onComplete { _ =>
+                            removeInterrupt(promise)(using frame)
+                            Scheduler.get.schedule(this)
+                        }
+                        // Completed while this slice unwound, without an interrupt: no run was scheduled on
+                        // its behalf, and the wakeup may never come, so claim it here.
+                        if !isPending() && casStatus(Idle, Done) then abandon(Absent)
+                    else release()
+                    end if
+                    Task.Done
+                case _: Result.Error[?] =>
+                    // An interrupt landed on this slice. What the stop left is the remainder, unless the body
+                    // ran to its end first, in which case the interrupt still owns the ending.
+                    curr = if next.evalNow.isDefined then cleared else next
+                    release()
                     Task.Done
                 case _ =>
                     // Stored before ownership is released: once idle, another thread may claim this task.
                     if next.evalNow.isDefined then
                         // The boundary completed the fiber on the way here.
                         curr = cleared
-                        status = Done
+                        if !casStatus(thread, Done) then release()
                         Task.Done
                     else
                         curr = next
                         if !isPending() then
-                            // Interrupted or completed mid-slice, and nobody will resume the remainder.
-                            abandon()
+                            // Completed mid-slice, and nobody will resume the remainder.
+                            abandon(Absent)
                             Task.Done
-                        else
-                            status = Idle
+                        else if casStatus(thread, Idle) then
                             Task.Preempted
+                        else
+                            release()
+                            Task.Done
                         end if
                     end if
             end match
         end if
     end run
 
-    /** Releases what an abandoned remainder still holds, and links what it stands waiting on.
+    /** Releases on behalf of the interrupt the word holds: claims it, releases the remainder, and completes
+      * the promise with it. The claim is what keeps two runs from releasing the same remainder.
+      */
+    private def release(): Unit =
+        status match
+            case error: Result.Error[E] @unchecked =>
+                if casStatus(error, Done) then abandon(Present(error))
+            case _ => ()
+
+    /** Releases what an abandoned remainder still holds, links what it stands waiting on, and completes the
+      * promise with the interrupt taken, when one was.
       *
       * A parked computation carries its owed releases rather than running them, and this fiber will not
       * resume, so they are run here. The link comes first: an interrupt arriving as the fiber reached its
       * join can find a remainder standing at one whose promise is not yet tied to this fiber. A join the
       * remainder has not reached is not linked, since nothing under a step that never ran is waited on yet,
-      * and the release runs no step of the remainder to find one.
+      * and the release runs no step of the remainder to find one. The completion comes last: the cascade to
+      * what this fiber linked, and every observer of its result, run only once its finalizers have.
       *
       * Only reached by a thread owning the task, so the release happens once. `Done` keeps a later schedule
       * from resuming what was just released.
       */
-    private def abandon(): Unit =
+    private def abandon(interruption: Maybe[Result.Error[E]]): Unit =
         val remainder = curr
         curr = cleared
         status = Done
@@ -333,6 +406,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                 [C] => input => discard(input(this))
             }
         end if
+        interruption.foreach(error => discard(settleInterrupt(error)))
     end abandon
 
     // Drops the reference so a finished task does not retain the computation it ran. Never a signal: what a
@@ -346,16 +420,17 @@ end IOTask
 
 object IOTask:
 
-    /** The two states of a task's status word that name no thread and no promise.
+    /** The two states of a task's status word that name no thread, no promise and no error.
       *
-      * Objects rather than an enum over the whole word: the two carrying states hold a reference that is
-      * already allocated, so naming all four as cases would put an allocation on every slice.
+      * Objects rather than an enum over the whole word: the three carrying states hold a reference that is
+      * already allocated, so naming all five as cases would put an allocation on every slice and every
+      * interrupt.
       */
     private[scheduler] case object Idle
     private[scheduler] case object Done
 
     /** Who owns a task, and whether it is still alive. See the field's documentation for the machine. */
-    private[scheduler] type Status = Thread | IOPromise[?, ?] | Idle.type | Done.type
+    private[scheduler] type Status = Thread | IOPromise[?, ?] | Idle.type | Done.type | Result.Error[?]
 
     /** Compare-and-set on a task's `status` field, without an atomic wrapper around it.
       *

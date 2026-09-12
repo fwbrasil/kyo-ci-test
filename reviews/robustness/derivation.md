@@ -532,8 +532,47 @@ missed wakeup within the repair interval, so the gap cannot lose an update; the 
 test now waits for the count to settle before reading it, as its first read already did; a recursive
 subscription would hold the count above one and fail the wait. Not yet rerun locally.
 
-### Not in this round
+### O. A fiber's result arrives once its finalizers have run (core: `IOTask`, `IOPromise`, `Fiber`)
 
-The deferred fiber completion the user directed (`Finalizing` status in `IOTask`, the promise completed
-only after the remainder is released, `Fiber.interruptAwait`, `Fiber.init` without its `ended` promise)
-is designed and not built; it follows this package.
+The user's direction: interrupt stays immediate; a fiber's promise completes only once the remainder is
+released; confined to `IOTask`, with the interrupt recorded in its status word as a fifth state and no
+wrapper; `Fiber.interruptAwait` as the shorthand; `Fiber.init` without the `ended` promise it kept to
+learn how the fiber ended.
+
+The word. `Status` is `Thread | IOPromise | Idle | Done | Result.Error`, and the fifth state is the error
+the interrupt carried, held as it is: already allocated by the caller, and a `Result.Error` rather than a
+`Throwable` because a typed interrupt, `Failure(SqlTimeoutException)` from the pool's timeout, is not one.
+The phase between the record and `Done` is the fiber finalizing.
+
+The rule that makes it sound. An interrupt lands under any owner. Over `Idle` the interrupter takes the
+word and schedules a run, which claims the error and releases. Over the thread it takes the word and
+delivers the stop; over the parked promise it takes the word and nothing more, a stop having been
+requested by the park. In both of those the owner is still inside the slice and finds the error at its
+end, so a run is never scheduled for a slice in flight, and `run` claims an error only out of `Idle`. A
+stray run, from a wakeup or a double schedule, sees the error and finds the claim already taken or the
+word still a thread, and returns. The owner's exits from a slice are CAS out of the state it left the
+word in: a failed CAS found an interrupt, and the owner releases on its behalf. `parkOn` is a CAS for the
+same reason. The boundary's two completion arms skip when the word holds an error, so an interrupt taken
+on the running slice owns the ending over a body that completes in that same slice.
+
+The hook. `IOPromise.interrupt(p, v)`, the method that completes a pending state with an interrupt, is
+overridable; the base delegates to `settleInterrupt`, which the task calls at `Done` with the error the
+word held, so the cascade to what the fiber linked and every observer of its result run only then.
+`interruptLoop` asks `preInterrupt` again before a retry, since a task that took an interrupt stays
+pending and refuses the next one there; the retry would otherwise spin. `onInterrupted` is gone: the
+task's take is the override, and the base no-op had no other caller.
+
+`Fiber.init` interrupts, waits on the promise, and closes the fiber's own scope with the result's error:
+an interrupted lease sees the panic and cancels, a fiber that finished on its own closes clean, and a
+typed failure is what it says, which the `ended` promise could not carry. `Bracket.ensuring` leaves the
+spawn, and with it the bracket every scoped fiber paid for.
+
+Surface: `IOTask` (the word, `interrupt`, `preInterrupt`, `needsInterrupt`, `parkOn`, the boundary arms,
+`run`, `release`, `abandon`), `IOPromise` (`interrupt(p, v)` overridable, `settleInterrupt`, the retry
+guard, `onInterrupted` removed), `Fiber` (`interruptAwait`, `init`). Pins: `FiberTest` "deferred
+completion", five cases: the result arrives after the finalizers ran, a second interrupt is refused,
+`interruptAwait` returns once the finalizers ran, an interrupt taken on the running slice owns the ending
+over a body completing after it, and a scoped fiber's own scope closes after the fiber released.
+
+Not mirrored on the unsafe tier: `interruptAwait` waits, and the unsafe tier's wait is `block`, which
+already observes the deferred completion.

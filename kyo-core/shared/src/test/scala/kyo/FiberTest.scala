@@ -1254,4 +1254,81 @@ class FiberTest extends kyo.test.Test[Any]:
         }
     }
 
+    "deferred completion" - {
+        "the result of an interrupted fiber arrives after its finalizers ran" in {
+            for
+                released <- AtomicBoolean.init(false)
+                started  <- Promise.init[Unit, Any]
+                fiber <- Fiber.initUnscoped {
+                    Sync.ensure(released.set(true))(started.complete(Result.succeed(())).andThen(Async.never))
+                }
+                _      <- started.get
+                first  <- fiber.interrupt
+                result <- fiber.getResult
+                seen   <- released.get
+            yield
+                assert(first)
+                assert(result.panic.exists(_.isInstanceOf[Interrupted]))
+                assert(seen)
+        }
+
+        "a second interrupt is refused" in {
+            for
+                started <- Promise.init[Unit, Any]
+                fiber   <- Fiber.initUnscoped(started.complete(Result.succeed(())).andThen(Async.never))
+                _       <- started.get
+                first   <- fiber.interrupt
+                second  <- fiber.interrupt
+                _       <- fiber.getResult
+            yield assert(first && !second)
+        }
+
+        "interruptAwait returns once the finalizers ran" in {
+            for
+                released <- AtomicBoolean.init(false)
+                started  <- Promise.init[Unit, Any]
+                fiber <- Fiber.initUnscoped {
+                    Sync.ensure(released.set(true))(started.complete(Result.succeed(())).andThen(Async.never))
+                }
+                _    <- started.get
+                _    <- fiber.interruptAwait
+                seen <- released.get
+            yield assert(seen)
+        }
+
+        // The interrupt is requested from inside the body, so it lands on the running slice, and the body then
+        // completes in that same slice: the interrupt owns the ending.
+        "an interrupt taken on the running slice owns the ending" in {
+            for
+                handoff <- Promise.init[Fiber[Int, Any], Any]
+                fiber <- Fiber.initUnscoped {
+                    handoff.get.map { self =>
+                        import AllowUnsafe.embrace.danger
+                        discard(self.unsafe.interrupt())
+                        42
+                    }
+                }
+                _      <- handoff.complete(Result.succeed(fiber))
+                result <- fiber.getResult
+            yield assert(result.panic.exists(_.isInstanceOf[Interrupted]))
+        }
+
+        "a scoped fiber's own scope closes after the fiber released" in {
+            for
+                order   <- AtomicRef.init(List.empty[String])
+                started <- Promise.init[Unit, Any]
+                _ <- Scope.run {
+                    Fiber.init {
+                        Sync.ensure(order.updateAndGet("fiber" :: _).unit)(
+                            Scope.ensure(order.updateAndGet("scope" :: _).unit)
+                                .andThen(started.complete(Result.succeed(())))
+                                .andThen(Async.never)
+                        )
+                    }.andThen(started.get)
+                }
+                seen <- order.get
+            yield assert(seen.reverse == List("fiber", "scope"))
+        }
+    }
+
 end FiberTest

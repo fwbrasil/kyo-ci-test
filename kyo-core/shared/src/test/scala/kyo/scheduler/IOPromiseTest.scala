@@ -170,25 +170,51 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(p.block(deadline()).isPanic)
         }
 
-        "onInterrupted fires once, after the CAS, only on the interrupt path" in {
+        "the interrupt hook runs once, on the interrupt path only, and settles through settleInterrupt" in {
             class HookedPromise extends IOPromise[Nothing, Int]:
-                var fired         = 0
-                var pendingAtHook = true
-                override protected def onInterrupted(): Unit =
+                var fired      = 0
+                var doneAtHook = false
+                override protected def interrupt(p: IOPromise.Pending[Nothing, Int], v: Result.Error[Nothing]): Boolean =
                     fired += 1
-                    pendingAtHook = !done()
+                    val settled = settleInterrupt(p, v)
+                    doneAtHook = done()
+                    settled
+                end interrupt
             end HookedPromise
 
             val interrupted = new HookedPromise
             assert(interrupted.interrupt(Result.Panic(new Exception("Interrupted"))))
             assert(interrupted.fired == 1)
-            assert(!interrupted.pendingAtHook, "hook must observe the promise already completed (post-CAS)")
+            assert(interrupted.doneAtHook, "the hook settles the promise before it returns")
             assert(!interrupted.interrupt(Result.Panic(new Exception("again"))))
             assert(interrupted.fired == 1)
 
             val completed = new HookedPromise
             assert(completed.complete(Result.succeed(1)))
             assert(completed.fired == 0)
+        }
+
+        // The shape a task uses: the hook takes the interrupt and leaves the promise pending, `preInterrupt`
+        // refuses the next one, and the retry that follows a refused attempt asks it rather than spinning.
+        "a hook that takes the interrupt without completing refuses the next through preInterrupt" in {
+            class TakingPromise extends IOPromise[Nothing, Int]:
+                var taken = Maybe.empty[Result.Error[Nothing]]
+                override protected def interrupt(p: IOPromise.Pending[Nothing, Int], v: Result.Error[Nothing]): Boolean =
+                    taken.isEmpty && {
+                        taken = Maybe(v)
+                        true
+                    }
+                override def preInterrupt(): Boolean = taken.isEmpty
+                def settle(): Boolean                = taken.exists(v => settleInterrupt(v))
+            end TakingPromise
+
+            val p = new TakingPromise
+            assert(p.interrupt(Result.Panic(new Exception("first"))))
+            assert(!p.done())
+            assert(!p.interrupt(Result.Panic(new Exception("second"))))
+            assert(p.settle())
+            assert(p.done())
+            assert(p.block(deadline()).isPanic)
         }
     }
 
