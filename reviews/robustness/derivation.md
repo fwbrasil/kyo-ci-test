@@ -143,6 +143,23 @@ second interpreter with its own bugs. The decision rule: it ships only if it pas
 independently, on the strength of its own reading of the combinators. If it does not, it is written
 up as a design note with what diverged, and B stands as the robustness measure.
 
+### H. The release walk delivers the payload (kernel source)
+
+Found by reading, during the fork 1 analysis of `Eval.release` (`lenses/fork1-apply-pair.md`,
+section 3), not by a test. The abandonment walk carries a cont down to the `Arrow.Ensure` waiting on
+a value that has already settled and offers it that value, `collect(step(v), Arrow.id, 0)`, with `v`
+the settled value as the walk found it, union-represented. Every settled arm delivers through
+`Nested.unnest` (`Ensure`'s own two-argument apply, `map`'s strict arm), because a value that is
+itself a computation is carried boxed once settled; the walk skipped that. So a bracket whose
+resource is a computation, `Bracket(Kyo.lift(resource))(use)(release)`, abandoned through the
+budgeted release (the entry a fiber abandonment uses) handed its release the box. Reproduced first:
+the `EvalTest` case "a release for a resource that is itself a computation receives the computation,
+not its box" fails on the tip before this piece with `Nested@... was not the same instance as
+Kyo(...)`. Equation: the walk's delivery equals the arm's, `step(Nested.unnest(v))`, one line, and
+the comment above it says why. Surface: `Eval.release`'s `ensuring` and `EvalTest`; nothing on any
+evaluation path. The `[Any]` on the unnest is the walk's erased currency, `Arrow[Any, Any, Any]`,
+the spelling `answersLoop`'s settled arm already uses.
+
 ## Also on the branch, outside the kernel
 
 `kyo-data/shared/src/main/scala/kyo/Span.scala`, `Span.updated`: an explicit index check raising the

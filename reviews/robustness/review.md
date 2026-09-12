@@ -2,7 +2,7 @@
 
 Base `cdefdc9e60`, branch `robustness`, worktree `.claude/worktrees/robustness`. Range and tip are
 re-derived by `package-check.sh` at packaging; the walk below is `sequence.json`, verified against
-the tip by `sequence.py --verify`. Thirty-one edits, applied one at a time with the Edit tool, in
+the tip by `sequence.py --verify`. Thirty-four edits, applied one at a time with the Edit tool, in
 the order given here: twenty-one in the kernel and the build (its test runner and the benchmark
 configuration), two in `kyo-prelude` and `kyo-bench` for the consumer of the multi-shot fix, two in
 `kyo-data` and `kyo-bench` for the Span fix and its number, and two in `kyo-net`, the last four being
@@ -30,6 +30,13 @@ B found, and D stays on the list as the long-run item with B's matrix as the sub
 generalise. The full derivation, with the equations, the surface and the forks, is `derivation.md`
 beside this file; the parts a reviewer needs are folded in below.
 
+**H**, the release walk delivering the payload: found by reading during the fork 1 analysis, a
+bracket whose resource is itself a computation had its release handed the `Nested` box on
+abandonment with budget, because the walk offered the waiting `Ensure` the settled value as found
+rather than unnested as every settled arm does. Reproduced first (edit 31, failing on the tip with
+the release seeing `Nested@...`), fixed with one unnest (edits 29 and 30); `EvalTest` and
+`BracketTest` 233 passed, and the three suites run again on this tip.
+
 ### The defect B found
 
 `handleContRepeated` with a clause that resumes twice, over two or more consecutive occurrences in one
@@ -56,7 +63,7 @@ clause, in `run`, so that each application re-enters a fresh region under the ha
 form, the same clause with `done` as identity. Entering the fresh region stores the registers as
 that region's continuation, so the enclosing clause's pending work sits outside the body again and
 a later occurrence captures body maps only. `done` still runs once, at the outer region's end.
-`Eval` and `ContHandler` are unchanged, so the single-shot path pays nothing, and
+`Eval` and `ContHandler` are unchanged by the fix, so the single-shot path pays nothing, and
 `handleFirstRepeated` is untouched by construction: a holding handler runs its clause at `done`,
 after the region has exited, and hands the continuation out, so the capture cannot happen there and
 its holder re-establishes the region before applying it, as `Choice.runStream` does per iteration.
@@ -190,17 +197,27 @@ already exists as the lifecycle hook a region receives on re-entry, and an uncur
 case: `attachReentryToPending` says what it does to a pending outcome, and a settled one passes
 through.
 
+**H. The release walk delivers the payload**
+
+29. `Eval.scala`, the comment above `leftmost` in `release`: the value is offered unnested, as
+   every settled arm delivers it, since a value that is itself a computation is carried boxed.
+30. `Eval.scala`, `ensuring`: `step(Nested.unnest[Any](v))`, the walk's delivery made equal to the
+   `Ensure` arm's own.
+31. `EvalTest.scala`: the reproduction, a bracket acquiring a computation, parked before its region
+   is installed, abandoned through the budgeted release; the release must receive the resource
+   itself, `eq`, not its box.
+
 **G. The tooling**
 
 The kernel skill's `SKILL.md` names three files beside it that did not exist yet; this change wrote them
 and they are new files, applied whole.
 
-29. `flags.sh`, new: emits one row per construct of concern on a diff's added lines (casts, `Any`,
+32. `flags.sh`, new: emits one row per construct of concern on a diff's added lines (casts, `Any`,
    `@unchecked`, allocations on hot paths, terminology), the skeleton `flags.md` adjudicates.
-30. `package-check.sh`, new: re-derives every mechanical claim a package makes (tip, commit count,
+33. `package-check.sh`, new: re-derives every mechanical claim a package makes (tip, commit count,
    surface, clean tree, flag count against the table, the walk reproducing the tip, and whether
    each benchmark class named references the package under review), one OK, CHECK or STALE per line.
-31. `rulings.md`, new: the reviewer's objections verbatim and dated, the rehearsal lens's rubric,
+34. `rulings.md`, new: the reviewer's objections verbatim and dated, the rehearsal lens's rubric,
    with the 2026-09-12 entry from this change's status report.
 
 ## Adjudication
@@ -218,8 +235,10 @@ category from the cast ladder, a measurement, a `moved` provenance or `REMOVE`. 
 | F5 | Handler.scala:426 | `else outcome.asInstanceOf[Outcome2[State, A < (E & S), B < S] < S]` | cast | moved: as F4, for the state-carrying outcome |
 | F6 | Handler.scala:491 | `result = attachReentryToPending[...](k.asInstanceOf[Arrow[O[C], A, E & S]], o)` | cast | moved: the same `k.asInstanceOf` on the same site at the base; erasure-forced, the fused walk rebinding `k` per operation |
 | F7 | Handler.scala:569 | `result = attachReentryToPending2[...](k.asInstanceOf[Arrow[O[C], A, E & S]], o2)` | cast | moved: as F6 |
+| F8 | Eval.scala:646 | `case step: Arrow.Ensure[Any, Any, Any] @unchecked => collect(step(Nested.unnest[Any](v)), Arrow.id, 0)` | cast | erasure-forced: the walk is over `Arrow[Any, Any, Any]`, existential from out here (the base's own comment on `leftmost`), so the unnest answers at `Any`, the same `Nested.unnest[Any]` spelling as `answersLoop`'s settled arm; the `@unchecked` typed pattern is the base's line, unchanged |
+| F9 | Eval.scala:646 | the same line | carrier | moved: the `Any` carriers are the base's, `Arrow.Ensure[Any, Any, Any]` on this line since the walk was written; the added `[Any]` is the unnest's answer type at the walk's erased currency, `Nested.unnest` being `Any => A` by construction |
 
-No hand-added row: `Eval` is unchanged, so no hot-path cost sits outside the script's classes, and no
+No hand-added row: `Eval` changes one line, on the abandonment walk and on no evaluation path (F8), so no hot-path cost sits outside the script's classes, and no
 member with a partial default exists for a claim to cover.
 
 ## Evidence
@@ -236,6 +255,7 @@ Verification, on the tip with C:
 | `kyo-netJVM/testOnly RearmSurvivorsTest` | 2 passed with edits 27 and 28, on this machine and in the linux-arm64 CI container (`scripts/build.sh --env podman-ci --arch arm`, the environment the failure came from), the ordering assertion included |
 | `testKyo --dry-run --phase compile-test --modules kyo-kernelJVM,kyo-dataJVM JVM` | the pass reads `kyo-dataJVM/Test/compile; kyo-kernelJVM/Test/compile; kyo-kernelJVM/Jmh/compile`, the benchmark compile for the module that has one and not for the one that does not |
 | `SpanTest` | 237 passed on each of JVM, JS, Wasm and Native after edit 25 |
+| `kyo-kernelJVM/testOnly EvalTest BracketTest` | 233 passed on the tip with edits 29 to 31; the reproduction fails before edit 30 with `Nested@... was not the same instance as Kyo(...)`. The three suites on this tip: pending the run |
 
 Benchmarks. `KernelBench`, 49 rows, is the class; `package-check.sh` confirms it references
 `kyo.kernel`. The rows the fix reaches by name, before running: every row answering through
