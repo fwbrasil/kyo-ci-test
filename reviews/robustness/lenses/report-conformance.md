@@ -1,107 +1,92 @@
-# Lens report: kernel-conformance, round 5
+# Lens report: kernel-conformance, round 6
 
 FAIL
 
-Round 5. Tip `b167efef697bdb3ab7e8d5fcbeadb6f1519a4188`, base `cdefdc9e60`.
+Round 6. Tip `ee0007fb03af87c04cf764b5a15e62997dda11d3`, base `cdefdc9e60`.
 
-The substitution check passes: every piece the derivation names (A, B, C, E, F, H, candidate A) is in
-the code as the composition the derivation writes, the forks take the ruled side and only that side,
-and no reference interpreter is in the diff. The verdict is FAIL on the surface check alone. Two
-changes in the range are declared nowhere in the derivation, one of them 330 lines of new tracked
-files under `kyo-kernel/` whose existence a derivation sentence denies, and the other a paragraph on
-a public scaladoc.
+The substitution check passes, and nothing in the code moved since round 5: `git diff
+b167efef69..HEAD -- . ':!reviews'` is empty, so the four pieces, the multi-shot fix and the two
+edits outside the kernel are the same values I walked last round, and I walked them again against
+the derivation at this tip. The verdict is FAIL on the surface check alone, and on one class of
+defect: the tree the derivation describes is not the tree in front of me. Piece G, written this
+round to declare the tooling, rests on a file that is in neither the tree nor the range, and it
+declares three files whose directory an ancestor of the base removed from git on purpose, without
+saying so. The same removal covers 6,912 lines the range tracks that no sentence declares at all.
 
 I read `reviews/robustness/derivation.md` at the tip, the diff over the declared paths, the diff
-`--stat` over the whole range, and the kernel files each hunk sits in, at the tip. I ran
-`sequence.py --verify cdefdc9e60 HEAD` (VERIFIED, 34 edits) and `flags.sh cdefdc9e60..HEAD --
-kyo-kernel/shared/src/main/scala` (9 rows). No transcript, no summary, no test or benchmark output.
-The derivation on disk is byte-identical to the derivation at HEAD this round, so round 4's scope
-note does not recur.
+`--stat` over the whole range, the kernel files each hunk sits in at the tip, and the three files
+piece G adds. I ran `sequence.py --verify cdefdc9e60 HEAD` (VERIFIED, 19 files) and
+`flags.sh cdefdc9e60..HEAD -- kyo-kernel/shared/src/main/scala` (9 rows, against 9 adjudicated in
+`flags.md`). No transcript, no summary, no test or benchmark output. The derivation on disk is
+byte-identical to the derivation at HEAD.
 
 ## Findings
 
-### C21. Three new tracked files under `kyo-kernel/.claude/skills/kernel/` are declared nowhere, and the derivation says they are not there
+### C26. Piece G's subject, `SKILL.md`, is in neither the tree nor the range
 
-`reviews/robustness/derivation.md:37` to `38`: "The kernel skill would be the other home for the
-rule, but it is not tracked in this tree."
+`reviews/robustness/derivation.md:168`: "`kyo-kernel/.claude/skills/kernel/SKILL.md` describes a
+pipeline whose three companion files did not exist in this tree", and `derivation.md:176`: "Surface:
+those three files and nothing in `SKILL.md`."
 
-The range adds `kyo-kernel/.claude/skills/kernel/flags.sh` (78 lines),
-`package-check.sh` (131 lines) and `rulings.md` (121 lines), all three in commit `f6e9fb0041`, none
-of them present at `cdefdc9e60` (`git ls-tree -r cdefdc9e60 -- kyo-kernel/.claude` is empty). No
-piece declares them. `package-check.sh` is named once, at `derivation.md:220`, in the evidence list,
-as a tool the package runs, which declares an activity rather than a file added to the module under
-review. `flags.sh` and `rulings.md` are not named at all.
+`ls kyo-kernel/.claude/skills/kernel/` at the tip lists `flags.sh`, `package-check.sh` and
+`rulings.md`, and nothing else. `git ls-tree -r HEAD -- kyo-kernel/.claude` lists the same three.
+There is no `SKILL.md` at that path, tracked or untracked, and `find . -name SKILL.md` finds only
+the seven readme skills under the root `.claude/`. The file was last tracked before `76c675ea94`,
+which deleted it.
 
-The quoted sentence is the reason piece A gives for putting the verification rule in
-`CONTRIBUTING.md` rather than in the skill, so it is load-bearing for a decision, not a passing
-remark. At the tip the skill's directory carries three tracked files and only its `SKILL.md` remains
-untracked. A reviewer who reads the derivation and then the `--stat` sees 330 lines of agent tooling
-entering the `kyo-kernel` module with no declaration, one of them (`rulings.md`) a rules document
-that quotes the reviewer verbatim, and a sentence telling them not to expect any of it.
+So both sentences assert a fact about this tree that this tree denies. The first is the whole
+justification for adding 346 lines of tooling to the module under review: the reader is told the
+three files fill a gap a present document names, and cannot open that document to check either that
+it names them or that it describes the pipeline the files implement. The second reads as a statement
+that `SKILL.md` was present and left alone, where in fact nothing was left alone because nothing was
+there. The three added files inherit the same defect in the code: `flags.sh:4`, `flags.sh:18` and
+`package-check.sh:4` each send the reader to `SKILL.md, "Preparing a live review"` for what the
+script is for, and the repository has no such file.
 
-### C22. The new scaladoc paragraph on `handleContRepeated` is a public-surface change no sentence declares
+### C27. `kyo-kernel/.claude/` was removed from git on purpose before the base, and G declares the re-add without declaring the reversal
 
-`reviews/robustness/derivation.md:254` to `255`: "Confined to the two `handleContRepeated`
-overloads: their handler wraps the continuation it hands the clause, in `run`, so that each
-application re-enters".
+`reviews/robustness/derivation.md:39` to `41`: "The kernel skill's `SKILL.md` names three files
+beside it that did not exist, `flags.sh`, `package-check.sh` and `rulings.md`; this change writes
+them (piece G) as the pipeline's tooling".
 
-`kyo-kernel/shared/src/main/scala/kyo/kernel/ArrowEffect.scala:189` to `193` adds a five-line
-paragraph to the public scaladoc of `handleContRepeated`, stating the re-entry rule and where a
-bracket acquired inside a resumption is released. Candidate A declares a change to the two overloads'
-`run`, and `derivation.md:262` to `265` gives the rule's written home as a test: "what that region
-owes is held across every application and discharged where the re-entered region ends, after the last
-of them, which a case in `BracketTest` pins." The only scaladoc change the document declares anywhere
-is `EffectTrace`'s doc link, at `derivation.md:35` to `37`. So the change that answers round 4's C19
-is in the code with nothing in the derivation saying it was made, which is the same shape as round
-4's C16 one level up: a reviewer diffing the public documentation of a public combinator finds a new
-paragraph and no declaration to check it against.
+`76c675ea94`, "[repo] development artifacts move to .dev, which git ignores", dated 2026-09-10 and
+an ancestor of the base, removed 525 files including "`kyo-kernel/.claude/` with the kernel skill
+and its bench harness", naming as its subject "the agent tooling that produced them", and stating
+the rule it leaves behind: "What stayed: every module source, `kyo-kernel/CONTRIBUTING.md`, and the
+README and CONTRIBUTING files. The rule is that those are the only markdown the repository carries."
+`.gitignore` at the tip carries the other half: "Local development artifacts: design notes, review
+packages, benchmark output, agent tooling." routing them to `.dev/`. That commit is on this branch
+only; `origin/main` has never had `kyo-kernel/.claude`.
 
-The paragraph itself matches the code and the pinned test: `reentering` at `Handler.scala:348` enters
-a fresh region per application, and `BracketTest.scala:1205` pins the release of a bracket acquired
-in the first resumption before the outer clause's second application.
+Commit `f6e9fb0041` puts the three files back at that path, one of them (`rulings.md`, 121 lines)
+markdown, and its subject line records the act as "skill scripts tracked in the worktree". The path
+is excluded in `.git/info/exclude`, so committing them took an override. Piece G says the change
+writes three files; it does not say that the directory it writes them into is one a commit two days
+before the base emptied deliberately, nor why that decision is being reversed for three of its
+files and not the rest. A reviewer who wrote `76c675ea94` reads G and finds his own rule reversed
+with no argument against it, which is the shape `rulings.md:49` itself names: "changes stay inside
+the derivation's declared surface. An improvement outside it is still a finding, because nobody
+agreed to it."
 
-### C23. The piece enumeration does not account for H
+### C28. The range tracks 6,912 lines of review package that no sentence declares, under the same removed path
 
-`reviews/robustness/derivation.md:13` to `14`: "A to D are the list's items; E and F were added as
-the work found them, E under this heading and F under "What A costs", beside the measurement that
-motivated it."
+`reviews/robustness/derivation.md:202`: "so the range's surface is fully declared and fully applied."
 
-Under `## The pieces` a reviewer counts six subsections: A at 16, B at 40, C at 85, E at 128, D at
-137, H at 146. The sentence that tells the reader which letters exist and where each lives names A,
-B, C, D, E and F, and never mentions H, which is a kernel source change with its own reproduction.
-The letter G is unused, so a reader who notices H's letter has nothing to resolve it against either.
-This is round 4's C17 in its next form: the heading no longer undercounts, and the enumerating
-sentence now does.
+`git diff cdefdc9e60..HEAD --numstat -- reviews` is 35 files and 6,912 added lines, among them
+`sweep/rerun-kyo_ffi_plugin_test.log` at 2,387 lines, `bench/base-rows-3.log` and
+`bench/tip-rows-3.log` at 467 each, and `sweep/rerun-kyo_test_sbt_publish_test.log` at 691.
+`git ls-tree -r cdefdc9e60 -- reviews` is empty, and so is the same listing on `origin/main`:
+`76c675ea94` removed `reviews/` by name in the same sweep as `kyo-kernel/.claude`, and the
+`.gitignore` line quoted in C27 names "review packages" among what belongs under `.dev/`.
 
-### C24. "`Eval` and `ContHandler` are unchanged" is contradicted by the piece four sections later
-
-`reviews/robustness/derivation.md:274`: "`Eval` and `ContHandler` are unchanged, so the single-shot
-path pays nothing, and".
-
-`kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Eval.scala:646` changes, and its comment at
-`631` to `635` with it. Piece H declares that edit at `derivation.md:159` to `160` ("Surface:
-`Eval.release`'s `ensuring` and `EvalTest`; nothing on any evaluation path"), so the substance is
-settled and the two sentences are about different pieces. The sentence at 274 carries no such scope:
-it is a bare claim about the file, in the present tense, about a tip where the file has moved. This
-is round 4's C18 in a new place, and the fix that closed C18 (naming what the claim covers, "kyo-net's
-sources are identical to main on this branch") is the shape this one is missing.
-
-### C25. The flags table's verdicts for F1 and F2 cite an evidence file that does not exist
-
-`reviews/robustness/derivation.md:221`: "- the flags table, every row adjudicated".
-
-`reviews/robustness/flags.md`, rows F1 and F2, each end their verdict by deferring the time cells to
-`bench/compare-rows-base-vs-tip-clean.md` ("The clean rerun, `bench/compare-rows-base-vs-tip-clean.md`,
-replaces the time cells"). No such file is in the range and none is in the working tree;
-`reviews/robustness/bench/` holds `compare-rows-base-vs-tip.md` and `compare-rows-base-vs-AC.md` and
-no `-clean` file at all. So the two rows carrying the allocation and time numbers that piece A's cost
-section quotes point at evidence a reviewer cannot open.
-
-This one is scoped: `reviews/robustness/**` is the review's own instrument rather than a code
-surface, and I raise no other finding on those files. It is here because the derivation names the
-flags table as evidence the package carries, because the defect is a file-existence fact rather than
-a judgement about any number, and because it is exactly the class `package-check.sh` was written to
-catch.
+No sentence in the derivation declares the package as part of the change's surface. The evidence
+section at 229 to 240 lists what "the package will carry", which declares contents, not a decision
+to commit the package to a branch that goes to main. Round 5 recorded this row as "the review's own
+instrument" and raised nothing on it; with `76c675ea94` in hand that framing no longer covers it,
+because the instrument being present in the worktree, which the live-review model needs, is a
+different fact from the instrument being tracked on the branch, which the ancestor commit forbade.
+This finding is about the tracking only. I raise nothing about the package's content, and the lens
+reports live there by the reviewer's own design.
 
 ## The surface I enumerated
 
@@ -109,91 +94,92 @@ Every path in `git diff cdefdc9e60..HEAD --stat`, with the sentence that declare
 
 | Path | Change | Declared by |
 |---|---|---|
-| `kyo-kernel/CONTRIBUTING.md` | item 13 gains two sentences | A, 18 to 28 |
-| `project/TestKyo.scala` | `jmhCompileTasks` and its call in the compile-test branch | A, 26 to 29 |
-| `build.sbt` | `Jmh / classDirectory` in the three JMH projects | A, 33 to 35 |
-| `kyo-kernel/.../internal/EffectTrace.scala` | one doc link through the companion | A, 35 to 37 |
-| `kyo-kernel/.../test/.../internal/EvalShapeTest.scala` | new, the shape matrix | B, 42 |
-| `kyo-kernel/.../internal/Handler.scala` | four re-entry tails, two new helpers | C, 117 to 120 |
-| `kyo-kernel/.../internal/Handler.scala` | `reentered`, `reentering` | Candidate A, 283 to 286 |
-| `kyo-kernel/.../ArrowEffect.scala` | the two overloads wrap their continuation | Candidate A, 254 to 256 |
-| `kyo-kernel/.../ArrowEffect.scala` | a paragraph on `handleContRepeated`'s scaladoc | nothing (C22) |
-| `kyo-kernel/.../internal/Eval.scala` | `ensuring` unnests, and the walk's comment | H, 158 to 161 |
-| `kyo-kernel/.../test/.../internal/EvalTest.scala` | one case, the boxed resource | H, 155 to 158 |
-| `kyo-kernel/.../test/.../ArrowEffectTest.scala` | five cases in a new `handleContRepeated` block | Fork 4, 341 to 345 |
-| `kyo-kernel/.../test/.../BracketTest.scala` | one case in `multi-shot clauses` | Candidate A, 264 to 265 |
-| `kyo-kernel/jvm/src/jmh/.../KernelBench.scala` | four `ContextEffect.handle` calls | E, 130 to 132 |
-| `kyo-kernel/jvm/src/jmh/.../KernelBench.scala` | three new rows | What A costs, 297 to 302 |
-| `kyo-prelude/.../Choice.scala` | `Choice.run`'s clause | F, 317 to 318 |
-| `kyo-bench/.../ChoiceBench.scala` | new, `run` and `runStream` | F, 322 |
-| `kyo-data/.../Span.scala` | `updated` checks its index | Also on the branch, 165 to 170 |
-| `kyo-bench/.../SpanBench.scala` | new, `updated` | Also on the branch, 172 to 173 |
-| `kyo-net/.../RearmSurvivorsTest.scala` | write armed first, the order asserted | Also on the branch, 175 to 183 |
-| `kyo-kernel/.claude/skills/kernel/flags.sh` | new, 78 lines | nothing (C21) |
-| `kyo-kernel/.claude/skills/kernel/package-check.sh` | new, 131 lines | nothing (C21) |
-| `kyo-kernel/.claude/skills/kernel/rulings.md` | new, 121 lines | nothing (C21) |
-| `reviews/robustness/**` | the review package | the review's own instrument |
+| `kyo-kernel/CONTRIBUTING.md` | item 13 gains two sentences | A, 19 to 29 |
+| `project/TestKyo.scala` | `jmhCompileTasks` and its call in the compile-test branch | A, 27 to 30 |
+| `build.sbt` | `Jmh / classDirectory` in the three JMH projects | A, 34 to 36 |
+| `kyo-kernel/.../internal/EffectTrace.scala` | one doc link through the companion | A, 36 to 38 |
+| `kyo-kernel/.../test/.../internal/EvalShapeTest.scala` | new, the shape matrix | B, 45 |
+| `kyo-kernel/.../internal/Handler.scala` | four re-entry tails, two new helpers | C, 120 to 123 |
+| `kyo-kernel/.../internal/Handler.scala` | `reentered`, `reentering` | Candidate A, 303 to 306 |
+| `kyo-kernel/.../ArrowEffect.scala` | the two overloads wrap their continuation | Candidate A, 270 to 272 |
+| `kyo-kernel/.../ArrowEffect.scala` | a paragraph on `handleContRepeated`'s scaladoc | Candidate A cost, 291 to 294 |
+| `kyo-kernel/.../internal/Eval.scala` | `ensuring` unnests, and the walk's comment | H, 161 to 163 |
+| `kyo-kernel/.../test/.../internal/EvalTest.scala` | one case, the boxed resource | H, 158 to 160 |
+| `kyo-kernel/.../test/.../ArrowEffectTest.scala` | five cases in a new `handleContRepeated` block | Fork 4, 361 to 365 |
+| `kyo-kernel/.../test/.../BracketTest.scala` | one case in `multi-shot clauses` | Candidate A, 280 to 281 |
+| `kyo-kernel/jvm/src/jmh/.../KernelBench.scala` | four `ContextEffect.handle` calls | E, 133 to 135 |
+| `kyo-kernel/jvm/src/jmh/.../KernelBench.scala` | three new rows | What A costs, 317 to 322 |
+| `kyo-prelude/.../Choice.scala` | `Choice.run`'s clause | F, 337 to 339 |
+| `kyo-bench/.../ChoiceBench.scala` | new, `run` and `runStream` | F, 342 |
+| `kyo-data/.../Span.scala` | `updated` checks its index | Also on the branch, 181 to 189 |
+| `kyo-bench/.../SpanBench.scala` | new, `updated` | Also on the branch, 188 to 189 |
+| `kyo-net/.../RearmSurvivorsTest.scala` | write armed first, the order asserted | Also on the branch, 191 to 199 |
+| `kyo-kernel/.claude/skills/kernel/flags.sh` | new, 78 lines | G, 166 to 177 (C26, C27) |
+| `kyo-kernel/.claude/skills/kernel/package-check.sh` | new, 131 lines | G, 166 to 177 (C26, C27) |
+| `kyo-kernel/.claude/skills/kernel/rulings.md` | new, 121 lines | G, 166 to 177 (C26, C27) |
+| `reviews/robustness/**` | 35 files, 6,912 lines | nothing (C28) |
+
+No file is deleted in the range. The files added outside `reviews/` are exactly six: the two
+benchmark classes, `EvalShapeTest.scala`, and the three under `kyo-kernel/.claude`.
 
 Per piece, what I checked at the tip.
 
-- **A.** CONTRIBUTING item 13 gains exactly two sentences and nothing else in the file moves; the
-  first names `kyo-preludeJVM/test` and `kyo-coreJVM/test` with `Batch.run` as the example, the
+- **A.** CONTRIBUTING item 13 is the only changed line in the file and gains exactly two sentences:
+  the first names `kyo-preludeJVM/test` and `kyo-coreJVM/test` with `Batch.run` as the example, the
   second names the compile-test phase and `kyo-kernelJVM/Jmh/compile`. `jmhCompileTasks`
-  (`TestKyo.scala:369`) is gated on `phase != "compile-test"`, finds projects through
+  (`TestKyo.scala:369`) returns `Nil` unless the phase is `compile-test`, finds projects through
   `allProjectRefs` and `ivyConfigurations` rather than from a list, and emits `<module>/Jmh/compile`.
   `Jmh / classDirectory := crossTarget.value / "jmh-classes"` appears at `build.sbt:805`, `1399` and
-  `3207`, which are the three projects that enable `JmhPlugin`, and nowhere else. `EffectTrace`'s
-  change is the single link `[[splice]]` becoming `[[EffectTrace.splice]]` with the paragraph
-  rewrapped.
-- **B.** `EvalShapeTest.scala` at the declared path, prefix matching `internal/Eval.scala`. Ten
+  `3207`, the three projects that enable the JMH plugin, and nowhere else. `EffectTrace`'s change is
+  the single link `[[splice]]` becoming `[[EffectTrace.splice]]` with the paragraph rewrapped.
+- **B.** `EvalShapeTest.scala` at the declared path, the prefix matching `internal/Eval.scala`. Ten
   scenarios on exactly the declared axes: `handleCont` once and never, `handleContRepeated` once,
   twice and never, `handleLoop` continue and done-from-clause, `handleLoopState` the same two, and
-  one Mask scenario tunnelling a `handleCont` past an inner handler for the same tag. `n` runs over
+  one `Mask` scenario tunnelling a `handleCont` past an inner handler for the same tag. `n` runs over
   0 to 3 and eight configurations per cell (base, a binding above, a region above, the three
-  suspending variants, two inner-handler variants), which is the 320 the derivation states. The
-  inert regions are `ContextEffect.handleInheritable` for a tag never read and a `handleCont` for an
-  effect never performed. No expected value is written by hand: every cell reads `law`, `lawState`
-  or `runs`, and `law(List(7,8))(2)` folds to the 60 the derivation quotes.
+  suspending variants, two inner-handler variants), which is 320. The inert regions are
+  `ContextEffect.handleInheritable` for a tag never read (`EvalShapeTest.scala:40`) and a
+  `handleCont` for an effect never performed (`:41`). No expected value is written by hand: every
+  cell reads `law`, `lawState` or `runs`.
 - **C.** Exactly the four declared sites change, to `attachReentryToPending` at `Handler.scala:203`
   and `491` and `attachReentryToPending2` at `274` and `569`. Both helpers are `private[kyo] inline`
-  (at `394` and `421`), each beside the `attachReentry` it is the settled fast path of, and each is
-  the derivation's equation verbatim: pending goes to `attachReentry`, anything else passes through
-  cast. The two unfused `Continue` arms are untouched. Must-not-change holds: `attachReentry` and
-  `attachReentry2` are unchanged and are now callees only, `clauseDispatch`, `Suspend.crossing` and
-  every node class are absent from the diff, `Eval`'s two not-at-top arms are unchanged, and no
-  public signature moves.
-- **D.** Not attempted, as fork 3 rules. `EvalShapeTest.scala` is the only new file under
+  (at `394` and `421`), each beside the `attachReentry` it is the settled fast path of (`369`,
+  `402`), and each is the derivation's equation verbatim: pending goes to `attachReentry`, anything
+  else passes through cast. The two unfused `Continue` arms are untouched. Must-not-change holds:
+  `attachReentry` and `attachReentry2` are unchanged and are now callees only, and `clauseDispatch`,
+  `Suspend.crossing`, every node class and every public signature are absent from the diff, the only
+  occurrence of "crossing" on a changed line being a word in `reentering`'s scaladoc.
+- **D.** Not attempted, as fork 3 rules. `EvalShapeTest.scala` is the only file added under
   `kyo-kernel/shared/src/test`, and it contains no evaluator of its own. No partial interpreter is in
   the diff.
 - **E.** Four `ContextEffect.handle` calls change from two argument lists to one, three in
-  `contextReadsUnderBindings` and one in `contextRegionsPayEntryExit`. Those are the only four calls
-  the file makes, and none is left in the old shape.
+  `contextReadsUnderBindings` and one in `contextRegionsPayEntryExit`. Those are the only four the
+  file makes, and none is left in the old shape.
 - **F.** `Choice.run`'s clause becomes
   `Kyo.foreach(Chunk.from(input))(v => cont(v)).map(_.flattenChunk)`, one flatten and no inner `run`,
   and `Choice.scala` changes in that method only. `runStream` keeps its shape. `ChoiceBench` carries
   both rows over ten sequential binary choice points.
-- **H.** `Eval.scala:646` is `collect(step(Nested.unnest[Any](v)), Arrow.id, 0)`, which is the
-  derivation's equation. The claim it rests on checks out in the sources: `Arrow.Ensure`'s
-  two-argument apply delivers `apply(Nested.unnest(v))` on its settled arm (`Arrow.scala:257`), and
-  `Nested.unnest` removes one layer or is identity (`Nested.scala:21`), so the walk cannot lose a
-  value that was never boxed. `[Any]` is the spelling `answersLoop`'s settled arm already uses
-  (`Handler.scala:452`). `ensuring` is reached only with settled values, from `collect`'s two settled
-  arms. The `EvalTest` case carries the name the derivation quotes, goes through the budgeted
-  three-argument `Eval.release`, and asserts identity with the resource rather than equality. Nothing
-  on an evaluation path changed.
+- **H.** `Eval.scala:646` is `collect(step(Nested.unnest[Any](v)), Arrow.id, 0)`, the derivation's
+  equation, and the comment above it says why. `Arrow.Ensure`'s two-argument apply delivers
+  `apply(Nested.unnest(v))` on its settled arm, so the walk now matches the arm it stands in for.
+  The `EvalTest` case carries the name the derivation quotes, goes through the budgeted
+  three-argument `Eval.release`, and asserts identity with the resource rather than equality.
+  Nothing on an evaluation path changed.
 - **Candidate A.** The wrap is in the handler, in `run`, in both `handleContRepeated` overloads and
   nowhere else (`ArrowEffect.scala:217` and `272`). `reentered` is built once as a `val` on each
-  handler, is `outer` with `done` as identity and `repeated` true, and carries no `recover` on the
-  recovering overload. `reentering` is an `Arrow.Step` that defers a pending input in the same arm as
+  handler (`:215`, `:270`), is `outer` with `done` as identity and `repeated` true
+  (`Handler.scala:330`), and carries no `recover` on the recovering overload. `reentering`
+  (`Handler.scala:348`) is an `Arrow.Step` that defers a pending input in the same arm as
   `Arrow.apply` and, on a settled one, applies `Pending.handle(k(unnest(v)), reentered, ())`, which
   is the declared equation. `handleFirstRepeated` is absent from the diff. Neither rejected draft
   leaves a trace: `Handler.scala` has no `resumed` member, the new path carries no `escaping` gate,
-  and `Eval`'s repeated arm is unchanged.
+  and `Eval`'s repeated arm is unchanged. The scaladoc paragraph at `ArrowEffect.scala:189` to `193`
+  states the rule the derivation now declares at 291 to 294, and the recovering overload's scaladoc
+  does inherit it by reference (`:234`, "As [[handleContRepeated]], except a failure").
 - **Outside the kernel.** `Span.updated` raises before allocating, with `Chunk.updated`'s check shape
-  and message. `SpanBench.updated` walks a sixteen-element span with `(i + 1) & 15`, so no row
-  reaches the throw. `RearmSurvivorsTest` arms write before read and asserts the order in the log;
-  `git diff origin/main..HEAD -- kyo-net` is that one test file and `kyo-net`'s main sources are
-  empty in that diff, so `derivation.md:182` now holds as written.
+  and message byte for byte (`Chunk.scala:173` to `174`, `Span.scala:981` to `982`).
+  `SpanBench.updated` walks a sixteen-element span with `(i + 1) & 15`, so no row reaches the throw.
+  `RearmSurvivorsTest` arms write before read and asserts the order in the log.
 
 ## Forks
 
@@ -201,23 +187,40 @@ Fork 1 and fork 2 are declared as not touched: `Arrow.scala`'s `apply` overload 
 the diff, and no `PollTest` file appears in it. Fork 3 is ruled not attempted and no interpreter is
 present. Fork 4 is ruled A and only A is implemented: `handleContRepeated`'s signatures are
 byte-identical to the base apart from the `run` bodies, and `done` still runs once, which the 1060
-case pins against candidate B's 4060. Fork 5 is left open for the user and needs no code.
+case pins against candidate B's 4060. All five cases the fork names are in the block, with the
+values it quotes: 60, 1060, 180, 4, and a hundred thousand sequential operations. Fork 5 is left
+open for the user and needs no code.
+
+## Round 5's findings
+
+- **C21**, three tracked files under `kyo-kernel/.claude/skills/kernel/` declared nowhere, and a
+  derivation sentence denying they are there: **resolved as stated, superseded**. Piece G at 166 to
+  177 declares all three, and the denying sentence is gone. What the declaration says about the tree
+  is C26, and what it does not say about `76c675ea94` is C27.
+- **C22**, the `handleContRepeated` scaladoc paragraph undeclared: **resolved**. The cost paragraph
+  at `derivation.md:291` to `294` declares it, states its content, and names the inheritance by
+  reference, all three of which the code bears out.
+- **C23**, the piece enumeration not accounting for H: **resolved**. The sentence at 13 to 15 now
+  names E, F, G and H and places each; A at 17, B at 43, C at 88, E at 131, D at 140, H at 149 and
+  G at 166 are all under `## The pieces`, and F at 337 is under "What A costs" as stated.
+- **C24**, "`Eval` and `ContHandler` are unchanged" contradicted four sections later: **resolved**.
+  The claim at 290 is now scoped to the fix and names the exception in the same breath, which is the
+  shape that closed C18.
+- **C25**, F1 and F2 citing an evidence file that does not exist: **resolved**. Both rows now cite
+  `bench/base-rows-3.log`, `bench/tip-rows-3.log`, `bench/compare-base-vs-tip-f3.md` and
+  `bench/compare-rows-base-vs-tip.md`, all four present in the range, and each number I spot-checked
+  is in the file it cites: 480,121 against 720,141 B/op and 88,104 against 104,120 B/op on the
+  `gc.alloc.rate.norm` lines, and 99.780 against 636.051 us and 56.091 against 58.175 us in the
+  `-f 3` table. The queued rerun is now named as queued rather than as a file.
 
 ## Round 4's findings
 
 - **C16**, the `build.sbt` setting and the `EffectTrace` link declared only in the working tree:
-  **resolved**. Both declarations are committed at HEAD (`derivation.md:33` to `37`), and the
-  derivation on disk is identical to the derivation at HEAD.
-- **C17**, "The four pieces" heading five subsections: **partly resolved**. The heading is now
-  "## The pieces" and the added sentence at 13 to 14 places E and F. The same sentence omits H, which
-  is C23.
-- **C18**, "kyo-net is identical to main on this branch": **resolved**. The claim is now scoped to
-  sources and paired with the leaf ("kyo-net's sources are identical to main on this branch; this
-  leaf is the branch's one kyo-net change"), and that is what the diff against `origin/main` shows.
-  The same claim shape recurs for `Eval` at 274, which is C24.
-- **C19**, the re-entry rule pinned by a test and stated nowhere on the public surface: **resolved in
-  the code, undeclared in the document**. `ArrowEffect.scala:189` to `193` now states it on
-  `handleContRepeated`'s scaladoc, and it agrees with `Handler.reentered`'s doc and with
-  `BracketTest.scala:1205`. The derivation still declares no scaladoc change there, which is C22.
+  **resolved**, and still so at this tip. The derivation on disk is identical to the derivation at
+  HEAD.
+- **C17**, the heading undercounting the pieces: **resolved**. C23's fix completes it.
+- **C18**, the unscoped "kyo-net is identical to main" claim: **resolved**.
+- **C19**, the re-entry rule pinned by a test and stated nowhere on the public surface: **resolved**.
+  Stated at `ArrowEffect.scala:189` to `193`, pinned at `BracketTest.scala:1205`, and now declared.
 - **C20**, "the second row" not naming the row whose cost is quoted: **resolved**. The sentence at
-  302 to 304 now names `repeatedClausesPayReentry` and says "slower than the base leg".
+  322 to 324 names `repeatedClausesPayReentry` and says "slower than the base leg".
