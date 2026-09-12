@@ -451,9 +451,24 @@ The reviewer read the status report on 2026-09-12 and asked about each; the stat
    experiment, and the tip passes all of them under the same load. The mechanism this points at:
    a direct application of an `Arrow.apply(f)` arrow ran `f` without polling the safepoint (the
    override), and through the fused arm it polls, so a pending stop now lands at every settled
-   application, which is a change in when interrupts take effect, not a fast path lost. An
-   isolation probe (the experiment plus that one override restored) and the full `KernelBench`
-   class, tip against experiment in one session, are queued; their results go here.
+   application, which is a change in when interrupts take effect, not a fast path lost. The
+   measurement the reviewer asked for, `KernelBench` in full, tip against removal, same session,
+   `-f 1` (`bench/compare-tip-vs-noapply.md`, 52 rows, four suspects) and `-f 3` on every row
+   outside the band (`bench/compare-tip-vs-noapply-f3.md`): `effectfulIterationViaArrow` 118 us
+   against 387 us, 3.3 times, the `recursive` arrow's direct self-application now polling the
+   safepoint on every round so the budget is spent twice per round and the deferral lands at half
+   the period, as the analysis predicted; `deferBindUnderTrailingMap` +15.8% and
+   `deferBindUnderIdleHandler` +7.5%, `Effect.defer`'s direct application through the fused arm;
+   `bracketPerRound` +13.8%, the same for the bracket's acquire and its `Ensure`;
+   `trailingMapsStayLinear` and `fusionAfterSuspensionRunOnly` flat, so the head-and-tail default
+   holds the composed-continuation rows as predicted; `pureIterationViaArrow` 102 against 87 us,
+   faster, on the row that is always noisy. Every other row is inside the band. What the removal
+   costs, then: a semantic change in interrupt delivery that the core suite rejects, and a direct
+   application of a `recursive`, `Arrow.apply(f)`, `Effect.defer` or `Ensure` arrow paying the
+   fused arm. What it buys: one application law and the eight sites stating a computation as
+   data; not the `PollTest` ascriptions. The isolation probe (the experiment plus the
+   `Arrow.apply(f)` override alone) is queued and its core result goes here; the decision is the
+   reviewer's.
 2. **The `PollTest` ascriptions** are workarounds under the ruling of 2026-08-28 and are left in
    place. The reviewer asked whether they come from the handler method's signature: no signature
    changed. Compiled without them, on the tip and on the overload-removal experiment, the compiler
