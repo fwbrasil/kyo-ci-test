@@ -56,19 +56,23 @@ with a computation, typed over the computation and typed over `Any` (the two cas
 
 ### C. One re-entry path (kernel source)
 
-The rule "a loop clause's outcome re-enters its region through the region's continuation `k`" is
-one function, currently spelled four times in `Handler.scala`:
+A loop clause's outcome, once it is not a `Continue` the caller has already handled, re-enters its
+region by one rule, currently spelled four times in `Handler.scala`:
 
     reenter(k, outcome) =
-      outcome settled, Continue(ans), ans settled  ->  Loop.continue(k(ans))
-      outcome settled, Continue(ans), ans pending  ->  Loop.continue(ans.map(k))
-      outcome pending                               ->  attachReentry(k)(outcome)
-      otherwise                                     ->  outcome
+      outcome pending  ->  attachReentry(k)(outcome)
+      otherwise        ->  outcome
 
-Each piece already exists: `k(ans)` is `Arrow.apply`, `ans.map(k)` is the pending combinator,
-`attachReentry` is the deferred form of the first two, and pass-through is the identity. Nothing new
-is introduced; the four spellings become four calls to one `private[kyo] inline def reenter` on
-`Handler`, so the decision lives once and a wrong arm is wrong in one place.
+That tail is the shared piece. The unfused `answers` on `LoopHandler` and `LoopStateHandler` match
+`run(input)` and handle a settled `Continue` inline (`Loop.continue(k(ans))` for a settled answer,
+`Loop.continue(ans.map(k))` for a pending one) before reaching the tail; the fused walks
+`answersLoop` and `answersLoopState` handle their `Continue` inside the walk itself and reach the
+tail only for what the walk could not consume. So the four sites share the tail exactly and nothing
+else, and the tail is what becomes one `private[kyo] inline def reenter` (and `reenter2` for the
+state-carrying outcome). Each piece already exists: `attachReentry`, the `Pending` test, pass-through.
+The two unfused `Continue` arms stay as they are, which the earlier draft of this section got wrong
+by folding them in; the fused walks cannot take a `reenter` that covers `Continue` without being
+restructured, and restructuring a fused template is not a consolidation.
 
 `inline` because the fused templates are inlined at every `handleLoop`/`handleLoopState` site and
 their bytecode size is a design property (the 68-to-25-byte history in the skill). The expansion must
@@ -76,9 +80,9 @@ be the same shape it is today; the benchmark comparison is what proves that rath
 
 Surface, exactly:
 
-- `Handler.LoopHandler.answers`: the `run(input) match` arms become `reenter(k, run(input))`.
-- `Handler.LoopStateHandler.answers`: likewise with `reenter2`, the state-carrying twin.
-- `Handler.answersLoop`: the `case o => if o.isInstanceOf[Pending] ... attachReentry ...` block.
+- `Handler.LoopHandler.answers`: the `case o =>` tail becomes `reenter(k, o)`.
+- `Handler.LoopStateHandler.answers`: the `case o2 =>` tail becomes `reenter2(k, o2)`.
+- `Handler.answersLoop`: the `case o => result = if o.isInstanceOf[Pending] ... attachReentry ...` tail.
 - `Handler.answersLoopState`: likewise with `attachReentry2`.
 
 Must not change: `attachReentry` and `attachReentry2` themselves (they become callees, not callers),
