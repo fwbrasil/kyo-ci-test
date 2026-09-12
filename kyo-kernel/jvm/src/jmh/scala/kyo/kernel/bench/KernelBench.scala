@@ -557,6 +557,26 @@ class KernelBench:
         run(Kyo.collect(elements)(a => (if (a & 1) == 0 then Maybe(a) else Maybe.empty): Maybe[Int] < Any).map(_.sum + seed))
     end collectOverCollection
 
+    /** A region whose clause may resume more than once, answering each operation once: `suspensionBaseline` under
+      * `handleContRepeated`, so the delta to that row is what a multi-shot region costs per operation.
+      */
+    @Benchmark
+    def repeatedClausesPayReentry: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else ask.map(a => loop(i + a))
+        run(ArrowEffect.handleContRepeated(Tag[Ask], loop(seed - 1))([C] => (_, cont) => cont(1), a => a))
+    end repeatedClausesPayReentry
+
+    /** The same region entered once per operation, so entry dominates: `contextRegionsPayEntryExit` for a multi-shot region. */
+    @Benchmark
+    def repeatedRegionsPayEntry: Int =
+        def loop(i: Int): Int < Any =
+            if i > NarrowDepth then i
+            else ArrowEffect.handleContRepeated(Tag[Ask], ask)([C] => (_, cont) => cont(1), a => a).map(a => loop(i + a))
+        run(loop(seed - 1))
+    end repeatedRegionsPayEntry
+
 end KernelBench
 
 object KernelBench:
