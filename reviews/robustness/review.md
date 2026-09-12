@@ -264,6 +264,30 @@ either comparison, all inside their combined errors at `-f 1`, and their `-f 3` 
 `-f 3`, three legs back to back on those four rows: `bench/compare-base-vs-AC-f3.md` and
 `bench/compare-A-vs-AC-f3.md`, zero suspects in both.
 
+**The tip's final session.** The base (`dcadee780d`) against the tip (`dafad6640a`, the
+handler-side shape; the kernel's main sources at the package's tip differ from it by the scaladoc of
+edit 10 alone), same session, back to back, `-f 1`, all 52 rows: `bench/compare-base-vs-tip.md`.
+One suspect, `repeatedClausesPayReentry` at +589%, the regression the multi-shot table below
+prices. Every `handleCont` row, every fusion row and the three rows C's tails sit in are inside the
+band: `handleLoopAnswersInPlace` -1.0%, `handleLoopFusesContinuation` -1.6%,
+`statefulAnswersPaySuccessor` +0.6%, `contextRegionsPayEntryExit` +1.3%,
+`emittingClausesPayRegionRebuild` -1.1%, `bracketPerRound` +1.4%. Nine rows sit outside the band
+at `-f 1`, each inside its own error bars, and `-f 3` on those nine and the suspect, both legs back to
+back, is `bench/compare-base-vs-tip-f3.md`:
+
+| row | -f 1, base against tip | -f 3 |
+|---|---|---|
+| `pureIterationViaArrow` | -8.1%, errors of 48 and 39 percent | pending |
+| `collectOverCollection` | -7.2%, error of 7 percent on the base | pending |
+| `foreignCrossingsPayRotation` | -6.2%, error of 39 percent on the base | pending |
+| `nestedPayloadsUnwrapInMaps` | -5.8%, error of 45 percent on the base | pending |
+| `suspensionBaselineAltEnv` | +5.2%, error of 20 percent on the tip | pending |
+| `trailingMapsStayLinear` | +7.1%, error of 9 percent on the tip | pending |
+| `repeatedRegionsPayEntry` | +16.7%, error of 59 percent on the tip | pending |
+| `bracketAroundLoop` | +17.1%, error of 37 percent on the base | pending |
+| `continuationBodiesFuse` | +19.4%, error of 17 percent on the tip | pending |
+| `repeatedClausesPayReentry` | +589%, the suspect | pending |
+
 **The multi-shot rows, and the regression they show.** Three rows added by edit 22 enter a
 `handleContRepeated` region, which no row did before. Base against tip, `-f 3 -prof gc`,
 `bench/compare-rows-base-vs-AC.md`:

@@ -1,6 +1,11 @@
 # Provenance of the commits and benchmark classes this package names
 
 dcadee780d: the base leg of every benchmark comparison, the base `cdefdc9e60` plus edit 21 alone so
+dafad6640a: the tip leg of the final benchmark session, a local commit in the throwaway worktree
+`robustness-A` carrying the handler-side shape; the kernel's main sources, the benchmark sources,
+`Choice.scala` and `Span.scala` are those of the package's tip except the scaladoc paragraph of
+edit 10, which no benchmark compiles differently. Named as the tip of the numbers, not as a date.
+
 `KernelBench` compiles, a local commit in the throwaway worktree `robustness-base`; outside the
 range by construction and named as the base of the numbers, not as a date.
 
