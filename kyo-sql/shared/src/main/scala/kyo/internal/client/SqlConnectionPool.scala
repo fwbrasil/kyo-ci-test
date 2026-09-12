@@ -132,10 +132,10 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             // Unsafe: getOrCreateSlotChan and every pool operation require AllowUnsafe.
             // Unsafe: bridging to kyo-net ConnectionPool.
             Sync.Unsafe.defer(getOrCreateSlotChan(address, config.maxConnections)).flatMap { slotCh =>
-                // Take the slot and register its release in Scope.ensure BEFORE attempting to connect. If the
-                // connect fails, the surrounding Scope still closes and still returns the slot, which is what
-                // prevents a slot leak: without it, a connect failure after a server restart would strand the slot
-                // and eventually deadlock the pool.
+                // The take registers the slot's return in the caller's scope BEFORE anything attempts to connect;
+                // see `takeSlot`. If the connect fails, the surrounding Scope still closes and still returns the
+                // slot, which is what prevents a slot leak: without it, a connect failure after a server restart
+                // would strand the slot and eventually deadlock the pool.
                 Abort.run[SqlException](takeSlot(slotCh, config)).flatMap {
                     case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
                         Log.warn(
@@ -145,11 +145,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                     case Result.Panic(t)   => Abort.error(Result.Panic(t))
                     case Result.Success(()) =>
                         leaseClock.elapsed.flatMap(dur => metrics.recordPoolAcquireWait(dur.toMillis)).andThen {
-                            Scope.ensure {
-                                Sync.Unsafe.defer {
-                                    discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
-                                }
-                            }.andThen(acquireScoped(address, password, netKey, config, leaseClock))
+                            acquireScoped(address, password, netKey, config, leaseClock)
                         }
                 }
             }
@@ -365,9 +361,22 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                 ch
         )
 
-    private def takeSlot(slotCh: Channel[Unit], config: SqlConfig)(using Frame): Unit < (Async & Abort[SqlException]) =
-        val take: Unit < (Async & Abort[SqlException]) =
-            Abort.run[Closed](slotCh.take).flatMap {
+    /** Takes a permit and registers its return in the step the permit arrives in, on the fiber that takes it.
+      *
+      * Under a finite acquire timeout the take runs on the timeout's own fiber, so the registration has to happen there: a caller
+      * registering on receipt can be abandoned while the take is still in flight, and the permit its child then produces would be
+      * returned by nobody. The registration lands in the caller's scope, reached through the context, or runs detached when that
+      * scope has already closed.
+      */
+    private def takeSlot(slotCh: Channel[Unit], config: SqlConfig)(using Frame): Unit < (Async & Abort[SqlException] & Scope) =
+        val take: Unit < (Async & Abort[SqlException] & Scope) =
+            Abort.run[Closed](
+                Scope.acquireRelease(slotCh.take) { _ =>
+                    Sync.Unsafe.defer {
+                        discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
+                    }
+                }
+            ).flatMap {
                 case Result.Success(()) => ()
                 case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                 case Result.Panic(t)    => Abort.error(Result.Panic(t))
@@ -392,18 +401,10 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             // caller's whole program finished. `Scope.run` closes its scope as part of evaluating the body, so
             // the finalizer fires on that edge too.
             //
-            // `Scope.acquireRelease` around the take, so the return is registered in the step the take
-            // delivers the permit in: an interrupt landing between the take and a registration in a later
-            // step would otherwise leave the permit taken and returned by nobody, and an abandonment runs
-            // nothing of the steps it stopped in front of.
+            // The take registers the permit's return itself, in the step the permit arrives in and on the fiber
+            // that takes it; see `takeSlot`. This scope is what that registration lands in.
             Scope.run {
-                Abort.run[SqlException](
-                    Scope.acquireRelease(takeSlot(slotCh, config)) { _ =>
-                        Sync.Unsafe.defer {
-                            discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
-                        }
-                    }
-                ).flatMap {
+                Abort.run[SqlException](takeSlot(slotCh, config)).flatMap {
                     case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
                         Log.warn(
                             s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"

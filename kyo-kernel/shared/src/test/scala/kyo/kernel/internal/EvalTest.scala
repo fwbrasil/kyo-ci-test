@@ -616,6 +616,132 @@ class EvalTest extends AnyFreeSpec:
             assert(parked.eval == 22)
         }
 
+        // The computation the answer carries is produced under the regions the operation was issued under: a
+        // context read in it sees the crossed region's binding, not the default it would take where the clause is.
+        "a crossing answer carrying a computation is produced under the crossed regions" in {
+            var registered = Maybe.empty[Int]
+            val body: Int < Fetch =
+                ContextEffect.handleInheritable(Tag[Env], 7) {
+                    fetch.ensureMap(_.value).ensureMap { a =>
+                        registered = Maybe(a)
+                        a + 1
+                    }
+                }
+            val program: Int < Any =
+                ArrowEffect.handleCont(Tag[Fetch], body)(
+                    [C] =>
+                        (_, cont) =>
+                            requestStop()
+                            cont(Got(ContextEffect.suspend(Tag[Env], 0)))
+                    ,
+                    a => a
+                )
+            val parked = Eval.partial(program)
+            assert(registered == Maybe(7), s"the read was not produced under the crossed region, it saw $registered")
+            assert(parked.eval == 8)
+        }
+
+        // A throw in the step fused with a crossing answer unwinds through the crossed regions, which is why the
+        // step runs once the regions are reinstalled rather than where the clause is.
+        "a throw in the step fused with a crossing answer unwinds through the crossed regions" in {
+            val boom = new RuntimeException("boom")
+            var seen = Maybe.empty[Maybe[Throwable]]
+            val body: Int < Ask =
+                Bracket(Effect.defer(1))(_ => ask.ensureMap[Int, Any](_ => throw boom))((_, outcome) => seen = Maybe(outcome))
+            val program: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], body)(
+                    [C] =>
+                        (_, cont) =>
+                            requestStop()
+                            cont(21)
+                    ,
+                    a => a
+                )
+            val thrown = intercept[RuntimeException](Eval.partial(program))
+            assert(thrown eq boom)
+            assert(seen.exists(_.exists(_ eq boom)), s"the bracket saw $seen")
+        }
+
+        // At the top the clause applies the operation's continuation itself, so the fused step runs before the
+        // stop is honored on the clause's answer.
+        "a settled answer at the top runs its fused step before a pending stop parks" in {
+            var registered = Maybe.empty[Int]
+            var later      = false
+            val body: Int < Ask =
+                ask.ensureMap { a =>
+                    registered = Maybe(a)
+                    Effect.defer {
+                        later = true
+                        a + 1
+                    }
+                }
+            val program: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], body)(
+                    [C] =>
+                        (_, cont) =>
+                            requestStop()
+                            cont(21)
+                    ,
+                    a => a
+                )
+            val parked = Eval.partial(program)
+            assert(registered == Maybe(21), s"the step fused with the answer did not run, it saw $registered")
+            assert(!later, "the deferral after the fused step ran under the stop")
+            assert(parked.eval == 22)
+        }
+
+        "a loop clause's answer runs its fused step before a pending stop parks" in {
+            var registered = Maybe.empty[Int]
+            var later      = false
+            val body: Int < Ask =
+                Bracket(Effect.defer(1)) { _ =>
+                    ask.ensureMap { a =>
+                        registered = Maybe(a)
+                        Effect.defer {
+                            later = true
+                            a + 1
+                        }
+                    }
+                }((_, _) => ())
+            val program: Int < Any =
+                ArrowEffect.handleLoop(Tag[Ask], body)(
+                    [C] =>
+                        _ =>
+                            requestStop()
+                            Loop.continue(21)
+                    ,
+                    a => a
+                )
+            val parked = Eval.partial(program)
+            assert(registered == Maybe(21), s"the step fused with the answer did not run, it saw $registered")
+            assert(!later, "the deferral after the fused step ran under the stop")
+            assert(parked.eval == 22)
+        }
+
+        // The fused step is where a stop can be requested without splitting anything: what it registered stands,
+        // and the first poll after it parks.
+        "a stop requested inside the fused step parks at the next poll, after it" in {
+            var registered = Maybe.empty[Int]
+            var later      = false
+            val body: Int < Ask =
+                Bracket(Effect.defer(1)) { _ =>
+                    ask.ensureMap { a =>
+                        registered = Maybe(a)
+                        requestStop()
+                        Effect.defer {
+                            later = true
+                            a + 1
+                        }
+                    }
+                }((_, _) => ())
+            val program: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(21), a => a)
+            val parked = Eval.partial(program)
+            assert(registered == Maybe(21))
+            assert(!later, "the deferral after the fused step ran under the stop")
+            assert(parked.eval == 22)
+        }
+
         "parks on a pending stop and the parked value resumes to the same answer" in {
             var afterRan = false
             val body: Int < Ask =
@@ -1842,6 +1968,51 @@ class EvalTest extends AnyFreeSpec:
             val v: Int < Fetch =
                 fetch.ensureMap(_.value).ensureMap(a => Bracket.ensuring(_ => released = Maybe(a))(Effect.defer(a)))
             Eval.release(v, walked, Tag[Fetch])([C] => _ => Maybe(Got(reading(21))))
+            assert(released == Maybe(21), s"the release saw $released")
+        }
+
+        // The remainder a fiber's abandonment hands over: the clause stopped and re-raised its operation, as the
+        // boundary does at a join, so the park carries the clause's region and stands at the re-raised operation,
+        // whose continuation crosses back into the regions it was issued under.
+        "a park at a crossing operation whose answer arrived registers what the answer produced" in {
+            var released = Maybe.empty[Int]
+            val body: Int < Ask =
+                Bracket(Effect.defer(1)) { _ =>
+                    ask.ensureMap(a => Bracket.ensuring(_ => released = Maybe(a))(Effect.defer(a + 1)))
+                }((_, _) => ())
+            val program: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], body)(
+                    [C] =>
+                        (input, cont) =>
+                            requestStop()
+                            ArrowEffect.suspendWith[Any](Tag[Ask], input)(r => cont(r))
+                    ,
+                    a => a
+                )
+            val parked = Eval.partial(program)
+            assert(parked.isInstanceOf[Park[?, ?]])
+            Eval.release(parked, walked, Tag[Ask])([C] => _ => Maybe(21))
+            assert(released == Maybe(21), s"the release saw $released")
+        }
+
+        "a park at a crossing operation whose answer carries a computation registers the value it produces" in {
+            var released = Maybe.empty[Int]
+            val body: Int < Fetch =
+                Bracket(Effect.defer(1)) { _ =>
+                    fetch.ensureMap(_.value).ensureMap(a => Bracket.ensuring(_ => released = Maybe(a))(Effect.defer(a + 1)))
+                }((_, _) => ())
+            val program: Int < Any =
+                ArrowEffect.handleCont(Tag[Fetch], body)(
+                    [C] =>
+                        (input, cont) =>
+                            requestStop()
+                            ArrowEffect.suspendWith[Any](Tag[Fetch], input)(r => cont(r))
+                    ,
+                    a => a
+                )
+            val parked = Eval.partial(program)
+            assert(parked.isInstanceOf[Park[?, ?]])
+            Eval.release(parked, walked, Tag[Fetch])([C] => _ => Maybe(Got(reading(21))))
             assert(released == Maybe(21), s"the release saw $released")
         }
     }

@@ -182,6 +182,52 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         end for
     }
 
+    // The supported shape for a resource produced on one fiber and owned by another: the producing fiber registers
+    // the release in the step the value arrives in, into the owner's scope, which it reaches through the context.
+    // Here the owner is abandoned once the value exists and before it resumed.
+    "the producing fiber's registration returns the permit when the owner is abandoned after the value" in {
+        for
+            permits    <- Channel.init[Unit](1)
+            _          <- permits.put(())
+            registered <- Latch.init(1)
+            parent <- Fiber.initUnscoped {
+                Scope.run {
+                    Async.timeout(1.hour) {
+                        Scope.acquireRelease(permits.take)(_ => permits.put(())).andThen(registered.release)
+                    }.andThen(Async.never)
+                }
+            }
+            _ <- registered.await
+            _ <- parent.interrupt
+            _ <- parent.getResult
+            _ <- assertEventually(Abort.run[Closed](permits.size).map(_.exists(_ == 1)))
+        yield succeed
+        end for
+    }
+
+    // The same shape with the owner's scope already closed when the value arrives: the registration lands on a
+    // closed scope, which runs it detached, and the permit still comes back.
+    "the producing fiber's registration returns the permit when the owner's scope closed first" in {
+        for
+            permits <- Channel.init[Unit](1)
+            _       <- permits.put(())
+            gate    <- Promise.init[Unit, Any]
+            parent <- Fiber.initUnscoped {
+                Scope.run {
+                    Async.timeout(1.hour) {
+                        gate.get.andThen(Scope.acquireRelease(permits.take)(_ => permits.put(())))
+                    }.andThen(Async.never)
+                }
+            }
+            _ <- assertEventually(gate.waiters.map(_ >= 1))
+            _ <- parent.onComplete(_ => gate.completeUnitDiscard)
+            _ <- parent.interrupt
+            _ <- parent.getResult
+            _ <- assertEventually(Abort.run[Closed](permits.size).map(_.exists(_ == 1)))
+        yield succeed
+        end for
+    }
+
     "Scope.run waits for a scoped fiber to release the bracket it is inside" in {
         // The child must hold the bracket when the scope starts exiting, or the release happens for the wrong
         // reason. It parks rather than spinning: the region is installed before the body runs.
