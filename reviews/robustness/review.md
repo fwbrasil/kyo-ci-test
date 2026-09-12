@@ -179,8 +179,8 @@ Benchmarks. `KernelBench`, 49 rows, is the class; `package-check.sh` confirms it
 `handleLoopFusesContinuation`, `statefulAnswersPaySuccessor`, and every fusion row, since the tails
 are inside the fused templates.
 
-Base against the fix, `dcadee780d` (base plus edit 16 alone, so the class compiles) against
-`a61fbf0ca6`, same session, back to back, `-f 1`, all 49 rows: `bench/compare-base-vs-A.md`. No
+A first round, the base (`dcadee780d`, the base plus edit 16 alone, so the class compiles) against
+the fix alone, same session, back to back, `-f 1`, all 49 rows: `bench/compare-base-vs-A.md`. No
 `handleCont` row outside the 5% band. Three rows outside it, none on a path the fix touches:
 
 | row | -f 1 | -f 3 |
@@ -191,8 +191,20 @@ Base against the fix, `dcadee780d` (base plus edit 16 alone, so the class compil
 
 `-f 3` on those three, both legs back to back: `bench/compare-base-vs-A-f3.md`, zero suspects.
 
-The fix against C (edits 10 to 15) is the leg that attributes C alone, one variable; it is reported in
-this section as `bench/compare-A-vs-AC.md` once run.
+Three legs in one session, back to back, `-f 1`, 49 rows each: the base (`dcadee780d`, the base
+plus edit 16 so the class compiles), the fix alone (A, edits 3 to 9), and the tip (edits 10 to 15
+added). The fix against the tip attributes C alone, one variable (`bench/compare-A-vs-AC.md`): zero
+suspects; the rows the tails sit in, `handleLoopAnswersInPlace` +0.4%, `handleLoopFusesContinuation`
++0.0%, `statefulAnswersPaySuccessor` -0.9%, and every fusion row within 2%. The base against the tip
+is the change's number (`bench/compare-base-vs-AC.md`): zero suspects. Rows outside the band in
+either comparison, all inside their combined errors at `-f 1`, and their `-f 3` confirmation:
+
+| row | base against tip, -f 1 | fix against tip, -f 1 | -f 3 |
+|---|---|---|---|
+| `pureIterationViaArrow` | -6.8% | -6.3% | pending |
+| `foreignCrossingsAnsweredInPlace` | -6.2% | inside | pending |
+| `continuationBodiesFuse` | -5.9% | -5.9% | pending |
+| `bracketEnsuringOnly` | +12.0% | inside | pending |
 
 CI, on `fwbrasil/kyo-ci-test`: the full matrix (linux-x64, linux-arm64, windows-x64; JVM, JS, Native,
 Wasm), run 34672876184 on the gated-matrix commit, found every JS and Wasm job dying in `kyo-data`'s
