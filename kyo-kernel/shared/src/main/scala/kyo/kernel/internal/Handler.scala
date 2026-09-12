@@ -88,7 +88,8 @@ end Handler
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
 
         /** The handler a repeated continuation re-enters through: this handler with `done` as identity, so a re-entered region yields the
-          * body's value and `done` still runs once, at the outer region's end. Only a handler that repeats defines one.
+          * body's value and `done` still runs once, at the outer region's end. Only a handler whose clause resumes inside the region
+          * defines one; a holding handler hands its continuation out, and its holder re-establishes the region, so it is never asked.
           */
         def resumed: ContHandler[I, O, E, A, A, S] = bug(s"resumed on a handler that does not repeat: $this")
 

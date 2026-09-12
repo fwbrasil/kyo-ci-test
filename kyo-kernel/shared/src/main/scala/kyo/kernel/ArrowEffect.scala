@@ -974,7 +974,6 @@ object ArrowEffect:
             case _: Pending[?, ?] =>
                 val h =
                     new Handler.ContHandler[I, O, E, A | First, B, S & S2]:
-                        outer =>
                         def tag = effectTag
                         def run[X](input0: I[X], cont0: Arrow[O[X], A | First, E & S & S2]) =
                             new FirstSuspended[I, O, E, A, E & S]:
@@ -986,14 +985,6 @@ object ArrowEffect:
                         // the region owes must survive each application, not be settled by the first
                         override def escaping = true
                         override def repeated = true
-                        override val resumed: Handler.ContHandler[I, O, E, A | First, A | First, S & S2] =
-                            new Handler.ContHandler[I, O, E, A | First, A | First, S & S2]:
-                                def tag                                                             = effectTag
-                                def run[X](input0: I[X], cont0: Arrow[O[X], A | First, E & S & S2]) = outer.run(input0, cont0)
-                                def done(state: Unit, r: A | First)                                 = r
-                                override def escaping                                               = true
-                                override def repeated                                               = true
-                                override def resumed                                                = this
 
                 new Pending.HandleArrow[Unit, E, A | First, B, B, S & S2]:
                     override def frame = _frame

@@ -113,8 +113,9 @@ import scala.collection.mutable.ArrayBuffer
                                         val raw =
                                             if atTop then kyo.cont.chain(contA.chain(contB))
                                             else kyo.crossing(entries, contA.chain(contB))
-                                        // a continuation the clause may resume more than once re-enters the region on each application
-                                        val continuation = if handler.repeated then handler.reentering(raw) else raw
+                                        // a continuation a clause may resume more than once inside the region re-enters it on each
+                                        // application; a holding handler hands its continuation out, and the holder re-establishes the region
+                                        val continuation = if handler.repeated && !handler.escaping then handler.reentering(raw) else raw
                                         val result       = handler.answering(kyo.input, continuation, kyo, stack)
                                         Debugger.onResult(result)
                                         // The stop is honored on the clause's answer: one that re-raises the
