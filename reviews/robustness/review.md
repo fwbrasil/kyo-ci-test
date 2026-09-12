@@ -302,12 +302,44 @@ Wasm, the out-of-bounds case included. The run after that fix, 34676060392, per 
 | linux-arm64 Native | failed | `kyo-ffi-it`'s `ItStructPtrTest`, the same exception class, the same attribution |
 | windows-x64 JVM | in progress at packaging | |
 
-The tip as it stands has not run through the matrix yet; the runs above are on the commit before
-the handler-side shape, which changes kernel internals only.
+The run on the handler-side commit, 34683181614, on every job that concluded at packaging:
 
-**The sweep**, every sbt project's suite one at a time on the tree as of the sweep's start commit,
-is reported in its own section below once it completes; the modules it touches through the kernel
-are re-verified by the suites in the table above on the tip.
+| job | outcome | what it is |
+|---|---|---|
+| windows-x64 JS | passed | |
+| linux-x64 JS, linux-arm64 JS, linux-x64 Wasm, linux-arm64 Wasm | failed | the same `SqlClientInterruptTest` hang, unchanged |
+| linux-x64 Native, linux-arm64 Native | failed | `kyo-ffi-it`'s `ItStructPtrTest` on both, the same `NoSuchElementException`; which of the two ffi tests fails first varies between runs. Locally on macOS arm64 the suite aborts the process at `ItCallbackExceptionTest`; with the callback reporter's `printStackTrace` removed both pass, and with the frames resolved and printed one by one before `printStackTrace` both pass as well, the trace stopping at `_isort` after eight frames. The base's Native job fails the same way and main's commit passes it on this fork. Open: Scala Native's trace printing for an exception captured inside a C callback frame, on this branch's stack; the next step is a reproduction without kyo |
+| linux-x64 JVM | failed | `kyo-tasty`'s `CollectionInvariantsTest`, a `StackOverflowError` on a scheduler worker bouncing between the scheduler's boundary arrow and a fused suspension node; the suite passes locally on the tip (7 passed) and in the sweep (1706), so this is a CI-only symptom of the branch's core, recorded with its trace |
+| linux-arm64 JVM | failed | `kyo-doctest`'s `CorpusTest`, one leaf stuck two minutes with a worker deep in `IOPromise.removeInterrupt`; the suite passes locally (144); the same attribution as the row above |
+| windows-x64 JVM | in progress at packaging | |
+
+**The sweep**, every sbt project's suite one at a time, `reviews/robustness/sweep/run.sh` over
+`modules.txt` and `noncross.txt`, results in `reviews/robustness/sweep/results.tsv`. It ran on the
+tree as the sweep started, which is the tip minus the handler-side shape of edits 5 to 7, the two
+test cases of edits 8 and 9, the third benchmark row and the build runner's step; those are
+verified on the tip by the suites in the table above, and the working copies of the files they
+touch were pinned to the sweep's commit for its duration so it saw one tree throughout.
+
+| | count |
+|---|---|
+| projects run | 83 |
+| leaves passed | 34,211 |
+| leaves failed | 39, all outside the kernel |
+
+The eight projects that did not end green, each read to its cause:
+
+| project | what happened |
+|---|---|
+| kyo-aeron | the C shim links against a staged libaeron this machine lacked; staged with `kyo-aeron/scripts/build-aeron.sh darwin-aarch64` and re-run: 143 passed, 0 failed |
+| kyo-ai | 642 passed, 37 failed: 25 are the Codex CLI harness answering `systemError` on every turn, 3 are provider authentication against live endpoints, the rest are provider timeouts; live-service suites the CLI and keys on this machine let run, and CI's JVM jobs pass the module |
+| kyo-pod | 992 passed, 2 failed, both `ContainerItTest` under the `[docker]` runtime scope with `ContainerMissingException`; the podman scope passes |
+| kyo-test-sbt-publish | publishes every module and hit the kernel's doc build failing on the benchmark classes in the main class directory, the defect the `Jmh / classDirectory` change fixes; re-run after that fix reported below |
+| kyo-compat-tests | a stale target compiled by another Scala version (`TASTy signature has wrong version`); clean re-run reported below |
+| kyo-ffi-plugin | its scripted tests publish the kernel and met the same doc failure, plus one source the formatter rejected; re-run reported below |
+| kyo-settings, kyo-website-bundle | not sbt projects; the lists carried two names that resolve to nothing |
+
+Every other project passed, kyo-tasty and kyo-doctest among them (1706 and 144 leaves), the two
+whose CI-only failures on the final-code run are in the CI table.
 
 ## Open rulings
 
