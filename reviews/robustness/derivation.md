@@ -333,8 +333,8 @@ Three rows added to `KernelBench` enter a `handleContRepeated` region, which no 
 through the recovering overload, whose handler and re-entered handler are their own classes, so the
 flags table has a number for that allocation site rather than a borrowed one) and
 `repeatedClausesPayReentry` (`suspensionBaseline`'s program under a repeated handler, ten thousand
-operations each resumed once). Base against tip with the allocation profiler: the re-entered handler costs 16 bytes and 2.1 ns per region
-entry; the re-entry costs 24 bytes and 54 ns per resumption, which makes `repeatedClausesPayReentry` 6.4 times
+operations each resumed once). Base against tip with the allocation profiler: the re-entered handler costs 16 bytes and 3.8 ns per region
+entry (1.1 ns through the recovering overload); the re-entry costs 24 bytes and 54 ns per resumption, which makes `repeatedClausesPayReentry` 6.3 times
 slower than the base leg (the earlier shape, with the wrap in `Eval`, cost 64 bytes and 61 ns, 7.2 times). The mechanism is the design: every application of the continuation enters a
 region, and a region's entry and exit is what the existing rows `contextRegionsPayEntryExit` and
 `emittingClausesPayRegionRebuild` measure at 73 and 89 ns. There is no cheaper frame that would do:

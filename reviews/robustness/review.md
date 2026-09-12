@@ -231,8 +231,8 @@ category from the cast ladder, a measurement, a `moved` provenance or `REMOVE`. 
 
 | id | site | added line | class | verdict |
 |----|------|------------|-------|---------|
-| F1 | Handler.scala:333 | `new ContHandler[I, O, E, A, A, S]:` | allocation | measured on this shape: the re-entered handler, built once per region entry by `Handler.reentered(outer)` and captured by the handler's `val`. Allocation, exact, from the profiler runs' `gc.alloc.rate.norm` lines (`bench/base-rows-3.log`, `bench/tip-rows-3.log`, base against tip, `-f 3 -prof gc`): `repeatedRegionsPayEntry` and `repeatedRegionsPayEntryRecovering` (a `handleContRepeated` region per operation, 1000 per invocation, through each overload) 88,104 B/op against 104,120 B/op on both rows, 16 bytes per region, the one object. Time, same session both legs, `-f 3`, `bench/compare-base-vs-tip-f3.md`: `repeatedRegionsPayEntry` 56.1 us against 58.2 us, +3.7%, 2.1 ns per region. The recovering row's time: +1.3% at `-f 1` in the full-class session (`bench/compare-base-vs-tip.md`) and 59.0 us against 60.5 us, +2.6%, in the profiler session (`bench/compare-rows-base-vs-tip.md`), whose base leg is discounted on its own error bars (`repeatedClausesPayReentry` there reads 151.3 ± 59.5 us against the clean 99.8 ± 0.3; a compile of another worktree overlapped that leg, outside this package's files); a clean rerun of the three rows is queued and will replace that one cell |
-| F2 | Handler.scala:352 | `new Arrow.Step[O[X0], A, E & S]:` | allocation | measured on this shape, and the number is a regression on a row no consumer has: one arrow per suspension a repeated handler answers, built in the handler's `run`, and one region entered per application. `repeatedClausesPayReentry` (`suspensionBaseline` under `handleContRepeated`, 10,000 operations, each resumed once). Allocation, exact, from the profiler runs' `gc.alloc.rate.norm` lines (`bench/base-rows-3.log`, `bench/tip-rows-3.log`): 480,121 B/op against 720,141 B/op, 24 bytes per operation (64 on the earlier shape, whose wrap lived in `Eval`: 1,120,181 B/op in `bench/AC-rows.log` against the same base in `bench/base-rows.log`). Time, same session both legs, `-f 3`, `bench/compare-base-vs-tip-f3.md`: 99.8 ± 0.3 us against 636.1 ± 7.4 us, 54 ns per operation, 6.4 times. The mechanism, the consumer's numbers and the decision are in the package's benchmark section and its open ruling 5; this row is not closed by this table |
+| F1 | Handler.scala:333 | `new ContHandler[I, O, E, A, A, S]:` | allocation | measured on this shape: the re-entered handler, built once per region entry by `Handler.reentered(outer)` and captured by the handler's `val`. One session, both legs back to back on an idle machine, `-f 3 -prof gc`, base against tip: time in `bench/compare-rows-base-vs-tip-clean.md`, allocation from the `gc.alloc.rate.norm` lines of `bench/base-rows-4.log` and `bench/tip-rows-4.log`. `repeatedRegionsPayEntry` (a `handleContRepeated` region per operation, 1000 per invocation): 55.0 us against 58.8 us, +6.8%, 3.8 ns per region; `repeatedRegionsPayEntryRecovering` (the same through the recovering overload): 58.0 us against 59.2 us, +2.0%, 1.1 ns per region; both rows 88,104 B/op against 104,120 B/op, 16 bytes per region, the one object. The full-class session agrees (`bench/compare-base-vs-tip-f3.md`: `repeatedRegionsPayEntry` +3.7%) |
+| F2 | Handler.scala:352 | `new Arrow.Step[O[X0], A, E & S]:` | allocation | measured on this shape, and the number is a regression on a row no consumer has: one arrow per suspension a repeated handler answers, built in the handler's `run`, and one region entered per application. `repeatedClausesPayReentry` (`suspensionBaseline` under `handleContRepeated`, 10,000 operations, each resumed once), the same session as F1: 101.4 ± 1.1 us against 637.4 ± 10.8 us, 54 ns per operation, 6.3 times (`bench/compare-rows-base-vs-tip-clean.md`); 480,121 B/op against 720,140 B/op, 24 bytes per operation (`bench/base-rows-4.log`, `bench/tip-rows-4.log`; 64 on the earlier shape, whose wrap lived in `Eval`: 1,120,181 B/op in `bench/AC-rows.log` against the same base in `bench/base-rows.log`). The full-class session's `-f 3` confirmation agrees, 99.8 against 636.1 us, 6.4 times (`bench/compare-base-vs-tip-f3.md`). The mechanism, the consumer's numbers and the decision are in the package's benchmark section and its open ruling 5; this row is not closed by this table |
 | F3 | Handler.scala:356 | `case p: Pending[O[X0], S3] @unchecked => Effect.defer(p, this, cont2)` | cast | erasure-forced: a typed pattern binding at the arm's type, the runtime test being `Pending` alone; the same arm as `Arrow.apply`'s and `Suspend.crossing`'s |
 | F4 | Handler.scala:399 | `else outcome.asInstanceOf[Outcome[A < (E & S), B < S] < S]` | cast | moved: the pass-through cast `LoopHandler.answers` and `answersLoop` each carried at their tail, written once. Representation assertion: the two outcome types differ only in the `Continue` payload, and a settled outcome reaching the tail is not a `Continue` |
 | F5 | Handler.scala:426 | `else outcome.asInstanceOf[Outcome2[State, A < (E & S), B < S] < S]` | cast | moved: as F4, for the state-carrying outcome |
@@ -326,21 +326,20 @@ inside their errors, and the suspect confirmed at a tight 6.4 times:
 | `repeatedClausesPayReentry` | +589%, the suspect | +537%, 99.8 ± 0.3 against 636.1 ± 7.4 us: 54 ns per resumption, 6.4 times, the priced row |
 
 **The multi-shot rows, and the regression they show.** Three rows added by edit 22 enter a
-`handleContRepeated` region, which no row did before. Base against tip, `-f 3 -prof gc`,
-allocation from the profiler runs' `gc.alloc.rate.norm` lines (`bench/base-rows-3.log`,
-`bench/tip-rows-3.log`; the earlier shape's session, `bench/compare-rows-base-vs-AC.md`, is kept for
-the derivation's record). Time is the same-session `-f 3` confirmation above,
-`bench/compare-base-vs-tip-f3.md`, for the two rows it carries; the recovering row's time is the
-profiler session's, whose base leg ran beside a compile, and a clean rerun of the three rows is
-queued for that one cell:
+`handleContRepeated` region, which no row did before. Base against tip, one session, both legs
+back to back on an idle machine, `-f 3 -prof gc`: time in `bench/compare-rows-base-vs-tip-clean.md`,
+allocation from the `gc.alloc.rate.norm` lines of `bench/base-rows-4.log` and `bench/tip-rows-4.log`
+(the earlier shape's session, `bench/compare-rows-base-vs-AC.md`, is kept for the derivation's
+record; the first profiler session on this shape, `bench/compare-rows-base-vs-tip.md`, had its base
+leg disturbed and is superseded by this one):
 
 | row | base | tip | per unit |
 |---|---|---|---|
-| `repeatedRegionsPayEntry`, 1000 regions of one operation | 56.1 us, 88,104 B | 58.2 us, 104,120 B | +2.1 ns and 16 B per region: the re-entered handler |
-| `repeatedRegionsPayEntryRecovering`, the same through the recovering overload | 59.0 us, 88,104 B | 60.5 us, 104,120 B | +1.5 ns and 16 B per region |
-| `repeatedClausesPayReentry`, one region of 10,000 operations | 99.8 us, 480,121 B | 636.1 us, 720,141 B | +54 ns and 24 B per resumption: one region entered per application |
+| `repeatedRegionsPayEntry`, 1000 regions of one operation | 55.0 us, 88,104 B | 58.8 us, 104,120 B | +3.8 ns and 16 B per region: the re-entered handler |
+| `repeatedRegionsPayEntryRecovering`, the same through the recovering overload | 58.0 us, 88,104 B | 59.2 us, 104,120 B | +1.1 ns and 16 B per region |
+| `repeatedClausesPayReentry`, one region of 10,000 operations | 101.4 us, 480,121 B | 637.4 us, 720,140 B | +54 ns and 24 B per resumption: one region entered per application |
 
-The third is a regression of 6.4 times on that row, and nobody has accepted it. The mechanism is
+The third is a regression of 6.3 times on that row (6.4 in the full-class session's `-f 3` confirmation), and nobody has accepted it. The mechanism is
 the design: every application of a repeated handler's continuation enters a region, and a region's
 entry and exit is what `contextRegionsPayEntryExit` and `emittingClausesPayRegionRebuild` already
 measure at 73 and 89 ns per region, so the row sits at the floor, not above it. No cheaper frame
