@@ -203,7 +203,7 @@ Verification, on the tip with C:
 | `kyo-kernelJVM/test` | 1836 passed, 0 failed, 5 canceled (the `DebuggerTest` sessions, which cancel when the debugger is compiled out, as before); 1510 at the base plus the 320 cells, the five cases of edit 8 and the case of edit 9 |
 | `kyo-preludeJVM/test` and `kyo-coreJVM/test` | 2665 passed, 0 failed, on the tip with edit 18, `ChoiceTest` 33 passed |
 | `EvalShapeTest` | 320 cells, all green; the multi-shot cells hang at the base |
-| `kyo-netJVM/testOnly RearmSurvivorsTest` | 2 passed with edits 21 and 22, on this machine; the arm64 container run is in the CI section |
+| `kyo-netJVM/testOnly RearmSurvivorsTest` | 2 passed with edits 21 and 22, on this machine and in the linux-arm64 CI container (`scripts/build.sh --env podman-ci --arch arm`, the environment the failure came from), the ordering assertion included |
 | `testKyo --dry-run --phase compile-test --modules kyo-kernelJVM,kyo-dataJVM JVM` | the pass reads `kyo-dataJVM/Test/compile; kyo-kernelJVM/Test/compile; kyo-kernelJVM/Jmh/compile`, the benchmark compile for the module that has one and not for the one that does not |
 | `SpanTest` | 237 passed on each of JVM, JS, Wasm and Native after edit 20 |
 
@@ -295,7 +295,7 @@ Wasm, the out-of-bounds case included. The run after that fix, 34676060392, per 
 | job | outcome | what it is |
 |---|---|---|
 | windows-x64 JS | passed | the Span fix on the third OS |
-| linux-arm64 JVM | passed | without edit 21, so the kyo-net race is intermittent, as diagnosed |
+| linux-arm64 JVM | passed | without edit 21, so the kyo-net race is intermittent, as diagnosed; with edits 21 and 22 the leaf passes in the linux-arm64 CI container run locally, the order pinned |
 | linux-x64 JVM | failed | `kyo-ui`'s `ReactiveUITeardownTest`, an `assertEventually` timing assertion; the module is identical to main, and upstream main's own runs failed the same test twice this week, on linux-arm64 and windows-arm64 |
 | linux-x64 JS, linux-arm64 JS, linux-x64 Wasm, linux-arm64 Wasm | failed | `kyo-sql-postgres`'s `SqlClientInterruptTest`, the leaf "an interrupted connect strands no descriptor" stuck for two minutes, and its sibling "interrupting the statement's fiber stops it" passing only at the thirty-second query timeout: on JS an interrupt does not reach a fiber parked on the socket. Reproduced locally on JS at the tip and at the branch's base, so it predates this work; main's JS jobs pass it. A bisect between main and the base, eleven steps of the leaf on JS, ends at the merge of main into the branch (9f0b6d38b9, the three commits after it not building until the kyo-net compile fix): the leaf came from main's #1933 in that merge, the branch before the merge passes, main alone passes, and their combination hangs, which puts the defect in main's new close and interrupt paths meeting the branch's own kernel and core on JS. Open; the next step is the branch's interrupt delivery to a promise the JS driver holds, compared against main's |
 | linux-x64 Native | failed | `kyo-ffi-it`'s `ItCallbackExceptionTest`, a `NoSuchElementException` from inside a C callback's exception report; `kyo-ffi` is identical to main, main's own commit passes this job on this fork, and the branch fails it on both runs, so it belongs to the branch's kernel line on Native; the base's Native job is running to date it |
