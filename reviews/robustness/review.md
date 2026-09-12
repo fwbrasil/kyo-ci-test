@@ -426,10 +426,26 @@ The reviewer read the status report on 2026-09-12 and asked about each; the stat
    static argument type picks the semantics. Evidence: the `Batch` regression, the two `PollTest`
    ascriptions, and the contract cases in `ArrowEffectTest`. The matrix in B does not reach the
    pair: its scenarios type their continuations. Declared, not touched. The reviewer asked whether
-   the version that takes a plain value can be removed and what it would cost; a static analysis of
-   every call site is in `lenses/fork1-apply-pair.md`, and the measurement it names (the
-   `KernelBench` rows whose hot path applies a settled continuation) is the next step, outside this
-   package's range.
+   the version that takes a plain value can be removed and what it would cost ("let's try and check
+   perf"). A static analysis of every call site is in `lenses/fork1-apply-pair.md`; the experiment
+   itself lives on the throwaway branch `robustness-noapply`, off this tip, and is outside this
+   package's range. What it found so far, each with its evidence: the kernel compiles without the
+   overload and its six overrides, with the pending overload keeping the settled body
+   (`this.head(v, this.tail)`; with `this(v, Arrow.id)` instead, eleven `EffectTrace` cases fail,
+   the trace losing the frames of steps applied through a composed cont). Eight sites must state
+   the type of a computation handed to a continuation typed over it, with `Kyo.lift`
+   (`Batch.flush`, six kernel test cases, IOTask's null answer as an ascription), because the lift's
+   lint refuses a value whose type is already pending; the base delivered the same payload through
+   the default body's own lift, so semantics are unchanged there. The `PollTest` ascriptions stay
+   (ruling 2). The kernel suite passes in full (1836) and the prelude suite too (844); the core
+   suite does not: the interrupt invariants of the semaphore and the rate limiter, `Signal`'s
+   combinators, `pipeline.tryRun` and a leaked spin-loop fiber (`IOTaskTest`) fail on the
+   experiment, and the tip passes all of them under the same load. The mechanism this points at:
+   a direct application of an `Arrow.apply(f)` arrow ran `f` without polling the safepoint (the
+   override), and through the fused arm it polls, so a pending stop now lands at every settled
+   application, which is a change in when interrupts take effect, not a fast path lost. An
+   isolation probe (the experiment plus that one override restored) and the full `KernelBench`
+   class, tip against experiment in one session, are queued; their results go here.
 2. **The `PollTest` ascriptions** are workarounds under the ruling of 2026-08-28 and are left in
    place. The reviewer asked whether they come from the handler method's signature: no signature
    changed. Compiled without them, on the tip and on the overload-removal experiment, the compiler
