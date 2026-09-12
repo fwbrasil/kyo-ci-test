@@ -1,6 +1,6 @@
 # Provenance of the commits and benchmark classes this package names
 
-dcadee780d: the base leg of every benchmark comparison, the base `cdefdc9e60` plus edit 16 alone so
+dcadee780d: the base leg of every benchmark comparison, the base `cdefdc9e60` plus edit 21 alone so
 `KernelBench` compiles, a local commit in the throwaway worktree `robustness-base`; outside the
 range by construction and named as the base of the numbers, not as a date.
 
@@ -14,6 +14,6 @@ simplification. They are evidence about F and about the cost of the kernel chang
 not about any kernel row, and the package presents them under that heading only.
 
 `SpanBench` (`kyo-bench/src/main/scala/kyo/bench/SpanBench.scala`) does not reference `kyo.kernel`
-either. It is named because edit 24 changes `kyo.Span.updated` in `kyo-data`, and its one row prices
+either. It is named because edit 25 changes `kyo.Span.updated` in `kyo-data`, and its one row prices
 the index check that method now makes on the JVM, base against tip. It is evidence about that edit
 and nothing in the kernel.

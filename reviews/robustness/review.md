@@ -183,7 +183,7 @@ One sentence per edit, the sentence to say when applying it.
 28. `RearmSurvivorsTest.scala`: the leaf also asserts that the write registration precedes the read
     registration in the log, so the order it now rests on is pinned rather than assumed.
 
-The name in edits 14 and 15 is not `reenter`, the derivation's working name: `LoopStateHandler.reenter(state)`
+The name in edits 15 and 16 is not `reenter`, the derivation's working name: `LoopStateHandler.reenter(state)`
 already exists as the lifecycle hook a region receives on re-entry, and an uncurried overload of
 `attachReentry` itself would differ from the arrow form `Eval` applies by a comma. Nor is it
 `attachReentryUnlessSettled`, the name it carried until the rehearsal read the "unless" as an edge
@@ -217,12 +217,12 @@ Verification, on the tip with C:
 |---|---|
 | `kyo-kernelJVM/clean` then `compile`, batch | clean |
 | `kyo-kernelJVM/Jmh/compile` | clean |
-| `kyo-kernelJVM/test` | 1836 passed, 0 failed, 5 canceled (the `DebuggerTest` sessions, which cancel when the debugger is compiled out, as before); 1510 at the base plus the 320 cells, the five cases of edit 12 and the case of edit 13 |
-| `kyo-preludeJVM/test` and `kyo-coreJVM/test` | 2665 passed, 0 failed, on the tip with edit 22, `ChoiceTest` 33 passed |
+| `kyo-kernelJVM/test` | 1836 passed, 0 failed, 5 canceled (the `DebuggerTest` sessions, which cancel when the debugger is compiled out, as before); 1510 at the base plus the 320 cells, the five cases of edit 13 and the case of edit 14 |
+| `kyo-preludeJVM/test` and `kyo-coreJVM/test` | 2665 passed, 0 failed, on the tip with edit 23, `ChoiceTest` 33 passed |
 | `EvalShapeTest` | 320 cells, all green; the multi-shot cells hang at the base |
-| `kyo-netJVM/testOnly RearmSurvivorsTest` | 2 passed with edits 26 and 27, on this machine and in the linux-arm64 CI container (`scripts/build.sh --env podman-ci --arch arm`, the environment the failure came from), the ordering assertion included |
+| `kyo-netJVM/testOnly RearmSurvivorsTest` | 2 passed with edits 27 and 28, on this machine and in the linux-arm64 CI container (`scripts/build.sh --env podman-ci --arch arm`, the environment the failure came from), the ordering assertion included |
 | `testKyo --dry-run --phase compile-test --modules kyo-kernelJVM,kyo-dataJVM JVM` | the pass reads `kyo-dataJVM/Test/compile; kyo-kernelJVM/Test/compile; kyo-kernelJVM/Jmh/compile`, the benchmark compile for the module that has one and not for the one that does not |
-| `SpanTest` | 237 passed on each of JVM, JS, Wasm and Native after edit 24 |
+| `SpanTest` | 237 passed on each of JVM, JS, Wasm and Native after edit 25 |
 
 Benchmarks. `KernelBench`, 49 rows, is the class; `package-check.sh` confirms it references
 `kyo.kernel`. The rows the fix reaches by name, before running: every row answering through
@@ -231,7 +231,7 @@ rows C reaches: `handleLoopAnswersInPlace`,
 `handleLoopFusesContinuation`, `statefulAnswersPaySuccessor`, and every fusion row, since the tails
 are inside the fused templates.
 
-A first round, the base (`dcadee780d`, the base plus edit 20 alone, so the class compiles) against
+A first round, the base (`dcadee780d`, the base plus edit 21 alone, so the class compiles) against
 the fix alone, same session, back to back, `-f 1`, all 49 rows: `bench/compare-base-vs-A.md`. No
 `handleCont` row outside the 5% band. Three rows outside it, none on a path the fix touches:
 
@@ -244,9 +244,9 @@ the fix alone, same session, back to back, `-f 1`, all 49 rows: `bench/compare-b
 `-f 3` on those three, both legs back to back: `bench/compare-base-vs-A-f3.md`, zero suspects.
 
 Three legs in one session, back to back, `-f 1`, 49 rows each: the base (`dcadee780d`, the base
-plus edit 20 so the class compiles), the fix alone (A, the fix as its first draft wrapped the
-continuation in `Eval`'s cont arm), and that draft with C (edits 14 to 19 added). The handler-side
-shape of edits 9 to 11 came after this session, and the whole class runs again on the tip as it
+plus edit 21 so the class compiles), the fix alone (A, the fix as its first draft wrapped the
+continuation in `Eval`'s cont arm), and that draft with C (edits 15 to 20 added). The handler-side
+shape of edits 9 to 12 came after this session, and the whole class runs again on the tip as it
 stands; that session is the one the table's pending cells name. The fix against the tip attributes C alone,
 one variable (`bench/compare-A-vs-AC.md`): zero
 suspects; the rows the tails sit in, `handleLoopAnswersInPlace` +0.4%, `handleLoopFusesContinuation`
@@ -264,7 +264,7 @@ either comparison, all inside their combined errors at `-f 1`, and their `-f 3` 
 `-f 3`, three legs back to back on those four rows: `bench/compare-base-vs-AC-f3.md` and
 `bench/compare-A-vs-AC-f3.md`, zero suspects in both.
 
-**The multi-shot rows, and the regression they show.** Three rows added by edit 21 enter a
+**The multi-shot rows, and the regression they show.** Three rows added by edit 22 enter a
 `handleContRepeated` region, which no row did before. Base against tip, `-f 3 -prof gc`,
 `bench/compare-rows-base-vs-AC.md`:
 
@@ -282,7 +282,7 @@ handler on the stack above that work: a crossing packs every stack entry between
 the handler that answers it into the continuation. The base was flat on this row because it was
 wrong on the shape the matrix found. The tree's one consumer of the repeated handlers, `Choice.run`,
 paid the delimiter by hand, wrapping each resumption in a fresh `Choice.run`; with the kernel
-delimiting, that wrapper is a second region per resumption, and edit 22 removes it. What that nets
+delimiting, that wrapper is a second region per resumption, and edit 23 removes it. What that nets
 for Choice is the `ChoiceBench` comparison below; the decision on the price itself is open ruling 5.
 
 `ChoiceBench`, ten sequential binary choice points, throughput, higher is better, `-f 3`, base
@@ -290,11 +290,11 @@ against tip in one session, `bench/compare-choice-base-vs-AC.md`:
 
 | row | base | tip | |
 |---|---|---|---|
-| `run` | 1,273 ops/s | 4,063 ops/s | 3.2 times faster: the kernel's re-entered region replaces the base's inner `Choice.run` per resumption and its second flatten, and edit 22 drops that inner region |
+| `run` | 1,273 ops/s | 4,063 ops/s | 3.2 times faster: the kernel's re-entered region replaces the base's inner `Choice.run` per resumption and its second flatten, and edit 23 drops that inner region |
 | `runStream` | 5,208 ops/s | 5,042 ops/s | -3.2%, inside the combined error |
 
 A first draft re-entered every repeated handler, `handleFirstRepeated` included. On that draft
-`run` was already 2.2 times faster than the base before edit 21 (1,280 against 2,860 ops/s), and
+`run` was already 2.2 times faster than the base before edit 22 (1,280 against 2,860 ops/s), and
 `runStream` was 24% slower (4,936 against 3,721 ops/s), because every resumed computation carried a
 re-entered region on top of the fresh `handleFirstRepeated` the stream's loop installs per iteration, a
 region that could not prevent anything. That measurement is what moved the wrap into the two
@@ -305,14 +305,14 @@ Native, Wasm). The first full run, 34672876184 on the gated-matrix commit, found
 job dying in `kyo-data`'s `SpanTest`: the branch's ancestry adds an out-of-bounds case for
 `Span.updated`, whose scaladoc promises `IndexOutOfBoundsException` while the code relied on the
 JVM's array store; on JS the fatal undefined-behaviour error escapes the harness and node exits, on
-Wasm the store traps with the same effect. Fixed by edit 24, reproduced locally before the fix (the
+Wasm the store traps with the same effect. Fixed by edit 25, reproduced locally before the fix (the
 same run-terminated exception) and verified after it: `SpanTest` 237 passed on each of JVM, JS and
 Wasm, the out-of-bounds case included. The run after that fix, 34676060392, per job:
 
 | job | outcome | what it is |
 |---|---|---|
 | windows-x64 JS | passed | the Span fix on the third OS |
-| linux-arm64 JVM | passed | without edit 26, so the kyo-net race is intermittent, as diagnosed; with edits 26 and 27 the leaf passes in the linux-arm64 CI container run locally, the order pinned |
+| linux-arm64 JVM | passed | without edit 27, so the kyo-net race is intermittent, as diagnosed; with edits 27 and 28 the leaf passes in the linux-arm64 CI container run locally, the order pinned |
 | linux-x64 JVM | failed | `kyo-ui`'s `ReactiveUITeardownTest`, an `assertEventually` timing assertion; the module is identical to main, and upstream main's own runs failed the same test twice this week, on linux-arm64 and windows-arm64 |
 | linux-x64 JS, linux-arm64 JS, linux-x64 Wasm, linux-arm64 Wasm | failed | `kyo-sql-postgres`'s `SqlClientInterruptTest`, the leaf "an interrupted connect strands no descriptor" stuck for two minutes, and its sibling "interrupting the statement's fiber stops it" passing only at the thirty-second query timeout: on JS an interrupt does not reach a fiber parked on the socket. Reproduced locally on JS at the tip and at the branch's base, so it predates this work; main's JS jobs pass it. A bisect between main and the base, eleven steps of the leaf on JS, ends at the merge of main into the branch (9f0b6d38b9, the three commits after it not building until the kyo-net compile fix): the leaf came from main's #1933 in that merge, the branch before the merge passes, main alone passes, and their combination hangs, which puts the defect in main's new close and interrupt paths meeting the branch's own kernel and core on JS. Open; the next step is the branch's interrupt delivery to a promise the JS driver holds, compared against main's |
 | linux-x64 Native | failed | `kyo-ffi-it`'s `ItCallbackExceptionTest`, a `NoSuchElementException` from inside a C callback's exception report; `kyo-ffi` is identical to main, main's own commit passes this job on this fork, and the branch fails it on both runs, so it belongs to the branch's kernel line on Native; the base's Native job is running to date it |
@@ -332,8 +332,8 @@ The run on the handler-side commit, 34683181614, on every job that concluded at 
 
 **The sweep**, every sbt project's suite one at a time, `reviews/robustness/sweep/run.sh` over
 `modules.txt` and `noncross.txt`, results in `reviews/robustness/sweep/results.tsv`. It ran on the
-tree as the sweep started, which is the tip minus the handler-side shape of edits 9 to 11, the two
-test cases of edits 12 and 13, the third benchmark row and the build runner's step; those are
+tree as the sweep started, which is the tip minus the handler-side shape of edits 9 to 12, the two
+test cases of edits 13 and 14, the third benchmark row and the build runner's step; those are
 verified on the tip by the suites in the table above, and the working copies of the files they
 touch were pinned to the sweep's commit for its duration so it saw one tree throughout.
 
@@ -378,6 +378,6 @@ whose CI-only failures on the final-code run are in the CI table.
    `handleCont`, and no consumer in the tree has that shape. The alternative is the base's contract,
    documented rather than enforced: a repeated clause with pending work between resumptions must
    re-enter a region itself, as `Choice.run` did, and one that does not hangs. Recommendation: A,
-   with edit 22, because the kernel is then correct by construction for the shape the matrix found
+   with edit 23, because the kernel is then correct by construction for the shape the matrix found
    and the one consumer pays less than it paid before: `Choice.run` 3.2 times faster than the base,
    `runStream` unchanged.
