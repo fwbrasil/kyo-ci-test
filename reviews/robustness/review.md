@@ -255,7 +255,7 @@ Verification, on the tip with C:
 | `kyo-netJVM/testOnly RearmSurvivorsTest` | 2 passed with edits 27 and 28, on this machine and in the linux-arm64 CI container (`scripts/build.sh --env podman-ci --arch arm`, the environment the failure came from), the ordering assertion included |
 | `testKyo --dry-run --phase compile-test --modules kyo-kernelJVM,kyo-dataJVM JVM` | the pass reads `kyo-dataJVM/Test/compile; kyo-kernelJVM/Test/compile; kyo-kernelJVM/Jmh/compile`, the benchmark compile for the module that has one and not for the one that does not |
 | `SpanTest` | 237 passed on each of JVM, JS, Wasm and Native after edit 25 |
-| `kyo-kernelJVM/testOnly EvalTest BracketTest` | 233 passed on the tip with edits 29 to 31; the reproduction fails before edit 30 with `Nested@... was not the same instance as Kyo(...)`. The three suites on this tip: pending the run |
+| `kyo-kernelJVM/testOnly EvalTest BracketTest` | 233 passed on the tip with edits 29 to 31; the reproduction fails before edit 30 with `Nested@... was not the same instance as Kyo(...)`. The three suites on this tip: `kyo-kernelJVM/test` 1837 passed, `kyo-preludeJVM/test` 844 passed, `kyo-coreJVM/test` 2665 passed and 0 failed; `kyo-kernelJVM/compile` and `kyo-kernelJVM/doc` green on this tip, the scaladoc of edit 10 and the comment of edit 29 included |
 
 Benchmarks. `KernelBench`, 49 rows, is the class; `package-check.sh` confirms it references
 `kyo.kernel`. The rows the fix reaches by name, before running: every row answering through
