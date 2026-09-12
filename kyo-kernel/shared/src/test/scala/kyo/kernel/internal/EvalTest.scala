@@ -2,7 +2,6 @@ package kyo.kernel.internal
 
 import kyo.Arrow
 import kyo.Const
-import kyo.Frame
 import kyo.Kyo
 import kyo.Loop
 import kyo.Maybe
@@ -35,17 +34,11 @@ class EvalTest extends AnyFreeSpec:
     sealed trait Fetch extends ArrowEffect[Const[Unit], Const[Got]]
     def fetch: Got < Fetch = ArrowEffect.suspend[Any](Tag[Fetch], ())
 
-    /** A computation only the evaluator can produce: it reads the stack, as an isolate's restore does. */
-    def reading(value: Int)(using _frame: Frame): Int < Any =
-        new Pending.SnapshotWith[Int, Any]:
-            override def frame = _frame
-            def cont           = this
-            override def apply[C, S2](cur: Stack < S2, cont2: Arrow[Int, C, S2]) =
-                cur match
-                    case p: Pending[Stack, S2] @unchecked => Effect.defer(p, this, cont2)
-                    case _ =>
-                        val v: Int < Any = value
-                        cont2(v, Arrow.id)
+    /** A computation the evaluator answers from the context alone, running no step of anyone's code, as it answers an isolate's restore
+      * from the stack: a defaulted context read.
+      */
+    sealed trait Env extends ContextEffect[Int]
+    def reading(value: Int): Int < Any = ContextEffect.suspend(Tag[Env], value)
 
     def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
         ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
