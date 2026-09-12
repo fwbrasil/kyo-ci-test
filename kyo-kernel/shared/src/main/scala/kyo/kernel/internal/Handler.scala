@@ -4,6 +4,7 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Tag
+import kyo.bug
 import kyo.discard
 import kyo.kernel.<
 import kyo.kernel.Arrow
@@ -85,6 +86,30 @@ end Handler
     abstract class ContHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
 
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
+
+        /** The handler a repeated continuation re-enters through: this handler with `done` as identity, so a re-entered region yields the
+          * body's value and `done` still runs once, at the outer region's end. Only a handler that repeats defines one.
+          */
+        def resumed: ContHandler[I, O, E, A, A, S] = bug(s"resumed on a handler that does not repeat: $this")
+
+        /** Wraps the continuation for a clause that resumes it more than once, so that each application re-enters the region.
+          *
+          * Entering a region stores the loop's registers as that region's continuation, which keeps the clause's own pending work out of what
+          * a later occurrence captures. Without that, the continuation captured at a later occurrence carries the enclosing clause's next
+          * resumption, and every inner resumption re-triggers it, without bound. A computation handed to the wrapped continuation runs at
+          * the clause's level first, as it does for a crossing; only the settled answer re-enters.
+          */
+        // `V` rather than `X` for the operation's type: `Arrow` has a type member `X`, and inside the Step the two would collide.
+        private[kyo] def reentering[V](k: Arrow[O[V], A, E & S]): Arrow[O[V], A, E & S] =
+            val twin = resumed
+            new Arrow.Step[O[V], A, E & S]:
+                def frame = Frame.internal
+                override def apply[D, S3](v: O[V] < S3, cont2: Arrow[A, D, S3]) =
+                    v match
+                        case p: Pending[O[V], S3] @unchecked => Effect.defer(p, this, cont2)
+                        case _ => cont2(Pending.handle[Unit, E, A, A, S](k(Nested.unnest[O[V]](v)), twin, ()), Arrow.id)
+            end new
+        end reentering
 
         /** Runs the clause, attaching the effect trace to anything it throws.
           *

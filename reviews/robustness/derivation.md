@@ -129,3 +129,62 @@ up as a design note with what diverged, and B stands as the robustness measure.
 - the three lenses' reports, dispatched as general-purpose agents with the sub-skill briefs inline,
   since the sub-skills are not registered in this tree
 - the CI matrix on `fwbrasil/kyo-ci-test` for the branch, all platforms and OSes
+
+## Finding: multi-shot re-entry is not delimited (found by B on its first run)
+
+`handleContRepeated` with a clause that resumes twice, over two or more consecutive occurrences in
+one region, does not terminate. Four leaves of work exhaust a 4 GB heap. Minimal shape:
+
+    handleContRepeated(Tag[Ask], ask.map(a => ask.map(b => a + b)))(
+        [C] => (_, k) => k(7).map(x => k(8).map(y => x + y)),
+        a => a
+    )                                                        // should be 60; hangs
+
+Mechanism, traced by hand against `Eval`'s at-top `ContHandler` arm. The continuation handed to a
+clause is `kyo.cont.chain(contA.chain(contB))`: the suspension's own continuation chained with the
+loop's registers. At the first occurrence the registers hold body maps, which belong in `k`. But the
+clause's result is evaluated by the same loop inside the region, with its own pending maps in those
+registers, so when its first resumption `k(7)` reaches the second occurrence, the registers hold
+`x => k(8).map(...)`, the enclosing clause's second resumption, and it is captured into the inner
+continuation `k2`. `k2` is applied twice by the inner clause, so the outer clause's remaining work
+runs twice; each run re-suspends at the second occurrence with a fresh clause whose `k2'` captures
+the same pending work again. Geometric, unbounded. Single-shot never shows it because the captured
+pending work runs once either way, and the README's multi-shot example has one occurrence.
+
+In the delimited reading a continuation is the rest of the body up to the region's boundary, and the
+clause's own maps are handler code outside it. The evaluator has that boundary for loop handlers,
+whose `Loop.continue` rebuilds the region as a fresh `Handle` value ("resumption equals entry"). A
+`handleCont` continuation has no such re-entry: it is the raw chain.
+
+### Candidate A: a repeated continuation re-enters through a fresh region, types unchanged
+
+Confined to `repeated` handlers, so the single-shot `handleCont` hot path is untouched. When
+`handler.repeated`, the continuation handed to the clause is an arrow whose application re-enters:
+`k(x) = Pending.handle(bodyRest(x), handler.resumed, ())`, where `bodyRest` is today's chain (or the
+crossing, not at top) and `resumed` is the same handler with `done` as identity, built once per
+region so the re-entered region yields the body's `A` rather than applying `done` a second time; the
+outer region still applies `done` once at its end, which is today's behaviour. Entering the fresh
+region stores the registers as its stack continuation, so the enclosing clause's pending work sits
+outside the body again and a later occurrence captures body maps only.
+
+Cost: one arrow per repeated suspension and one node per resumption, on repeated handlers only.
+`handleFirstRepeated` is also `repeated` and gets the same treatment. Every piece exists:
+`Pending.handle`, `Arrow.Step`, the `repeated` flag; `resumed` is a member added to `ContHandler`.
+
+### Candidate B: delimited semantics for `handleContRepeated`
+
+Make the multi-shot clause live outside the region, as `handleLoop`'s does: `k` returns the region's
+output `B` with `done` applied per resumption, and the clause returns `B < (S & S2)`. This is the
+standard algebraic-effects reading and needs no twin, but it changes `handleContRepeated`'s
+signature and makes `done` run per resumption rather than once, which is a public-surface decision.
+
+### Fork 4, ruled: A
+
+The user granted full autonomy for the overnight work ("add tests to repro issues and do fix them.
+All is in your scope"), so this is decided here rather than parked. A is implemented: it preserves
+every signature and today's `done` behaviour, confines its cost to `repeated` handlers, and every
+piece of it already existed. B is recorded above as the alternative weighed, with the one thing that
+would motivate it, `done` per resumption being the standard delimited reading, left for a later
+decision on the public surface. Three named cases in `ArrowEffectTest` pin the fix, one of them
+pinning `done` once at the outer end against per-resumption (1060, not 4060), and the matrix runs
+the shape across every configuration.

@@ -110,10 +110,12 @@ import scala.collection.mutable.ArrayBuffer
                                     case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
                                         val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
                                         val ctx2    = if atTop then ctx else rebound(entries, ctx)
-                                        val continuation =
+                                        val raw =
                                             if atTop then kyo.cont.chain(contA.chain(contB))
                                             else kyo.crossing(entries, contA.chain(contB))
-                                        val result = handler.answering(kyo.input, continuation, kyo, stack)
+                                        // a continuation the clause may resume more than once re-enters the region on each application
+                                        val continuation = if handler.repeated then handler.reentering(raw) else raw
+                                        val result       = handler.answering(kyo.input, continuation, kyo, stack)
                                         Debugger.onResult(result)
                                         // The stop is honored on the clause's answer: one that re-raises the
                                         // operation would otherwise dispatch straight back here with no deferral to park at.
