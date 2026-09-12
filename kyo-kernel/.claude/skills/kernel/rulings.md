@@ -107,6 +107,17 @@ suites did not catch it: which shape no case had, and which consumer masked it b
 report without that is a claim the reviewer cannot place, and the first question it gets is this
 one. The package's ruling on the fix records the answer beside the claim.
 
+**2026-09-12**, when the package was ready and the agent had spent the day on lens rounds, benchmark
+reruns and an experiment while two regressions it had found stayed unfixed, then proposed fixing
+them before the review:
+
+> fuck man......... let's just do the live review of what we have so far. You waste so much time
+> with silly reward hackigns
+
+Standing consequence: once the reviewer has asked for the review, the review starts. Polishing the
+package, re-running lenses, and reordering work ahead of him are the agent spending his time; the
+package is judged live, by him, and what it lacks is a finding there, not a reason to delay.
+
 ## Evidence
 
 **2026-08-30**, discovered rather than ruled, and the worst escape this pipeline has had. Four rounds
