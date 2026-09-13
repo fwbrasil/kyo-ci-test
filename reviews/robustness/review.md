@@ -771,3 +771,70 @@ changed nothing the suite compiles, the run stands for the tip.
 | `kyo-netJVM/testOnly *Tls*`, `kyo-netJS/testOnly *Tls*` | every leaf green, the backend and TLS-implementation combinations this host lacks cancelled; JS 84 passed, 158 cancelled | e3163ddbaf |
 
 Benchmarks and the CI matrix: the two subsections below.
+
+### Benchmarks: the fifth walk, base against tip, and a deviation for the reviewer
+
+`KernelBench`, all 52 rows, base `bc6a48a2aa` (plus the one-line strict-equality fix to `Eval.ensuring`
+so the base compiles, `provenance.md`) against the tip `e3163ddbaf`, whose kernel and prelude sources
+equal the package's tip's, in the throwaway worktrees `robustness-bench-base` and `-tip`, same machine,
+back to back. Full class at `-f 1` (`bench/compare-base-vs-tip-5.md`), then `-f 3` on every row outside
+the 5% band (`bench/compare-base-vs-tip-5-f3.md`), then `-prof gc` on the movers
+(`bench/compare-base-vs-tip-5-gc.md`). `-f 3`, tight error bars:
+
+| row | base us/op | tip us/op | delta |
+|---|---|---|---|
+| contextRegionsPayEntryExit | 76.1 | 37.0 | **-51%** |
+| bracketPerRound | 85.7 | 41.8 | **-51%** |
+| foreignCrossingsPayRotation | 1063.6 | 783.6 | **-26%** |
+| repeatedClausesPayReentry | 652.2 | 552.2 | **-15%** |
+| deferBindUnderTrailingMap | 31.3 | 38.0 | +21% |
+| contextReadsUnderBindings | 41.0 | 51.1 | +25% |
+| suspensionBaselineAltInstall | 79.2 | 102.9 | +30% |
+| suspensionBaselineAltEnv | 72.0 | 104.5 | +45% |
+| emittingClausesPayRegionRebuild | 101.1 | 155.8 | +54% |
+
+The other 43 rows are inside the band; `suspensionBaseline` (the plain arrow-suspend loop) is flat at
++0.3%, so the arrow path is untouched.
+
+**The mechanism, one for all of them: path length, never allocation.** `gc.alloc.rate.norm` (exact,
+near noise-free) is flat or lower on every regressed row (`bench/compare-base-vs-tip-5-gc.md`):
+`deferBindUnderTrailingMap` is 112144 B/op on both, `suspensionBaselineAltEnv` 480128 vs 480104, and
+`emittingClausesPayRegionRebuild` is 24 KB/op **lower** at the tip yet slower. The wins are the mirror
+image: `contextRegionsPayEntryExit` drops 24 KB/op, the `Context` object that no longer exists per
+region entry, and runs 51% faster for it.
+
+The regressions fall in three groups, each named and evidenced:
+
+1. **Context reads (`suspensionBaselineAltEnv` +45%, `suspensionBaselineAltInstall` +30%,
+   `contextReadsUnderBindings` +25%).** These loop `ContextEffect.suspend`. Removing `Context`
+   (`d0f19b8f89`, the ruling of 2026-09-13, "if we resolve from handlers/stack, then we don't even
+   need Context?") made a context read resolve through the general `stack.find(tag)`, a walk that
+   tests `h.tag.erased <:< tag.erased` per entry and then checks for a masking handler, where the
+   base's `Context` was an O(1) lookup. A read now costs what an arrow operation costs
+   (`suspensionBaselineAltEnv` 104 us against `suspensionBaseline` 103): the redesign unified the two,
+   and context reads lost the specialised fast path. This is a direct consequence of the ruling, not an
+   incidental defect. Closing it means giving context reads a fast path again, which is the `Context`
+   the ruling removed; a cheaper `find` for the exact-tag case is possible but partial (the walk itself
+   is the cost) and still a special path. **The reviewer's call, because it is the reviewer's ruling.**
+
+2. **The gap (`emittingClausesPayRegionRebuild` +54%).** A loop clause that emits runs its own
+   computation under a gap (`Handler.Gap`, the ruling that a crossing dumps the handlers, made in
+   place): per emit the evaluator pushes the gap over the region, runs the clause, lifts the gap and
+   discards. The base dumped the interior into the continuation and re-pushed. The gap allocates less
+   (24 KB/op lower) but runs more evaluator steps per emit. Whether the gap lifecycle can be shortened
+   is open; it may be structural to hiding a region in place rather than dumping it.
+
+3. **`deferBindUnderTrailingMap` +21%.** A pure `Effect.defer(i+1).map(loop)` loop, no context and no
+   gap. Allocation is byte-identical and the inlining decisions on the defer path match the base
+   (`bench/*-5-inline-defer.log`); the delta is diffuse path length in the reshaped `loop` (the arm
+   set grew with the gap, the region hooks and the stack-resolved reads), not a single de-inlined
+   method. It is the one regression with no design story, and the one most likely to be recoverable
+   with a targeted `loop`-shape change; it is not yet closed.
+
+**What the design buys for the regressions:** `Context` gone entirely (one representation, reads and
+operations resolved the same way), region entry and exit 51% cheaper, the bracket 51% cheaper, the
+crossing 26% cheaper, the multi-shot region 15% cheaper, and the release ownership the whole walk
+exists for. **What it costs:** context-read-heavy and emit-heavy loops, 21% to 54%, all path length.
+Whether that trade is accepted, and whether to spend on closing groups 2 and 3 or to reopen group 1's
+ruling, is the reviewer's decision, explicitly. The numbers above are the whole class on both
+variants, so the claim covers every row, not a chosen subset.
