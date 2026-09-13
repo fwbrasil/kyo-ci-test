@@ -8,7 +8,8 @@
 with the exact text an Edit-tool call will replace. For every file the sequence touches, the base
 content is taken from `git show <base>:<file>`, the edits are applied in order (each `old` must occur
 exactly once at the moment it is applied), and the result is compared byte for byte with
-`git show <tip>:<file>`. Files changed in the range but absent from the sequence are reported too, so
+`git show <tip>:<file>`; a file the edits empty out is expected to be absent at the tip, the walk deleting it.
+Files changed in the range but absent from the sequence are reported too, so
 an edit the package forgot is visible before the walk starts; the review package's own files under
 `reviews/` are not part of any walk and are left out of that check. No worktree is touched.
 
@@ -60,7 +61,11 @@ def main() -> int:
 
     for file in order:
         expected = show(tip, file)
-        if expected is None:
+        if expected is None and contents[file] == "":
+            # A removal: the sequence's last edit on the file replaced its whole content with nothing, which the
+            # live review applies as deleting the file.
+            print(f"OK     {file}: sequence removes the file, absent at the tip")
+        elif expected is None:
             print(f"STALE  {file}: not present at the tip")
             status = 1
         elif expected != contents[file]:

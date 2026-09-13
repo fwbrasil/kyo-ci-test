@@ -15,7 +15,8 @@
 #       -- kyo-kernel/shared/src/main/scala/kyo/kernel
 #
 # The trailing paths narrow the flag count to the same surface `flags.md` was generated for, so the
-# two are compared like for like.
+# two are compared like for like. A package that keeps one table and one sequence per walk names the
+# walk's files in the environment: PACKAGE_FLAGS=flags-5.md PACKAGE_SEQUENCE=sequence-5.json.
 #
 # Every line is CHECK (informational), OK, or STALE. A STALE line is a defect in the package, not
 # a suggestion. Judgment-bearing claims (what a number means, whether a concession is justified)
@@ -97,19 +98,22 @@ else
     echo "OK     working tree clean against the tip"
 fi
 
-# 4. The flag table: the script's row count against the table's, both re-derived now.
+# 4. The flag table: the script's row count against the table's, both re-derived now. A package that
+#    holds one table per walk names the walk's table in PACKAGE_FLAGS (a file name under the review
+#    dir); the default is the first walk's `flags.md`.
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -x "$here/flags.sh" ] && [ -f "$dir/flags.md" ]; then
+flags_table="${PACKAGE_FLAGS:-flags.md}"
+if [ -x "$here/flags.sh" ] && [ -f "$dir/$flags_table" ]; then
     if [ ${#paths[@]} -gt 0 ]; then
         emitted=$("$here/flags.sh" "$range" -- "${paths[@]}" | grep -cE '^\| F[0-9]+ \|' || true)
     else
         emitted=$("$here/flags.sh" "$range" | grep -cE '^\| F[0-9]+ \|' || true)
     fi
-    tabled=$(grep -cE '^\| F[0-9]+ \|' "$dir/flags.md" || true)
+    tabled=$(grep -cE '^\| F[0-9]+ \|' "$dir/$flags_table" || true)
     if [ "$emitted" = "$tabled" ]; then
-        echo "OK     flags: $emitted emitted, $tabled adjudicated"
+        echo "OK     flags: $emitted emitted, $tabled adjudicated in $flags_table"
     else
-        stale "flags: the script emits $emitted rows, flags.md adjudicates $tabled"
+        stale "flags: the script emits $emitted rows, $flags_table adjudicates $tabled"
     fi
 fi
 
@@ -134,11 +138,15 @@ done
 # 6. The edit sequence, if the package recorded one: applying it to the base must reproduce the
 #    tip byte for byte. A described sequence that was never built is why one walk reached for a
 #    bulk replace.
+#    The sequence is verified over this check's own range; a package holding one sequence per walk
+#    names the walk's file in PACKAGE_SEQUENCE (a file name under the review dir), the default being
+#    `sequence.json`.
+sequence_file="${PACKAGE_SEQUENCE:-sequence.json}"
 if [ -f "$dir/sequence.py" ]; then
-    if python3 "$dir/sequence.py" --verify >/dev/null 2>&1; then
-        echo "OK     the recorded edit sequence reproduces the tip"
+    if python3 "$dir/sequence.py" --verify "$base" "$tip" "$dir/$sequence_file" >/dev/null 2>&1; then
+        echo "OK     the recorded edit sequence $sequence_file reproduces the tip"
     else
-        stale "the recorded edit sequence does not reproduce the tip; run $dir/sequence.py --verify"
+        stale "the recorded edit sequence $sequence_file does not reproduce the tip; run $dir/sequence.py --verify $base $tip $dir/$sequence_file"
     fi
 else
     echo "CHECK  no sequence.py in $dir: the walk cannot be performed from this package"

@@ -38,9 +38,13 @@ Design: `reviews/robustness/analysis/redesign.md`, `region-protocol.md`, `bracke
    Kernel JS 1780 and Native 1816 green after the js-wasm Safepoint fix (b3849fd99c: a pending stop
    drains the budget, as the jvm-native slot does). Aeron JVM green after e3163ddbaf: the add is a
    bracket's acquire, its token a nested bracket (the fourth walk's "ending stands" expectation
-   restored to main's). In progress: kernel JS and Native for the new leaf, aeron JS and Native, net
-   TLS suites JVM and JS, core JS in full. Then: KernelBench and ChoiceBench base (bc6a48a2aa) vs tip
-   in the throwaway worktrees `robustness-bench-base` and `robustness-bench-tip`. Commit the numbers.
+   restored to main's). Kernel JS and Native EvalTest 136 green, aeron JS and Native
+   AeronTransportTest 34 green, net TLS suites JVM (all green, platform combinations cancelled) and JS
+   (84 passed, 158 cancelled) green, core JS 1700 green in full after the js-wasm shim fix
+   (8927f43e83, issue 7), core JVM doc green. In progress: KernelBench (-f 1, 53 rows) and ChoiceBench
+   (-f 3) base (bc6a48a2aa) vs tip (e3163ddbaf, whose kernel and prelude sources equal the branch
+   tip's) in the throwaway worktrees `robustness-bench-base` and `robustness-bench-tip`. Commit the
+   numbers.
 7. [ ] CI: push, dispatch the full matrix, monitor, fix what is red.
 8. [ ] Package: derivation, flags, sequence, review.md for the fifth walk; the report files updated
    (issues.md closed items, test-plan.md, coverage.md); rulings recorded; `.dev/kernel-robustness.md`
