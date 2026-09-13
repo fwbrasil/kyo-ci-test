@@ -167,12 +167,40 @@ object Channel:
                 self.poll().foldError(
                     {
                         case Present(value) => f(value)
-                        case Absent         => self.takeFiber().safe.use(f)
+                        case Absent         => self.parkedTake(f)
                     },
                     Abort.error
                 )
             }
         end takeWith
+
+        /** The parked half of [[takeWith]], out of line so the inline fast path stays small, and made
+          * interrupt-safe. `offer` delivers a value into the take promise, but the kernel abandons a
+          * parked taker without resuming it, so a value delivered as the interrupt lands would be consumed
+          * by no one and lost. The finalizer interrupts the promise to make its state final, then returns a
+          * delivered-but-unconsumed value to the channel; `taken` marks the normal exit where `f` consumed
+          * it. Mirrors `SqlConnectionPool.withdrawn`, the same reclaim the SQL pool runs over `takeFiber`.
+          */
+        private[kyo] def parkedTake[B, S](f: A => B < S)(using Frame): B < (S & Abort[Closed] & Async) =
+            Sync.Unsafe.defer {
+                val fiber = self.takeFiber()
+                var taken = false
+                Sync.ensure {
+                    Sync.Unsafe.defer {
+                        if !taken then
+                            discard(fiber.interrupt())
+                            fiber.poll() match
+                                case Present(Result.Success(v)) => discard(self.offer(v.eval))
+                                case _                          => ()
+                    }
+                } {
+                    fiber.safe.use { v =>
+                        taken = true
+                        f(v)
+                    }
+                }
+            }
+        end parkedTake
 
         /** Takes `n` elements from the channel, semantically blocking until enough elements are present. Note that if enough elements are
           * not added to the channel it can block indefinitely.
