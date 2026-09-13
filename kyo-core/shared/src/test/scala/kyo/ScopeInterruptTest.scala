@@ -1,6 +1,7 @@
 package kyo
 
 import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
+import kyo.kernel.Bracket
 
 /** Interrupts landing inside an acquire, and scope exit over a child still holding a resource.
   *
@@ -106,10 +107,10 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
 
     // The acquire is a join. Its value arrives in the promise while the acquiring fiber is parked, and the
     // interrupt lands before the fiber resumes: the promise's callbacks run last-registered first, so one
-    // registered after the park runs before the fiber's own wakeup. The release waits behind the join's
-    // continuation, and the abandonment delivers the value that already arrived to it, running the one
-    // fused step the delivery runs when the fiber resumes, so what the acquire produced is released.
-    "a resource an async acquire produced is released when the acquiring fiber is abandoned before it resumed" in {
+    // registered after the park runs before the fiber's own wakeup. The acquire never reached the bracket's
+    // region with the value, so the region owns nothing and releases nothing: whoever produced the value owns
+    // it until a handoff the owner registered before waiting, which the leaves further down are the shape of.
+    "an acquire abandoned before it resumed with its value owns nothing" in {
         for
             released <- AtomicInt.init(0)
             child    <- Promise.init[Int, Any]
@@ -118,21 +119,19 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                     Scope.acquireRelease(child.get)(_ => released.incrementAndGet.unit).andThen(Async.never)
                 }
             }
-            _ <- assertEventually(child.waiters.map(_ >= 1))
-            _ <- child.onComplete(_ => parent.interrupt.unit)
-            _ <- child.complete(Result.succeed(42))
-            _ <- parent.getResult
-            // The scope's drain is detached, so the count is polled rather than read once.
-            _ <- assertEventually(released.get.map(_ == 1))
-            r <- released.get
-        yield assert(r == 1, s"the acquired value was released $r times")
+            _   <- assertEventually(child.waiters.map(_ >= 1))
+            _   <- child.onComplete(_ => parent.interrupt.unit)
+            _   <- child.complete(Result.succeed(42))
+            res <- parent.getResult
+            r   <- released.get
+        yield
+            assert(res.isPanic, s"the abandonment did not settle the fiber with the interrupt: $res")
+            assert(r == 0, s"a release ran for a value the acquire never took: $r")
         end for
     }
 
-    // The same, with the acquire joining a fiber rather than a promise. A fiber's result carries the isolate's
-    // restore, a computation that reads the stack and can only be produced by the evaluator: the delivery has to
-    // produce it under the fiber's regions before the release waiting on the value can be registered.
-    "a resource a joined fiber produced is released when the acquiring fiber is abandoned before it resumed" in {
+    // The same, with the acquire joining a fiber rather than a promise.
+    "an acquire joining a fiber, abandoned before it resumed with the fiber's value, owns nothing" in {
         for
             released <- AtomicInt.init(0)
             child    <- Promise.init[Int, Any]
@@ -142,13 +141,14 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                     Scope.acquireRelease(inner.get)(_ => released.incrementAndGet.unit).andThen(Async.never)
                 }
             }
-            _ <- assertEventually(inner.waiters.map(_ >= 1))
-            _ <- inner.onComplete(_ => parent.interrupt.unit)
-            _ <- child.complete(Result.succeed(42))
-            _ <- parent.getResult
-            _ <- assertEventually(released.get.map(_ == 1))
-            r <- released.get
-        yield assert(r == 1, s"the acquired value was released $r times")
+            _   <- assertEventually(inner.waiters.map(_ >= 1))
+            _   <- inner.onComplete(_ => parent.interrupt.unit)
+            _   <- child.complete(Result.succeed(42))
+            res <- parent.getResult
+            r   <- released.get
+        yield
+            assert(res.isPanic, s"the abandonment did not settle the fiber with the interrupt: $res")
+            assert(r == 0, s"a release ran for a value the acquire never took: $r")
         end for
     }
 

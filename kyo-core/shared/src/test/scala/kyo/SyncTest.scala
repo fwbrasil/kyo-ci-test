@@ -250,8 +250,9 @@ class SyncTest extends kyo.test.Test[Any]:
         }
 
         // A handler resuming the same cont more than once replays the regions it carries. A bracket's
-        // extent is over once the first resumption completes it, so the release would already have run
-        // when the next arrives. Where the bracket sits decides the outcome.
+        // release belongs to the handler from the first resumption on, so every replay runs against the
+        // live resource and the release runs once, where the handler ends. Where the bracket sits decides
+        // how many resources there are.
         "under a handler that replays" - {
 
             "every branch of a replaying handler runs against the live resource, released once after all of them" in {
@@ -271,14 +272,16 @@ class SyncTest extends kyo.test.Test[Any]:
                 end for
             }
 
-            // Holding is the handler's to ask for: a clause that resumes twice without declaring it is
-            // refused, and the refusal has to say what happened.
-            "a handler that replays without declaring it is still refused, and the refusal says why" in {
+            // Any handler holding the continuation may resume it more than once: nothing has to be declared.
+            "a plain handler that resumes twice runs both shots against the live resource, released once" in {
                 import kyo.kernel.ArrowEffect
                 for
                     released <- AtomicInt.init(0)
+                    seen     <- AtomicRef.init(Chunk.empty[Int])
                     body = (Sync.ensure(released.incrementAndGet.unit) {
-                        ArrowEffect.suspend[Any](Tag[Replayed], ())
+                        ArrowEffect.suspend[Any](Tag[Replayed], ()).map(n =>
+                            released.get.map(r => seen.updateAndGet(_.append(r)).andThen(n))
+                        )
                     }: Int < (Replayed & Sync))
                     res <- Abort.run[Closed] {
                         ArrowEffect.handleCont[Const[Unit], Const[Int], Replayed, Int, Int, Sync, Any](Tag[Replayed], body)(
@@ -286,10 +289,12 @@ class SyncTest extends kyo.test.Test[Any]:
                             a => a
                         )
                     }
+                    r <- released.get
+                    s <- seen.get
                 yield
-                    val message = res.failure.map(_.getMessage).getOrElse("")
-                    assert(message.contains("resumption of a continuation that re-enters it"), message)
-                    assert(message.contains("Acquire inside the branch"), message)
+                    assert(res == Result.succeed(3), s"$res")
+                    assert(r == 1, s"released $r")
+                    assert(s == Chunk(0, 0), s"a shot did not run against a live resource: $s")
                 end for
             }
 
