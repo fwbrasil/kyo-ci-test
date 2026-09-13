@@ -414,16 +414,14 @@ object Topic:
                         // Failed the C layer does not, so each Failed arm frees it and clears tokOwned
                         // to keep the finalizer from double-freeing. The var is confined to one fiber.
                         //
-                        // `ensureMap`, not `map`: the poll's answer and the flag that records who owns the
-                        // token after it are one step. A `map` polls the safepoint before applying, so an
-                        // interrupt landing inside the poll would park in front of the flag, and the
-                        // finalizer would free a token the transport had just taken.
+                        // The poll and the flag that records who owns the token after it are one block: an
+                        // interrupt lands before the poll or after the flag, never between the transport
+                        // taking the token and the finalizer learning it, which would free it twice.
                         var tokOwned = true
                         Sync.ensure(Sync.Unsafe.defer(if tokOwned then transport.freeAsyncPub(tok) else ())) {
                             Loop.foreach[Maybe[Pub], Async & Abort[TopicTransportException]] {
-                                Sync.Unsafe.defer(transport.pollAddPublication(tok)).ensureMap {
-                                    poll =>
-                                        (poll: AeronTransport.AddPoll[Pub]) match
+                                Sync.Unsafe.defer {
+                                    (transport.pollAddPublication(tok): AeronTransport.AddPoll[Pub]) match
                                             case AeronTransport.AddPoll.Done(pub) =>
                                                 tokOwned = false
                                                 Loop.done[Unit, Maybe[Pub]](Maybe(pub))
@@ -498,10 +496,9 @@ object Topic:
                         var tokOwned = true
                         Sync.ensure(Sync.Unsafe.defer(if tokOwned then transport.freeAsyncSub(tok) else ())) {
                             Loop.foreach[Maybe[Sub], Async & Abort[TopicTransportException]] {
-                                // `ensureMap` for the same reason as the publication's poll above.
-                                Sync.Unsafe.defer(transport.pollAddSubscription(tok)).ensureMap {
-                                    poll =>
-                                        (poll: AeronTransport.AddPoll[Sub]) match
+                                // the poll and the flag are one block, for the same reason as the publication's poll above
+                                Sync.Unsafe.defer {
+                                    (transport.pollAddSubscription(tok): AeronTransport.AddPoll[Sub]) match
                                             case AeronTransport.AddPoll.Done(sub) =>
                                                 tokOwned = false
                                                 Loop.done[Unit, Maybe[Sub]](Maybe(sub))

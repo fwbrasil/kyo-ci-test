@@ -362,35 +362,35 @@ class BracketTest extends AnyFreeSpec:
     }
 
     "mixed with other kernel features" - {
-        "a bracket and a binding dumped together release inner first on discard" in {
+        "two brackets dumped together release inner first on discard" in {
             val log = ListBuffer[String]()
-            sealed trait Cfg extends ContextEffect[Int]
             val body: Int < Ask =
                 Bracket(Effect.defer(1)) { a =>
-                    ContextEffect.handle(
-                        Tag[Cfg],
-                        (_: Maybe[Int]).getOrElse(0),
-                        fork = (parent: Int) => parent,
-                        join = (parent: Int, _: Int, _: Int) => parent,
-                        release = (_: Int, _: Throwable) => discard(log += "binding")
-                    )(ask.map(x => a + x))
-                }((_, _) => discard(log += "bracket"))
+                    Bracket.ensuring(_ => discard(log += "inner"))(ask.map(x => a + x))
+                }((_, _) => discard(log += "outer"))
             val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
             assert(dropped.eval == -1)
-            assert(log.toList == List("binding", "bracket"))
+            assert(log.toList == List("inner", "outer"))
         }
 
-        "a multi-shot capture over a bracket refuses the second shot" in {
+        // The bracket's release belongs to the handler that took the continuation: every shot runs against the live
+        // resource, and the release runs once, where the handler ends, told a clean end since the extent ran to one.
+        "a multi-shot capture over a bracket runs every shot against the live resource and releases once at the handler's end" in {
             val outcomes = ListBuffer[Maybe[Throwable]]()
+            var uses     = 0
             val body: Int < Ask =
                 Bracket(Effect.defer(7)) { a =>
-                    ask.map(x => a + x)
+                    ask.map { x =>
+                        uses += 1
+                        a + x
+                    }
                 }((_, outcome) => discard(outcomes += outcome))
             val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x * 100 + y)),
                 b => b
             )
-            discard(intercept[kyo.Closed](r.eval))
+            assert(r.eval == 809)
+            assert(uses == 2)
             assert(outcomes.toList.map(_.isEmpty) == List(true))
         }
 
@@ -1203,9 +1203,7 @@ class BracketTest extends AnyFreeSpec:
             assert(outcome.exists(_.exists(_ eq Boom)), s"the release was told: $outcome")
         }
 
-        // The recovering overload exists so a clause needing both does not have to drop to `handleCont` for the
-        // recovery and lose the holding, which is not a convenience: it changes when the dumped regions discharge.
-        "a recovering multi-shot clause still holds its regions" in {
+        "a recovering multi-shot clause releases once at its end" in {
             var events = List.empty[String]
             val v =
                 Bracket(Effect.defer(1)) { r =>
@@ -1298,7 +1296,7 @@ class BracketTest extends AnyFreeSpec:
             assert(events == List("use 1", "release 1", "use 2", "release 2", "use 3", "release 3"))
         }
 
-        "a later branch is refused before it can run, throwing branch included" in {
+        "a branch that throws after another ended tells the release it failed" in {
             var events = List.empty[String]
             val acquire: Int < Ask = Effect.defer {
                 events :+= "acquire"
@@ -1310,18 +1308,17 @@ class BracketTest extends AnyFreeSpec:
                     ask.map { a =>
                         if a < 0 then throw boom else a + r
                     }
-                }((r, _) => events :+= s"release $r")
+                }((r, outcome) => events :+= s"release $r ${outcome.exists(_ eq boom)}")
             val twice =
                 ArrowEffect.handleCont(Tag[Ask], v)(
                     [C] => (_, cont) => cont(10).map(a => cont(-1).map(b => a + b)),
                     a => a
                 )
-            val failure = intercept[kyo.Closed](twice.eval)
-            assert(!failure.getSuppressed.contains(boom))
-            assert(events == List("acquire", "release 1"))
+            assert(intercept[RuntimeException](twice.eval) eq boom)
+            assert(events == List("acquire", "release 1 true"))
         }
 
-        "no branch of a multi-shot clause reads a resource that was already released" in {
+        "every branch of a multi-shot clause reads the live resource" in {
             var closed             = false
             var seen               = List.empty[String]
             val acquire: Int < Ask = Effect.defer(1)
@@ -1337,11 +1334,12 @@ class BracketTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
-            discard(intercept[kyo.Closed](twice.eval))
-            assert(seen == List("branch 10"))
+            assert(twice.eval == 32)
+            assert(closed)
+            assert(seen == List("branch 10", "branch 20"))
         }
 
-        "a Choice-shaped clause is refused at its second branch" in {
+        "a Choice-shaped clause runs every branch against the live resource" in {
             var closed             = false
             var seen               = List.empty[String]
             val acquire: Int < Ask = Effect.defer(100)
@@ -1357,11 +1355,12 @@ class BracketTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(1).map(a => cont(2).map(b => cont(3).map(c => a + b + c))),
                     a => a
                 )
-            discard(intercept[kyo.Closed](branches.eval))
-            assert(seen == List("branch 1"))
+            assert(branches.eval == 306)
+            assert(closed)
+            assert(seen == List("branch 1", "branch 2", "branch 3"))
         }
 
-        "nested brackets shared by a multi-shot clause are refused at the second branch" in {
+        "nested brackets shared by a multi-shot clause release inner first at the handler's end" in {
             var events           = List.empty[String]
             val outer: Int < Ask = Effect.defer(1)
             val v =
@@ -1378,8 +1377,8 @@ class BracketTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
-            discard(intercept[kyo.Closed](twice.eval))
-            assert(events == List("branch 10", "release inner", "release outer"))
+            assert(twice.eval == 36)
+            assert(events == List("branch 10", "branch 20", "release inner", "release outer"))
         }
 
         "a continuation held past the end of the eval refuses every time it is applied" in {
@@ -1402,12 +1401,13 @@ class BracketTest extends AnyFreeSpec:
             assert(count == 1)
         }
 
-        "a handleFirst remainder carries the bracket it was handed: the first shot completes it, the second is refused" in {
-            // The clause hands the continuation out as the region's value, so the bracket dumped into it is owed
-            // to the scope below until the remainder resumes and completes it. Still one-shot: the second
-            // application finds the cell completed and is refused.
+        "a handleFirst remainder applied more than once runs each application against the live resource, released once where the scope below ends" in {
+            // The clause hands the continuation out as the region's value, so the bracket dumped into it is
+            // forwarded to the scope below, which releases it at its own end: every application of the remainder
+            // runs before that, against the live resource.
             var closed             = false
             var closedAtClause     = false
+            var closedAfter        = false
             var seen               = List.empty[String]
             val acquire: Int < Ask = Effect.defer(1)
             val v =
@@ -1426,37 +1426,13 @@ class BracketTest extends AnyFreeSpec:
                     ,
                     done = a => a
                 )
-            discard(intercept[kyo.Closed](answerAsk(0)(branches).eval))
+            val r = answerAsk(0)(branches.map { a =>
+                closedAfter = closed
+                a
+            })
+            assert(r.eval == 32)
             assert(!closedAtClause)
-            assert(closed)
-            assert(seen == List("branch 10"))
-        }
-
-        "a handleFirstRepeated remainder is held across every application, and each runs against the live resource" in {
-            // The remainder is declared as one the holder applies more than once, so its bracket is held past the
-            // first application and released where the scope below ends.
-            var closed             = false
-            var closedAtClause     = false
-            var seen               = List.empty[String]
-            val acquire: Int < Ask = Effect.defer(1)
-            val v =
-                Bracket(acquire) { r =>
-                    ask.map { a =>
-                        seen :+= (if closed then s"branch $a after release" else s"branch $a")
-                        a + r
-                    }
-                }((_, _) => closed = true)
-            val branches: Int < Ask =
-                ArrowEffect.handleFirstRepeated(Tag[Ask], v)(
-                    handle = [C] =>
-                        (_, cont) =>
-                            closedAtClause = closed
-                            cont(10).map(a => cont(20).map(b => a + b))
-                    ,
-                    done = a => a
-                )
-            assert(answerAsk(0)(branches).eval == 32)
-            assert(!closedAtClause)
+            assert(!closedAfter)
             assert(closed)
             assert(seen == List("branch 10", "branch 20"))
         }
@@ -1606,9 +1582,9 @@ class BracketTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
-            discard(intercept[kyo.Closed](twice.eval))
+            assert(twice.eval == 32)
             assert(acquired == 1)
-            assert(seen == List(1))
+            assert(seen == List(1, 1))
         }
 
         "a branch built inside a clause and evaluated later is refused" in {

@@ -65,18 +65,6 @@ object Effect:
             end new
     end defer
 
-    /** Defers the application of a step fused with its input: what `defer` builds, as a node the evaluator does not stop in front of.
-      *
-      * For an `Ensure` over a pending input and for a crossing's delivery, where the input's arrival and the step are one; see
-      * [[kyo.kernel.internal.Pending.Fused]].
-      */
-    def fused[A, B, C, S](v: A < S, cont1: Arrow[A, B, S], cont2: Arrow[B, C, S]): C < S =
-        new Pending.Fused[A, B, C, S]:
-            def frame = Frame.internal
-            def value = v
-            def contA = cont1
-            def contB = cont2
-
     def defer[A, B, C, D, S](v: A < S, cont1: Arrow[A, B, S], cont2: Arrow[B, C, S], cont3: Arrow[C, D, S]): D < S =
         if cont1.isInstanceOf[Arrow.Id[?]] then
             defer(v, cont2.asInstanceOf[Arrow[A, C, S]], cont3)

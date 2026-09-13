@@ -32,7 +32,7 @@ abstract private[kyo] class Debugger:
 
     def onForeign(suspend: Pending.Suspend[?, ?, ?, ?], handler: Handler[?, ?, ?]): Unit = ()
 
-    def onRelease(handler: Handler[?, ?, ?], ex: Throwable): Unit = ()
+    def onRelease(release: Release, outcome: kyo.Maybe[Throwable]): Unit = ()
 
     def onRecover(handler: Handler[?, ?, ?], ex: Throwable): Unit = ()
 
@@ -90,8 +90,9 @@ private[kyo] object Debugger:
     inline def onRegionEnter(handler: Handler[?, ?, ?], state: Any): Unit = inline if enabled then get.onRegionEnter(handler, state)
     inline def onRegionExit(handler: Handler[?, ?, ?], result: Any): Unit = inline if enabled then get.onRegionExit(handler, result)
     inline def onRecover(handler: Handler[?, ?, ?], ex: Throwable): Unit  = inline if enabled then get.onRecover(handler, ex)
-    inline def onRelease(handler: Handler[?, ?, ?], ex: Throwable): Unit  = inline if enabled then get.onRelease(handler, ex)
-    inline def onResult(value: Any): Unit                                 = inline if enabled then get.onResult(value)
+    inline def onRelease(release: Release, outcome: kyo.Maybe[Throwable]): Unit =
+        inline if enabled then get.onRelease(release, outcome)
+    inline def onResult(value: Any): Unit = inline if enabled then get.onResult(value)
 
     inline def onForeign(suspend: Pending.Suspend[?, ?, ?, ?], handler: Handler[?, ?, ?]): Unit =
         inline if enabled then get.onForeign(suspend, handler)

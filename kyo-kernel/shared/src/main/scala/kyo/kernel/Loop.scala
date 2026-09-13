@@ -152,6 +152,13 @@ object Loop:
             case v: Done[O @unchecked] => v.value
             case v                     => v.asInstanceOf[O]
 
+    // The done outcome for a value the evaluator already holds in union representation: as `done`, without lifting it
+    // again. A region's `done` answers with this when it ends with the body's value as it is.
+    private[kyo] def settled[St, A, O, S](v: O < S): Outcome2[St, A, O < S] < S =
+        v match
+            case v: Continue2[?, ?] => new Done(v).asInstanceOf[Outcome2[St, A, O < S] < S]
+            case v                  => v.asInstanceOf[Outcome2[St, A, O < S] < S]
+
     private val _continueUnit: Continue[Unit] =
         new Continue:
             def _1 = ()

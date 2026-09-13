@@ -6,6 +6,7 @@ import kyo.kernel.Loop
 import kyo.kernel.internal.Debugger
 import kyo.kernel.internal.Handler
 import kyo.kernel.internal.Pending
+import kyo.kernel.internal.Release
 
 /** A [[Debugger]] that prints the evaluator's steps as they happen, indented by region depth.
   *
@@ -118,11 +119,11 @@ final class ConsoleDebugger extends Debugger:
         )
     end onForeign
 
-    override def onRelease(handler: Handler[?, ?, ?], ex: Throwable): Unit =
+    override def onRelease(release: Release, outcome: kyo.Maybe[Throwable]): Unit =
         log(
             s"""|🧹 release
-                |handler: $handler
-                |ex: $ex""".stripMargin
+                |release: $release
+                |outcome: $outcome""".stripMargin
         )
 
     override def onRecover(handler: Handler[?, ?, ?], ex: Throwable): Unit =

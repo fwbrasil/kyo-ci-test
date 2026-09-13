@@ -114,7 +114,11 @@ object ArrowEffect:
       *
       * Each occurrence is answered independently: the clause receives the operation's input and the rest of the computation as an [[Arrow]],
       * and answers by applying it. Never applying it abandons that remainder, which is how an early exit is written. Applying it more than
-      * once calls for [[handleContRepeated]], which holds the region's obligations across the resumptions.
+      * once calls for [[handleContRepeated]], which re-enters the region on each application.
+      *
+      * The regions between this handler and the operation travel with the continuation, and what they hold to release, a bracket's
+      * release among them, is this region's from then on: it runs when this region ends, told a clean end if the extent ran to one under
+      * a resumption, and refuses a resumption after that.
       *
       * The rows place this clause inside the region it serves: its result is at `E & S & S2`, so an operation of `E` the clause performs is
       * answered by this same handler and the clause is re-entrant. That is the difference from [[handleLoop]], whose clause sits outside the
@@ -181,20 +185,12 @@ object ArrowEffect:
 
     /** Handles an arrow effect with a clause that may resume its continuation more than once.
       *
-      * As [[handleCont]], except this region holds the regions it dumps into the continuation it hands the clause. A
-      * region that discharges exactly once, a bracket's release, would otherwise fire when the first resumption ends
-      * its extent, leaving later resumptions running against something already released; held, it discharges once,
-      * where this region ends.
-      *
-      * Each application of the continuation re-enters this region: the resumption runs under a fresh region of this
-      * handler, so an operation it performs never captures what the clause itself left pending between two
-      * applications. A bracket acquired inside one resumption belongs to that fresh region and is released where it
-      * ends, before the clause applies the continuation again; only a bracket acquired in the extent this region
-      * holds waits for this region's end.
-      *
-      * Only for a clause that really does resume more than once: holding keeps the obligation longer than a
-      * single-shot clause needs. A clause that resumes more than once without it is refused at the bracket it
-      * re-enters.
+      * As [[handleCont]], except each application of the continuation re-enters this region: the resumption runs
+      * under a fresh region of this handler, so an operation it performs never captures what the clause itself left
+      * pending between two applications. A bracket acquired inside one resumption belongs to that fresh region and
+      * is released where it ends, before the clause applies the continuation again; a bracket in the extent the
+      * continuation carries is this region's, as in [[handleCont]], and runs against the live resource under every
+      * application.
       */
     @nowarn("msg=anonymous")
     inline def handleContRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
@@ -216,7 +212,6 @@ object ArrowEffect:
                         def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                             Region.discharge(handle[X](input, Handler.reentering[I, O, E, A, S & S2, X](next, reentered)))
                         def done(state: Unit, v0: A) = onDone(v0)
-                        override def repeated        = true
 
                 new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
                     override def frame = _frame
@@ -232,8 +227,7 @@ object ArrowEffect:
     /** Handles an arrow effect with a clause that may resume more than once, with a recover arm.
       *
       * As [[handleContRepeated]], except a failure of the handled computation is offered to recover, exactly as in the recovering
-      * [[handleCont]]. Without this overload a clause needing both would have to drop to [[handleCont]] for the recovery and lose the
-      * holding, which is not a convenience but a change in when the regions it dumps into the continuation discharge.
+      * [[handleCont]].
       *
       * @param effectTag
       *   Identifies which arrow effect to answer
@@ -272,7 +266,6 @@ object ArrowEffect:
                                 Region.discharge(handle[X](input, Handler.reentering[I, O, E, A, S & S2, X](next, reentered)))
                             def done(state: Unit, v1: A)                     = onDone(v1)
                             override def recover(state: Unit, ex: Throwable) = onRecover(ex)
-                            override def repeated                            = true
 
                     new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
                         override def frame = _frame
@@ -897,10 +890,10 @@ object ArrowEffect:
       * unhandled.
       *
       * The continuation handed to `handle` is the remainder of `v`, carrying every region that sat between this handler and the
-      * operation, a bracket included. Those regions are re-installed when the holder resumes the continuation, so a bracket inside the
-      * remainder releases once, when the remainder completes. A remainder that is never resumed releases with the discard outcome at the
-      * exit of the scope enclosing this handler, or at the end of the evaluation. A remainder resumed a second time is refused at the
-      * bracket it re-enters.
+      * operation, a bracket included. Those regions are re-installed when the holder resumes the continuation, however many times, and
+      * what they hold to release belongs to the scope enclosing this handler: a bracket inside the remainder releases once, at that
+      * scope's exit, or at the end of the evaluation, told a clean end if its extent ran to one under a resumption and the discard
+      * outcome if it never did. A remainder resumed after that is refused at the bracket it re-enters.
       *
       * @param effectTag
       *   Identifies which arrow effect to answer
@@ -932,8 +925,8 @@ object ArrowEffect:
                                 def input = input0
                                 def cont  = cont0.asInstanceOf[Arrow[O[X], A, E & S]]
                         def done(state: Unit, r: A | First) = onDone(r)
-                        // the token carries the region's continuation out: what the region owes at its exit
-                        // belongs to the scope below until the holder resumes or drops the remainder
+                        // the token carries the region's continuation out: what the region holds to release at
+                        // its exit is forwarded to the scope below, which runs it at its own
                         override def escaping = true
 
                 new Pending.HandleArrow[Unit, E, A | First, B, B, S & S2]:
@@ -946,52 +939,6 @@ object ArrowEffect:
             case _ => done(Nested.unnest(v))
         end match
     end handleFirst
-
-    /** [[handleFirst]] for a clause that applies the continuation it peels more than once.
-      *
-      * The remainder is handed out as usual and held across every application, so a bracket travelling with it is not
-      * released by whichever application finishes first. `Choice.runStream` is the shape: it applies the peeled
-      * continuation once per branch and evaluates the results outside the clause.
-      */
-    @nowarn("msg=anonymous")
-    private[kyo] inline def handleFirstRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
-        inline effectTag: Tag[E],
-        v: A < (E & S)
-    )(
-        inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < (S & S2),
-        inline done: A => B < (S & S2)
-    )(using inline _frame: Frame): B < (S & S2) =
-        type First = FirstSuspended[I, O, E, A, E & S]
-        def onDone(r: A | First): B < (S & S2) =
-            r match
-                case first: First @unchecked => handle[first.C](first.input, first.cont)
-                case a                       => done(a.asInstanceOf[A])
-        v match
-            case _: Pending[?, ?] =>
-                val h =
-                    new Handler.ContHandler[I, O, E, A | First, B, S & S2]:
-                        def tag = effectTag
-                        def run[X](input0: I[X], cont0: Arrow[O[X], A | First, E & S & S2]) =
-                            new FirstSuspended[I, O, E, A, E & S]:
-                                type C = X
-                                def input = input0
-                                def cont  = cont0.asInstanceOf[Arrow[O[X], A, E & S]]
-                        def done(state: Unit, r: A | First) = onDone(r)
-                        // as handleFirst, plus held: the holder applies the remainder more than once, so what
-                        // the region owes must survive each application, not be settled by the first
-                        override def escaping = true
-                        override def repeated = true
-
-                new Pending.HandleArrow[Unit, E, A | First, B, B, S & S2]:
-                    override def frame = _frame
-                    def value          = v
-                    def handler        = h
-                    def state          = ()
-                    def cont           = Arrow.id
-                end new
-            case _ => done(Nested.unnest(v))
-        end match
-    end handleFirstRepeated
 
     // Mask must re-suspend an operation it cannot inspect, so the clause is handed the operation, not its input.
 

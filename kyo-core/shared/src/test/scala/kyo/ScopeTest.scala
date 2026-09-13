@@ -1090,7 +1090,7 @@ class ScopeTest extends kyo.test.Test[Any]:
 
         // With the release registered in a suspension that follows the acquire, an interrupt pending when the
         // acquire completes parks the evaluation before that registration is dispatched, leaving the acquired
-        // value held by nobody. `ensureMap` records the release in the step the value arrives in.
+        // value held by nobody. The bracket's region takes the value in its own hook as it arrives.
         //
         // The acquire interrupts its own fiber and then produces its value, so delivery lands at the next
         // safepoint, after the acquire and at or before the registration. Rounds, since the window is narrow.
@@ -1132,8 +1132,8 @@ class ScopeTest extends kyo.test.Test[Any]:
         }
 
         // The same window with one more suspension in the acquire after the interrupt: the acquire runs to its
-        // end, so a real one would have opened its handle, but the interrupt parks before `ensureMap` applies.
-        // A single-node acquire always releases, so only this shape leaves the value registered nowhere.
+        // end, so a real one would have opened its handle, and the interrupt lands on its last step. A
+        // single-node acquire always releases, so only this shape could leave the value registered nowhere.
         "an acquire whose last step follows the interrupt is still released" in {
             val rounds = 200
             for

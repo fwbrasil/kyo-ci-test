@@ -161,11 +161,13 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             _       <- permits.put(())
             gate    <- Promise.init[Unit, Any]
             inner <- Fiber.initUnscoped {
-                gate.get.ensureMap { _ =>
-                    // Unsafe: the take has to happen in the step the wakeup delivers, not behind a deferral of its own.
+                // A bracket over the wait: the take happens in the region's own hook as the wakeup delivers, not
+                // behind a deferral of its own.
+                Bracket(gate.get) { _ =>
+                    // Unsafe: the take is the bracket's use, a synchronous step.
                     import AllowUnsafe.embrace.danger
                     discard(permits.unsafe.poll())
-                }
+                }((_, _) => ())
             }
             parent <- Fiber.initUnscoped {
                 Scope.run {

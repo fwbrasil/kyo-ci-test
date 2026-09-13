@@ -63,18 +63,6 @@ class KernelTest extends AnyFreeSpec:
             assert(v.eval == 42)
         }
 
-        // `ensureMap` expanded into `new Arrow.Ensure`, a `private[kyo]` class, so every call site outside the
-        // package failed to compile. This file is where that is caught: the assertion is secondary to compiling.
-        "ensureMap" in {
-            val r = answer(ask.ensureMap(a => a + 1)).eval
-            assert(r == 2)
-        }
-
-        "ensureMap composes with map" in {
-            val r = answer(ask.ensureMap(a => a + 1).map(b => b * 10)).eval
-            assert(r == 20)
-        }
-
         "Render of a settled value" in {
             val v: Int < Any = 42
             assert(render"$v" == "Kyo(42)")
@@ -535,15 +523,14 @@ class KernelTest extends AnyFreeSpec:
             assert(r.eval == 7)
         }
 
-        "the done and release hooks are accepted at the handle site" in {
+        "the done hook is accepted at the handle site" in {
             var completed = false
             val r = ContextEffect.handle(
                 Tag[Level],
                 derive = (_: Maybe[Int]) => 7,
                 fork = (l: Int) => l,
                 join = (parent: Int, _: Int, _: Int) => parent,
-                done = (_: Int) => completed = true,
-                release = (_: Int, _: Throwable) => ()
+                done = (_: Int) => completed = true
             )(level)
             assert(r.eval == 7)
             assert(completed)

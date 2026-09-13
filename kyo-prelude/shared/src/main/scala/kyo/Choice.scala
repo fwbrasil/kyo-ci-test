@@ -120,7 +120,7 @@ object Choice:
                         if pending.isEmpty then Loop.done
                         else
                             Kyo.foreach(pending) { v =>
-                                ArrowEffect.handleFirstRepeated(Tag[Choice], v)(
+                                ArrowEffect.handleFirst(Tag[Choice], v)(
                                     handle = [C] => (input, cont) => Chunk.from(input).map(cont(_)),
                                     done = r => Chunk(r: A < (Choice & S))
                                 )

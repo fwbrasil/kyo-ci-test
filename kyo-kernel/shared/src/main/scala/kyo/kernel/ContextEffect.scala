@@ -275,38 +275,11 @@ object ContextEffect:
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         handle(effectTag, (outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join)(v)
 
-    /** Handles a context effect with explicit fork and join strategies and a release hook.
-      *
-      * @param effectTag
-      *   Identifies which context effect to handle
-      * @param ifUndefined
-      *   The value to use when no existing value is found
-      * @param ifDefined
-      *   The transformation to apply to any existing value
-      * @param fork
-      *   Computes the value a forked computation starts with from the parent's
-      * @param join
-      *   Computes the parent's value after a fork completes, from the parent's, the forked start and the forked end values
-      * @param release
-      *   Called with the region's value and the failure when the region does not complete normally
-      * @param v
-      *   The computation requiring the context value
-      */
-    inline def handle[A, E <: ContextEffect[A], B, S](
-        inline effectTag: Tag[E],
-        inline ifUndefined: A,
-        inline ifDefined: A => A,
-        inline fork: A => A,
-        inline join: (A, A, A) => A,
-        inline release: (A, Throwable) => Unit
-    )(v: B < (E & S))(using inline _frame: Frame): B < S =
-        handle(effectTag, (outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join, release = release)(v)
-
     /** Binds a value over a computation, with the full set of strategies.
       *
       * The arms cover the value's whole life in the region: `derive` produces it from whatever an outer handler bound, `fork` and `join`
-      * decide what a forked computation starts with and what the parent holds once that fork rejoins, and exactly one of `done` or `release`
-      * runs at the end, according to whether the region completed normally.
+      * decide what a forked computation starts with and what the parent holds once that fork rejoins, and `done` runs when the region
+      * completes normally. A binding owns nothing to release; a region that does is a [[Bracket]].
       *
       * The narrower entry points are this one with arms filled in. [[handleInheritable]] forks the parent's value as it stands and keeps the
       * parent's on join; [[handleNonInheritable]] derives a fresh value for the fork instead, as though no outer binding existed.
@@ -321,8 +294,6 @@ object ContextEffect:
       *   Computes the parent's value after a fork completes, from the parent's, the forked start and the forked end values
       * @param done
       *   Called with the region's value when the region completes normally
-      * @param release
-      *   Called with the region's value and the failure when the region does not complete normally
       * @param v
       *   The computation requiring the context value
       */
@@ -332,22 +303,21 @@ object ContextEffect:
         inline derive: Maybe[A] => A,
         inline fork: A => A,
         inline join: (A, A, A) => A,
-        inline done: A => Unit = (_: A) => (),
-        inline release: (A, Throwable) => Unit = (_: A, _: Throwable) => ()
+        inline done: A => Unit = (_: A) => ()
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
-        def derived(outer: Maybe[A]): A             = derive(outer)
-        def forked(parent: A): A                    = fork(parent)
-        def joined(parent: A, fk: A, child: A): A   = join(parent, fk, child)
-        def completed(state: A): Unit               = done(state)
-        def released(state: A, ex: Throwable): Unit = release(state, ex)
+        def derived(outer: Maybe[A]): A           = derive(outer)
+        def forked(parent: A): A                  = fork(parent)
+        def joined(parent: A, fk: A, child: A): A = join(parent, fk, child)
+        def completed(state: A): Unit             = done(state)
         val h =
             new Handler.ContextHandler[A, E, B, S]:
-                def tag                                                    = effectTag
-                def derive(outer: Maybe[A])                                = derived(outer)
-                def fork(parent: A)                                        = forked(parent)
-                def join(parent: A, forked: A, child: A)                   = joined(parent, forked, child)
-                override private[kyo] def done(state: A)                   = completed(state)
-                override private[kyo] def release(state: A, ex: Throwable) = released(state, ex)
+                def tag                                  = effectTag
+                def derive(outer: Maybe[A])              = derived(outer)
+                def fork(parent: A)                      = forked(parent)
+                def join(parent: A, forked: A, child: A) = joined(parent, forked, child)
+                override private[kyo] def done[S2 <: S](state: A, value: B < S2) =
+                    completed(state)
+                    Loop.settled[A, B < (E & S2), B, S2](value)
 
         new Pending.HandleContext[A, E, B, S]:
             override def frame = _frame

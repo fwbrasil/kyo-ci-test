@@ -319,10 +319,11 @@ object Isolate:
                 extends Handler.ContextHandler[State, E, A, S]:
                 def tag = origin.tag
 
-                def derive(outer: Maybe[State]): State                      = origin.derive(outer)
-                def fork(parent: State): State                              = origin.fork(parent)
-                def join(parent: State, forked: State, child: State): State = origin.join(parent, forked, child)
-                override private[kyo] def reenter(state: State): Unit       = origin.reenter(state)
+                def derive(outer: Maybe[State]): State                               = origin.derive(outer)
+                def fork(parent: State): State                                       = origin.fork(parent)
+                def join(parent: State, forked: State, child: State): State          = origin.join(parent, forked, child)
+                override private[kyo] def done[S2 <: S](state: State, value: A < S2) = origin.done(state, value)
+                override private[kyo] def release(state: State)                      = origin.release(state)
             end Forked
 
             private def fork(entries: Stack.Snapshot): Stack.Snapshot =

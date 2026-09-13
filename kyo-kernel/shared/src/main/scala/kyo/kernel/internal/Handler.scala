@@ -20,31 +20,20 @@ import scala.annotation.publicInBinary
 /** What a region installs: the clause that answers an effect, plus what the evaluator has to know to run the region around it.
   *
   * One instance per region entry, pushed onto the [[Stack]] and matched by [[tag]] when a suspension looks for who answers it. The subclasses
-  * below are the answering shapes the public API offers; everything they have in common is here, and it is all information the evaluator
-  * needs about a region rather than about the effect: whether the clause may resume more than once, whether it hands the continuation out,
-  * and what the region contributes to the context.
+  * below are the answering shapes the public API offers; everything they have in common is here, and it is information the evaluator needs
+  * about a region rather than about the effect: whether the clause hands the continuation out.
   *
-  * Those three are declared rather than inferred because the evaluator has to decide what to do with a region's obligations before the clause
+  * That is declared rather than inferred because the evaluator has to decide what to do with the releases a handler holds before the clause
   * has run, and by then it is too late to observe what the clause actually does.
   */
 sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
     def tag: Tag[E]
 
-    /** Whether this handler's clause resumes the cont it is given more than once.
-      *
-      * Answering a suspension dumps the regions between this handler and that suspension into the cont. A region
-      * that discharges exactly once, a bracket's release, cannot be left to answer for itself when the same cont
-      * can be resumed again: whichever resumption ends its extent first would fire the release under the rest.
-      * Declaring this holds those regions, so an ending only records its outcome and the debt is discharged once,
-      * where this handler ends.
-      */
-    def repeated: Boolean = false
-
     /** Whether this handler's clause hands the cont out of the clause as a value.
       *
       * Such a clause has not finished with what it owes when its answer settles: the remainder is still live in
-      * whoever holds it. The debt moves to the scope below, to be settled when the remainder resumes and drained
-      * at that scope's exit if it never does.
+      * whoever holds it. The releases this handler's entry holds are forwarded to the entry below at its normal end,
+      * to run when that one ends, rather than run here.
       */
     def escaping: Boolean = false
 
@@ -124,45 +113,21 @@ end Handler
             stack: Stack,
             idx: Int
         ): Outcome[O[X] < (E & S), B < S] < S =
-            // The clause runs outside the regions between this one and the suspension, so a throw from it leaves
-            // them for this region to answer for: dumping takes them off the stack and records the debt here,
-            // discharged when this region itself unwinds.
+            // The clause runs outside the regions between this one and the suspension, so a throw from it is not
+            // the body's: the gap pushed before the rethrow has the unwind release this region and those above it
+            // without offering the throw to them.
             try run(input)
             catch
                 case ex =>
-                    discard(Eval.dumped(stack, idx, kyo))
                     EffectTrace.attach(ex, kyo, stack)
+                    stack.hide(idx)
                     throw ex
-
-        /** The arrow that reads a settled outcome and either re-enters the region with the answer or leaves with the result.
-          *
-          * A `Continue` rebuilds the region as a fresh `Handle` value over the answer, which is what makes resumption the same operation as
-          * entry rather than a separate path through the evaluator. Anything else is the loop's result, already at the row outside, so it is
-          * handed straight to the caller's continuation. An outcome that has not settled defers and comes back here.
-          */
-        private[kyo] def clauseDispatch: Arrow[Outcome[A < (E & S), B < S], B, S] =
-            type OutT = Outcome[A < (E & S), B < S]
-            new Arrow.Step[OutT, B, S]:
-                def frame = Frame.internal
-                override def apply[D, S3](out: OutT < S3, cont2: Arrow[B, D, S3]) =
-                    out match
-                        case p: Pending[OutT, S3] @unchecked =>
-                            Effect.defer(p, this, cont2)
-                        case out: Continue[A < (E & S)] @unchecked =>
-                            cont2(Pending.handle[Unit, E, A, B, S](
-                                out._1,
-                                LoopHandler.this,
-                                ()
-                            ))
-                        case out =>
-                            cont2(Nested.unnest[B < S](Loop.unnest(out.asInstanceOf[OutT])))
-            end new
-        end clauseDispatch
 
         /** Answers one occurrence for a region that is at the top of the stack, applying the continuation to the answer without leaving.
           *
           * This is the fused path, which is why it is separate from [[running]]: the region does not have to be exited and re-entered for an
-          * occurrence it can answer in place, so the answer goes straight into `k`.
+          * occurrence it can answer in place, so the answer goes straight into `k`. A pending outcome is handed back as it is, its answer
+          * unapplied: the gap the evaluator pushes over it applies `k` when the answer arrives.
           *
           * A throwable is turned into a deferred re-raise carried by `Loop.continue` rather than thrown from here, so it reaches the
           * evaluator as an ordinary computation and unwinds through the regions the continuation reinstalls, rather than from wherever this
@@ -213,28 +178,9 @@ end Handler
             try run(state, input)
             catch
                 case ex =>
-                    discard(Eval.dumped(stack, idx, kyo))
                     EffectTrace.attach(ex, kyo, stack)
+                    stack.hide(idx)
                     throw ex
-
-        private[kyo] def clauseDispatch: Arrow[Outcome2[State, A < (E & S), B < S], B, S] =
-            type OutT = Outcome2[State, A < (E & S), B < S]
-            new Arrow.Step[OutT, B, S]:
-                def frame = Frame.internal
-                override def apply[D, S3](out: OutT < S3, cont2: Arrow[B, D, S3]) =
-                    out match
-                        case p: Pending[OutT, S3] @unchecked =>
-                            Effect.defer(p, this, cont2)
-                        case out: Continue2[State, A < (E & S)] @unchecked =>
-                            cont2(Pending.handle[State, E, A, B, S](
-                                out._2,
-                                LoopStateHandler.this,
-                                out._1
-                            ))
-                        case out =>
-                            cont2(Nested.unnest[B < S](Loop.unnest(out.asInstanceOf[OutT])))
-            end new
-        end clauseDispatch
 
         def answers[X](
             state: State,
@@ -278,36 +224,44 @@ end Handler
         def fork(parent: State): State
         def join(parent: State, forked: State, child: State): State
 
-        /** This region's extent ran to an end.
+        /** The body's value settled with this region on top.
           *
-          * No value, unlike [[Handler.ArrowHandler.done]]: the evaluator reaches this with whatever the stack it is
-          * running in produced, and a crossing wraps a forked result, so the origin's `A` is not what arrives.
+          * `Loop.continue(state, body)` keeps the region installed over more body, with the state it names, which is how
+          * a bracket turns the acquire's value into its use under a cell that now owns it; anything else ends the region
+          * with that as its value. The value arrives in union representation, and the default ends with it as it is.
+          * The row is a parameter bounded by the region's because the outcome holds it invariantly.
           */
-        private[kyo] def done(state: State): Unit = ()
+        private[kyo] def done[S2 <: S](state: State, value: A < S2): Outcome2[State, A < (E & S2), A < S2] < S2 =
+            Loop.settled(value)
 
-        /** Takes custody of this region because the handler that dumped it will resume the cont again. */
-        private[kyo] def borrow(state: State): Unit = ()
-
-        /** Whether this region is under custody and must not be handed back its own answerability on resumption. */
-        private[kyo] def defers(state: State): Boolean = false
-
-        private[kyo] def reenter(state: State): Unit = ()
-
-        private[kyo] def release(state: State, ex: Throwable): Unit = ()
-
-        /** Discharges this region where its owner ends normally, as opposed to [[release]], which reports a failure that
-          * unwound it. A held region records the outcome of each ending, and this is where that record is acted on;
-          * `ex` is the discard signal, used only when nothing was ever recorded.
+        /** The release this region owes for `state`, if any.
+          *
+          * It goes into the region's entry as the region is pushed and runs when the entry holding it pops, whichever
+          * entry that is by then: a dump moves it to the handler that took the continuation, an escaping handler
+          * forwards it below.
           */
-        private[kyo] def discharge(state: State, ex: Throwable): Unit = release(state, ex)
+        private[kyo] def release(state: State): Maybe[Release] = Absent
     end ContextHandler
+
+    /** The effect nothing raises, the tag of [[Gap]]. */
+    sealed trait Hidden extends Effect
+
+    /** The entry pushed over a loop clause's own computation, hiding the handler and the regions above it from dispatch.
+      *
+      * A loop clause answers at the row outside its region, so what it runs must find neither that region nor the regions
+      * between it and the suspension, while everything below stays in reach. Rather than taking those entries off the
+      * stack, the evaluator pushes this over them, with the number of entries it hides as its state and the suspension's
+      * continuation as its own, and [[Stack.find]] steps over what it hides. The outcome settling with the gap on top
+      * lifts it with a continue, or discards through it with anything else; an unwind releases what it hides without
+      * offering the throw to them, since it is not the body's.
+      */
+    object Gap extends Handler[Hidden, Any, Any]:
+        def tag               = Tag[Hidden]
+        override def toString = "Gap"
+    end Gap
 
     /** The handler a re-entered region runs under: `outer` with `done` as identity, so the region a resumption
       * re-enters yields the body's value and `outer`'s `done` still runs once, at the outer region's end.
-      *
-      * It repeats, as `outer` does: a continuation captured inside a re-entered region is resumed by the same clause,
-      * more than once, so what that region owes (a bracket captured in the continuation, say) must be held across
-      * every application and discharged when the re-entered region ends, once the last of them has run.
       */
     private[kyo] def reentered[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
         outer: ContHandler[I, O, E, A, B, S]
@@ -316,7 +270,6 @@ end Handler
             def tag                                              = outer.tag
             def run[X](input: I[X], next: Arrow[O[X], A, E & S]) = outer.run(input, next)
             def done(state: Unit, v: A)                          = v
-            override def repeated                                = true
 
     /** Wraps the continuation a clause may resume more than once, so that each application re-enters the region,
       * through [[reentered]].
@@ -344,9 +297,13 @@ end Handler
       * region's remaining computation.
       *
       * The caller must pass the cont of the operation whose answer this outcome carries. That is the whole
-      * obligation, and it is why the attachment happens here rather than where the region is rebuilt: a walk
+      * obligation, and it is why the attachment happens here rather than where the outcome arrives: a walk
       * that fuses across a run of operations answers a different one on each turn, and only the walk knows
       * which. Applying it to an outcome that already carries a cont would apply two.
+      *
+      * The cont is applied where the outcome settles, under the gap that hides the region while the clause's
+      * computation runs, so a throw from the body's first steps is deferred rather than thrown here: it then
+      * unwinds through the region and what stands above it once the gap lifts, as the body's own failure.
       */
     private[kyo] def attachReentry[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, X0](
         reentry: Arrow[O[X0], A, E & S]
@@ -360,11 +317,18 @@ end Handler
                     case p: Pending[In, S3] @unchecked =>
                         Effect.defer(p, this, cont2)
                     case out: Continue[O[X0] < (E & S)] @unchecked =>
-                        cont2(Loop.continue[A < (E & S), B < S, S](reentry(out._1)))
+                        cont2(Loop.continue[A < (E & S), B < S, S](applying(reentry, out._1)))
                     case out =>
                         cont2(out.asInstanceOf[Out < S])
         end new
     end attachReentry
+
+    // The body's next step runs as the cont is applied to a settled answer, still under the gap: a throw there is
+    // the body's, so it is deferred and thrown once the gap has lifted and the regions are back in reach.
+    private def applying[O, A, S](reentry: Arrow[O, A, S], ans: O < S): A < S =
+        try reentry(ans)
+        catch
+            case ex if !kyo.IsFatal(ex) => Effect.deferInline[A, S](throw ex)(using Frame.internal)
 
     /** [[attachReentry]] for an outcome that may have settled already: a settled one passes through unchanged, a
       * pending one gets the cont attached.
@@ -393,7 +357,7 @@ end Handler
                     case p: Pending[In, S3] @unchecked =>
                         Effect.defer(p, this, cont2)
                     case out: Continue2[State, O[X0] < (E & S)] @unchecked =>
-                        cont2(Loop.continue[State, A < (E & S), B < S](out._1, reentry(out._2)))
+                        cont2(Loop.continue[State, A < (E & S), B < S](out._1, applying(reentry, out._2)))
                     case out =>
                         cont2(out.asInstanceOf[Out < S])
         end new

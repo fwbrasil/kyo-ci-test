@@ -88,20 +88,6 @@ object `<` extends Implicits:
             run(v.asInstanceOf[A < S], Arrow.id)
         end map
 
-        /** Maps the value this computation produces, with no preemption point between the value arriving and `f` running.
-          *
-          * `map` polls the safepoint before applying its function, so an interrupt pending when the value arrives parks the
-          * computation and `f` is never reached. That is wrong where `f` records an obligation the value has already created,
-          * a resource that is open and whose finalizer is not yet registered: the park drops the registration and the value
-          * leaks. This variant applies `f` as the value arrives, so an interrupt lands on either side of the pair.
-          */
-        inline def ensureMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            // Through `Arrow.ensure` rather than `new Arrow.Ensure` here: `Ensure` is `private[kyo]`, so naming it
-            // in this expansion made the method uncallable from outside the package.
-            // Cast per `map`'s note above.
-            Arrow.ensure[A](f)(v.asInstanceOf[A < S])
-        end ensureMap
-
         /** Maps the value produced by this computation to a new computation and flattens the result.
           *
           * This method exists to support for-comprehension syntax in Scala. It is identical to `map` and `map` should be preferred when not

@@ -11,10 +11,27 @@ import kyo.kernel.<
 import kyo.kernel.ArrowEffect
 import kyo.kernel.ContextEffect
 import org.scalatest.freespec.AnyFreeSpec
+import scala.collection.mutable.ListBuffer
 
 class StackTest extends AnyFreeSpec:
 
     private def as[A](v: Any): A = v.asInstanceOf[A]
+
+    // A release that records the outcome it was told under `name`.
+    private def release(log: ListBuffer[String], name: String): Release =
+        new Release:
+            private var done                           = false
+            def ran: Boolean                           = done
+            def apply(outcome: Maybe[Throwable]): Unit =
+                done = true
+                discard(log += s"$name ${if outcome.isEmpty then "absent" else "present"}")
+            def reenter(): Unit = ()
+
+    private def all(held: Stack.Releases): Chunk[Release] =
+        held match
+            case null                         => Chunk.empty
+            case c: Chunk[Release] @unchecked => c
+            case r: Release                   => Chunk(r)
 
     sealed trait Ask    extends ArrowEffect[Const[Unit], Const[Int]]
     sealed trait AskSub extends Ask
@@ -225,174 +242,206 @@ class StackTest extends AnyFreeSpec:
         }
     }
 
-    "clear empties the stack and forgets what it owed" in {
+    "clear empties the stack and forgets what it held" in {
+        val log   = ListBuffer[String]()
         val stack = new Stack
         stack.push(askHandler, (), Arrow.id[Int])
         stack.push(sayHandler, (), Arrow.id[Int])
-        discard(stack.dump(1))
-        assert(stack.owesAny)
+        stack.owe(1, release(log, "r"))
+        stack.oweBelow(0, release(log, "e"))
         stack.clear()
         assert(stack.isEmpty)
-        assert(!stack.owesAny)
         assert(stack.find(Tag[Ask]) == -1)
-        assert(stack.takeEvalOwed().isEmpty)
+        assert(stack.releases(1) == null)
+        assert(stack.takeEvalReleases() == null)
+        assert(log.isEmpty)
+    }
+
+    "releases" - {
+        "an entry starts holding nothing" in {
+            val stack = new Stack
+            stack.push(askHandler, (), Arrow.id[Int])
+            assert(stack.releases(0) == null)
+        }
+
+        "one release is held as itself, a second makes a chunk in order" in {
+            val log   = ListBuffer[String]()
+            val stack = new Stack
+            val r1    = release(log, "one")
+            val r2    = release(log, "two")
+            stack.push(askHandler, (), Arrow.id[Int])
+            stack.owe(0, r1)
+            assert(stack.releases(0) eq r1)
+            stack.owe(0, r2)
+            assert(all(stack.releases(0)).toIndexed == Chunk(r1, r2).toIndexed)
+        }
+
+        "oweAll appends a whole list after what is held" in {
+            val log   = ListBuffer[String]()
+            val stack = new Stack
+            val r1    = release(log, "one")
+            val r2    = release(log, "two")
+            val r3    = release(log, "three")
+            stack.push(askHandler, (), Arrow.id[Int])
+            stack.owe(0, r1)
+            stack.oweAll(0, Chunk(r2, r3))
+            assert(all(stack.releases(0)).toIndexed == Chunk(r1, r2, r3).toIndexed)
+            stack.oweAll(0, null)
+            assert(all(stack.releases(0)).toIndexed == Chunk(r1, r2, r3).toIndexed)
+        }
+
+        "oweBelow lands on the entry under the index, and on the evaluation's own list at the bottom" in {
+            val log   = ListBuffer[String]()
+            val stack = new Stack
+            val r1    = release(log, "one")
+            val r2    = release(log, "two")
+            stack.push(askHandler, (), Arrow.id[Int])
+            stack.push(sayHandler, (), Arrow.id[Int])
+            stack.oweBelow(1, r1)
+            stack.oweBelow(0, r2)
+            assert(stack.releases(0) eq r1)
+            assert(stack.releases(1) == null)
+            assert(stack.takeEvalReleases() eq r2)
+            assert(stack.takeEvalReleases() == null)
+        }
+
+        "takeReleases empties the entry it reads" in {
+            val log   = ListBuffer[String]()
+            val stack = new Stack
+            val r     = release(log, "one")
+            stack.push(askHandler, (), Arrow.id[Int])
+            stack.owe(0, r)
+            assert(stack.takeReleases(0) eq r)
+            assert(stack.takeReleases(0) == null)
+        }
+
+        "a popped entry drops what it held" in {
+            val log   = ListBuffer[String]()
+            val stack = new Stack
+            stack.push(askHandler, (), Arrow.id[Int])
+            stack.owe(0, release(log, "one"))
+            stack.pop()
+            assert(stack.releases(0) == null)
+            stack.push(sayHandler, (), Arrow.id[Int])
+            assert(stack.releases(0) == null)
+        }
+
+        "the pop runs nothing itself" in {
+            val log   = ListBuffer[String]()
+            val stack = new Stack
+            stack.push(askHandler, (), Arrow.id[Int])
+            stack.owe(0, release(log, "one"))
+            stack.pop()
+            assert(log.isEmpty)
+        }
     }
 
     "dump" - {
-        "takes the entries from the index up, outermost first, and owes them to the entry below" in {
+        "takes the entries from the index up, outermost first, and moves what they held to the entry below" in {
+            val log   = ListBuffer[String]()
             val stack = new Stack
             val a     = askHandler
             val b     = sayHandler
             val c     = statefulHandler
             val kb    = Arrow[Int](_ + 1)
             val kc    = Arrow[Int](_ + 2)
+            val rb    = release(log, "b")
+            val rc    = release(log, "c")
             stack.push(a, (), Arrow.id[Int])
             stack.push(b, (), kb)
             stack.push(c, 9, kc)
+            stack.owe(1, rb)
+            stack.owe(2, rc)
             val snapshot = stack.dump(1)
             assert(stack.depth == 1)
             assert(stack.handler(0) eq a)
             assert(snapshot.regions == 2)
             assert(snapshot.handler(0) eq b)
             assert(snapshot.continuation(0) eq kb)
+            assert(snapshot.releases(0) == null)
             assert(snapshot.handler(1) eq c)
             assert(as[Int](snapshot.state(1)) == 9)
             assert(snapshot.continuation(1) eq kc)
-            assert(stack.owesAny)
-            val owed = stack.takeOwed(0).toIndexed
-            assert(owed.length == 1)
-            assert(owed(0).regions == 2)
-            assert(owed(0).handler(1) eq c)
+            assert(snapshot.releases(1) == null)
+            assert(all(stack.releases(0)).toIndexed == Chunk(rb, rc).toIndexed)
+            assert(log.isEmpty)
         }
 
         "the vacated slots hold nothing afterwards" in {
+            val log   = ListBuffer[String]()
             val stack = new Stack
             stack.push(askHandler, (), Arrow.id[Int])
             stack.push(statefulHandler, 5, Arrow.id[Int])
+            stack.owe(1, release(log, "one"))
             discard(stack.dump(1))
             stack.push(sayHandler, (), Arrow.id[Int])
             assert(as[Unit](stack.state(1)) == ())
+            assert(stack.releases(1) == null)
             assert(stack.find(Tag[Ask]) == 0)
         }
 
-        "a dumped entry's own debts travel inside the snapshot" in {
+        "what the entry below already held comes first" in {
+            val log   = ListBuffer[String]()
             val stack = new Stack
+            val ra    = release(log, "a")
+            val rb    = release(log, "b")
             stack.push(askHandler, (), Arrow.id[Int])
             stack.push(sayHandler, (), Arrow.id[Int])
-            stack.push(statefulHandler, 1, Arrow.id[Int])
-            val inner = stack.dump(2)
-            val outer = stack.dump(1)
-            assert(stack.depth == 1)
-            assert(outer.regions == 1)
-            val carried = outer.owed(0).toIndexed
-            assert(carried.length == 1)
-            assert(carried(0).regions == inner.regions)
-            assert(carried(0).handler(0) eq inner.handler(0))
-            assert(stack.takeOwed(0).toIndexed.length == 1)
-        }
-
-        "takeOwed empties the lane it reads" in {
-            val stack = new Stack
-            stack.push(askHandler, (), Arrow.id[Int])
-            stack.push(sayHandler, (), Arrow.id[Int])
+            stack.owe(0, ra)
+            stack.owe(1, rb)
             discard(stack.dump(1))
-            assert(!stack.takeOwed(0).isEmpty)
-            assert(stack.takeOwed(0).isEmpty)
+            assert(all(stack.releases(0)).toIndexed == Chunk(ra, rb).toIndexed)
+        }
+    }
+
+    "hide" - {
+        "pushes a gap that find steps over, together with the entries it hides" in {
+            val stack = new Stack
+            val a     = askHandler
+            stack.push(a, (), Arrow.id[Int])
+            stack.push(sayHandler, (), Arrow.id[Int])
+            stack.push(statefulHandler, 1, Arrow.id[Int])
+            stack.hide(1)
+            assert(stack.depth == 4)
+            assert(stack.handler(3) eq Handler.Gap)
+            assert(stack.hidden(3) == 2)
+            assert(stack.find(Tag[Ask]) == 0)
+            assert(stack.handler(0) eq a)
+            assert(stack.find(Tag[Say]) == -1)
         }
 
-        "takePopped reads the lane of the entry just popped" in {
+        "an entry pushed above the gap is found first" in {
             val stack = new Stack
             stack.push(askHandler, (), Arrow.id[Int])
             stack.push(sayHandler, (), Arrow.id[Int])
-            stack.push(statefulHandler, 1, Arrow.id[Int])
-            val snapshot = stack.dump(2)
+            stack.hide(0)
+            val above = sayHandler
+            stack.push(above, (), Arrow.id[Int])
+            assert(stack.find(Tag[Say]) == 3)
+            assert(stack.handler(3) eq above)
+            assert(stack.find(Tag[Ask]) == -1)
+        }
+
+        "popping the gap puts what it hid back in reach" in {
+            val stack = new Stack
+            stack.push(askHandler, (), Arrow.id[Int])
+            stack.push(sayHandler, (), Arrow.id[Int])
+            stack.hide(0)
             stack.pop()
-            val popped = stack.takePopped().toIndexed
-            assert(popped.length == 1)
-            assert(popped(0).handler(0) eq snapshot.handler(0))
+            assert(stack.find(Tag[Say]) == 1)
+            assert(stack.find(Tag[Ask]) == 0)
         }
 
-        "owe appends to an entry's lane and oweBelow to the one under it" in {
+        "a gap over a gap hides the inner one and what it hides" in {
             val stack = new Stack
             stack.push(askHandler, (), Arrow.id[Int])
+            stack.hide(0)
             stack.push(sayHandler, (), Arrow.id[Int])
-            stack.push(statefulHandler, 1, Arrow.id[Int])
-            val first = stack.dump(2)
-            stack.push(statefulHandler, 2, Arrow.id[Int])
-            val second = stack.dump(2)
-            stack.owe(1, Chunk(first))
-            stack.oweBelow(1, Chunk(second))
-            val atOne  = stack.takeOwed(1).toIndexed
-            val atZero = stack.takeOwed(0).toIndexed
-            assert(atOne.length == 3)
-            assert(as[Int](atOne(2).state(0)) == 1)
-            assert(atZero.length == 1)
-            assert(as[Int](atZero(0).state(0)) == 2)
-        }
-
-        "settle removes the debt a resumed dump left" in {
-            val stack = new Stack
-            stack.push(askHandler, (), Arrow.id[Int])
-            stack.push(sayHandler, (), Arrow.id[Int])
-            val snapshot = stack.dump(1)
-            stack.settle(snapshot)
-            assert(stack.takeOwed(0).isEmpty)
-        }
-
-        "settle removes the matching debt wherever it sits in the lane and leaves the others" in {
-            val stack = new Stack
-            stack.push(askHandler, (), Arrow.id[Int])
-            stack.push(sayHandler, (), Arrow.id[Int])
-            val first = stack.dump(1)
-            stack.push(statefulHandler, 1, Arrow.id[Int])
-            val second = stack.dump(1)
-            stack.settle(first)
-            val left = stack.takeOwed(0).toIndexed
-            assert(left.length == 1)
-            assert(left(0).handler(0) eq second.handler(0))
-        }
-
-        "settle finds a debt owed below the top lane" in {
-            val stack = new Stack
-            stack.push(askHandler, (), Arrow.id[Int])
-            stack.push(sayHandler, (), Arrow.id[Int])
-            val snapshot = stack.dump(1)
-            stack.push(statefulHandler, 1, Arrow.id[Int])
-            stack.settle(snapshot)
-            assert(stack.takeOwed(0).isEmpty)
-            assert(stack.takeOwed(1).isEmpty)
-        }
-
-        "settle finds a debt owed on the eval's own lane" in {
-            val stack = new Stack
-            stack.push(askHandler, (), Arrow.id[Int])
-            stack.push(sayHandler, (), Arrow.id[Int])
-            val snapshot = stack.dump(1)
-            stack.oweBelow(0, stack.takeOwed(0))
-            stack.settle(snapshot)
-            assert(stack.takeEvalOwed().isEmpty)
-        }
-
-        "settle of an unrelated snapshot is a no-op" in {
-            val stack = new Stack
-            stack.push(askHandler, (), Arrow.id[Int])
-            stack.push(sayHandler, (), Arrow.id[Int])
-            discard(stack.dump(1))
-            stack.settle(Stack.Snapshot.empty)
-            assert(stack.takeOwed(0).toIndexed.length == 1)
-        }
-
-        "oweBelow at the bottom lands on the eval's own lane" in {
-            val stack = new Stack
-            stack.push(askHandler, (), Arrow.id[Int])
-            stack.push(sayHandler, (), Arrow.id[Int])
-            val snapshot = stack.dump(1)
-            stack.oweBelow(0, Chunk(snapshot))
-            assert(stack.owesAny)
-            val owed = stack.takeEvalOwed().toIndexed
-            assert(owed.length == 1)
-            assert(owed(0).handler(0) eq snapshot.handler(0))
-            assert(stack.takeEvalOwed().isEmpty)
+            stack.hide(1)
+            assert(stack.depth == 4)
+            assert(stack.hidden(3) == 2)
+            assert(stack.find(Tag[Say]) == -1)
+            assert(stack.find(Tag[Ask]) == -1)
         }
     }
 
@@ -411,20 +460,34 @@ class StackTest extends AnyFreeSpec:
             assert(snapshot.handler(1) eq b)
             assert(as[Int](snapshot.state(1)) == 3)
             assert(snapshot.continuation(1) eq kb)
-            assert(snapshot.owed(0).isEmpty)
-            assert(snapshot.owed(1).isEmpty)
+            assert(snapshot.releases(0) == null)
+            assert(snapshot.releases(1) == null)
         }
 
-        "carries each entry's debts with it" in {
+        "carries what each entry held with it, and leaves nothing behind" in {
+            val log   = ListBuffer[String]()
+            val stack = new Stack
+            val r     = release(log, "one")
+            stack.push(askHandler, (), Arrow.id[Int])
+            stack.push(sayHandler, (), Arrow.id[Int])
+            stack.owe(0, r)
+            val snapshot = stack.takeAll()
+            assert(snapshot.regions == 2)
+            assert(snapshot.releases(0) eq r)
+            assert(snapshot.releases(1) == null)
+            assert(stack.releases(0) == null)
+            assert(log.isEmpty)
+        }
+
+        "a gap travels with the entries it hides" in {
             val stack = new Stack
             stack.push(askHandler, (), Arrow.id[Int])
             stack.push(sayHandler, (), Arrow.id[Int])
-            val inner    = stack.dump(1)
+            stack.hide(1)
             val snapshot = stack.takeAll()
-            assert(snapshot.regions == 1)
-            val carried = snapshot.owed(0).toIndexed
-            assert(carried.length == 1)
-            assert(carried(0).handler(0) eq inner.handler(0))
+            assert(snapshot.regions == 3)
+            assert(snapshot.handler(2) eq Handler.Gap)
+            assert(as[Int](snapshot.state(2)) == 1)
         }
     }
 
@@ -440,7 +503,39 @@ class StackTest extends AnyFreeSpec:
             assert(snapshot.handler(0) eq env)
             assert(as[Int](snapshot.state(0)) == 5)
             assert(snapshot.continuation(0).isInstanceOf[Arrow.Id[?]])
-            assert(snapshot.owed(0).isEmpty)
+            assert(snapshot.releases(0) == null)
+        }
+
+        "keeps the bindings in the order the stack holds them" in {
+            val stack = new Stack
+            val outer = envHandler
+            val inner = envHandler
+            stack.push(outer, 1, Arrow.id[Int])
+            stack.push(askHandler, (), Arrow.id[Int])
+            stack.push(inner, 2, Arrow.id[Int])
+            val snapshot = stack.contextual()
+            assert(snapshot.regions == 2)
+            assert(snapshot.handler(0) eq outer)
+            assert(as[Int](snapshot.state(0)) == 1)
+            assert(snapshot.handler(1) eq inner)
+            assert(as[Int](snapshot.state(1)) == 2)
+        }
+
+        "skips the bindings a gap hides and keeps those above and below it" in {
+            val stack = new Stack
+            val below = envHandler
+            val above = envHandler
+            stack.push(below, 5, Arrow.id[Int])
+            stack.push(askHandler, (), Arrow.id[Int])
+            stack.push(envHandler, 6, Arrow.id[Int])
+            stack.hide(1)
+            stack.push(above, 7, Arrow.id[Int])
+            val snapshot = stack.contextual()
+            assert(snapshot.regions == 2)
+            assert(snapshot.handler(0) eq below)
+            assert(as[Int](snapshot.state(0)) == 5)
+            assert(snapshot.handler(1) eq above)
+            assert(as[Int](snapshot.state(1)) == 7)
         }
 
         "leaves the stack untouched" in {
@@ -459,12 +554,13 @@ class StackTest extends AnyFreeSpec:
         }
     }
 
-    "growth beyond the initial capacity preserves entries, state, and debts" in {
+    "growth beyond the initial capacity preserves entries, state, and what they hold" in {
+        val log    = ListBuffer[String]()
         val stack  = new Stack
         val bottom = sayHandler
+        val r      = release(log, "one")
         stack.push(bottom, (), Arrow.id[Int])
-        stack.push(statefulHandler, 5, Arrow.id[Int])
-        discard(stack.dump(1))
+        stack.owe(0, r)
         var i = 0
         while i < 100 do
             stack.push(statefulHandler, i, Arrow.id[Int])
@@ -473,10 +569,11 @@ class StackTest extends AnyFreeSpec:
         assert(as[Int](stack.state(50)) == 49)
         assert(stack.find(Tag[Ask]) == 100)
         assert(stack.find(Tag[Say]) == 0)
-        assert(stack.takeOwed(0).toIndexed.length == 1)
+        assert(stack.releases(0) eq r)
         stack.truncate(1)
         assert(stack.depth == 1)
         assert(stack.handler(0) eq bottom)
+        assert(stack.releases(0) eq r)
     }
 
     "the pool" - {

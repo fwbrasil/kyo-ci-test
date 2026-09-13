@@ -81,15 +81,16 @@ object Scope:
         frame: Frame
     ): A < (Scope & Sync & S) =
         ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
-            // `ensureMap` registers in the step the acquire completes. With `map` the registration is a suspension
-            // of its own, and an interrupt pending when the acquire completes parks before that suspension is
-            // dispatched, leaving the abandonment nothing to release.
-            Sync.defer(acquire).ensureMap { resource =>
+            // The scope takes the resource in the bracket's own hook, as the acquire's value arrives, with nothing
+            // schedulable in between: an interrupt lands inside the acquire, where nothing is owned yet, or after
+            // the registration, where the scope releases. Nothing is left for the bracket itself to release: a
+            // closed scope runs the release detached as it refuses the registration.
+            Bracket(Sync.defer(acquire)) { resource =>
                 // Unsafe: registering as an effect would put the registration in a step of its own.
                 import AllowUnsafe.embrace.danger
                 finalizer.ensureUnsafe(_ => release(resource))
                 resource
-            }
+            }((_, _) => ())
         }
 
     /** Acquires a Closeable resource.

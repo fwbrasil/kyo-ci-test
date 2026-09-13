@@ -49,15 +49,6 @@ object Pending:
         def contA = this
         def contB = Arrow.id
 
-    /** A deferral the evaluator does not stop in front of.
-      *
-      * The application it reifies is a step fused with its input: the input's arrival and the step are one, so a stop landing between
-      * them would split what `ensureMap` promises to keep together. An `Ensure` over a pending input builds one, and so does a crossing
-      * delivering an answer under the regions it crosses into. What the input itself has not run still polls: a deferral inside it is
-      * unfolded by the arm that stops in front of deferrals, so nothing schedulable is skipped, only the split.
-      */
-    abstract class Fused[A, B, C, -S] @publicInBinary private[kyo] () extends Defer[A, B, C, S]
-
     /** An operation waiting for a handler to answer it.
       *
       * `tag` names the effect, which is what a region matches on as the evaluator walks outward looking for a handler, and `cont` is the rest
@@ -80,8 +71,8 @@ object Pending:
           * Applied to a computation, it runs that computation where the clause is and only the settled answer crosses: the answer is the
           * clause's currency, so an effect it performs is the clause's handler's to answer, not one of the regions being crossed into. Applied
           * to a settled answer, it parks a slice carrying the answer, this suspension's own continuation and `resume`, together with the
-          * snapshot of regions to reinstall before it runs again. The answer's application there is fused: the answer has arrived, and the
-          * step that receives it runs under the reinstalled regions before any stop is honored, as it would have at the top.
+          * snapshot of regions to reinstall before it runs again. The step that receives the answer runs under the reinstalled regions, and
+          * a stop pending by then parks in front of it, as it would in front of any step.
           *
           * A computation meant to be delivered as data instead, spliced in at the suspension point under those regions, is nested first;
           * nested, it is settled here and takes the second path. That is the only way a computation reaches the interior regions, and it
@@ -100,7 +91,7 @@ object Pending:
                         case _ =>
                             cont2(
                                 Park(
-                                    Effect.fused(v, kc, resume).asInstanceOf[Any < Any],
+                                    Effect.defer(v, kc, resume).asInstanceOf[Any < Any],
                                     entries
                                 ),
                                 Arrow.id
@@ -218,16 +209,16 @@ object Pending:
 
     /** A slice of computation set aside with what it needs to run again elsewhere, or later.
       *
-      * `entries` is the snapshot of regions to reinstall before `value` resumes, so a parked slice carries its own context rather than
-      * depending on where it is picked up. `owed` carries the obligations those regions have not discharged yet, which the evaluator hands to
-      * the stack it resumes on.
+      * `entries` is the snapshot of regions to reinstall before `value` resumes, each with what it held to release, so a parked slice
+      * carries its own context rather than depending on where it is picked up. `releases` is what the evaluation itself held below its
+      * outermost region, which the evaluator hands to the stack it resumes on.
       *
-      * An empty `entries` is the degenerate case: nothing to reinstall, so the evaluator takes the debt and continues in place.
+      * An empty `entries` is the degenerate case: nothing to reinstall, so the evaluator takes what is held and continues in place.
       */
     final class Park[+A, -S](
         val value: Any < Any,
         val entries: Stack.Snapshot,
-        val owed: Chunk[Stack.Snapshot] = Chunk.empty
+        val releases: Stack.Releases = null
     ) extends Pending[A, S]:
         Debugger.onAlloc(this)
 

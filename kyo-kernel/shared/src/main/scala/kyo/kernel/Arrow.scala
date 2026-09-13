@@ -180,24 +180,6 @@ object Arrow:
                             out
                         end if
 
-    /** Builds an arrow that applies without polling the safepoint, so `f` runs as the value arrives with nothing schedulable in between.
-      *
-      * [[Arrow.apply]] polls before applying its function, so an interrupt pending when the value arrives parks the computation and the
-      * function never runs. That is right nearly everywhere, and wrong where `f` records an obligation the value itself just created: the
-      * resource is open, its release is not registered, and a park landing between the two loses it.
-      *
-      * Reach for it only for that pairing, a resource opened and its release registered, or a fiber spawned and its handle stored. Skipping
-      * the poll also means the computation cannot be preempted at that point, so [[Arrow.apply]] is right everywhere else.
-      *
-      * @param f
-      *   The transformation, run as the value arrives
-      */
-    @nowarn("msg=anonymous")
-    inline def ensure[A](using _frame: Frame)[B, S](inline f: A => B < S): Arrow[A, B, S] =
-        new Ensure[A, B, S]:
-            def frame                = _frame
-            override def apply(v: A) = f(v)
-
     /** Builds an arrow whose body receives the arrow being defined alongside the value, so a step that loops can re-enter itself.
       *
       * Naming `self` rather than rebuilding the arrow per round means one allocation for the whole loop.
@@ -243,20 +225,6 @@ object Arrow:
         Debugger.onAlloc(this)
         override def toString = s"Step(${frame.callSite})"
     end Step
-
-    abstract private[kyo] class Ensure[-A, B, -S] extends Step[A, B, S]:
-        override def apply(v: A): B < S
-
-        override def toString = s"Ensure(${frame.callSite})"
-
-        final def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2) =
-            v match
-                case v: Pending[A, S2] @unchecked =>
-                    // fused rather than deferred: the value's arrival and this step are one, so no stop lands between them
-                    Effect.fused(v, this, cont)
-                case _ =>
-                    cont.head(apply(Nested.unnest(v)), cont.tail)
-    end Ensure
 
     /** The composition node, and the only arrow that is not its own head.
       *

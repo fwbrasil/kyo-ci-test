@@ -9,8 +9,12 @@ import scala.annotation.tailrec
 /** The regions installed around the computation the evaluator is running, innermost last.
   *
   * Four parallel arrays indexed by depth rather than one array of region objects: the handler, its state, the continuation for its result,
-  * and the snapshots it owes. Pushing a region then writes four slots and allocates nothing, which matters because a region is pushed and
+  * and the releases it holds. Pushing a region then writes four slots and allocates nothing, which matters because a region is pushed and
   * popped for every handled computation.
+  *
+  * The releases an entry holds are what runs when the entry pops: its own region's release, added as it is pushed, plus whatever a dump
+  * moved to it from the regions above or an escaping handler forwarded from the entry above. They are run last added first, so a release
+  * moved from an inner region runs before the entry's own.
   *
   * The stack is mutable and borrowed from a per-thread pool for one evaluation, then cleared and returned. Nothing that leaves the evaluator
   * points at it: what escapes is a [[Stack.Snapshot]], an immutable copy.
@@ -20,17 +24,11 @@ final private[kernel] class Stack:
     private var handlers      = new Array[Handler[?, ?, ?]](0)
     private var states        = new Array[Any](0)
     private var continuations = new Array[Arrow[?, ?, ?]](0)
+    private var releaseLists  = new Array[Stack.Releases](0)
     private var size          = 0
 
-    // What each region still has to discharge on behalf of regions dumped out from above it, indexed the same way.
-    private var owed = new Array[Chunk[Stack.Snapshot]](0)
-
-    // The same debt for what sits below depth 0, discharged by the evaluation itself rather than by a region.
-    private var evalOwed: Chunk[Stack.Snapshot] = Chunk.empty
-
-    // A flag rather than a scan: `settle` runs on a path where there is usually no debt at all, and this lets it
-    // return without touching the lanes.
-    private var owes = false
+    // What was forwarded past the outermost entry, run by the evaluation itself when it ends.
+    private var evalReleases: Stack.Releases = null
 
     /** A write-only store that forces a loop handler's outcome to escape. Nothing reads it, and deleting it is a large regression.
       *
@@ -70,88 +68,62 @@ final private[kernel] class Stack:
     def pop(): Unit =
         size -= 1
         // `clear` reaches only `0 until size`, and a released stack goes back to a per-thread pool on a live
-        // worker, so a slot left set keeps that region's handler, state and continuation reachable for as long
-        // as the worker lives. `owed` is deliberately not cleared: `takePopped` reads this index straight after
-        // the decrement.
+        // worker, so a slot left set keeps that region's handler, state, continuation and releases reachable
+        // for as long as the worker lives.
         handlers(size) = null
         states(size) = null
         continuations(size) = null
+        releaseLists(size) = null
     end pop
 
-    def owesAny: Boolean = owes
+    /** Pushes a gap over the entries from `from` up, hiding them from [[find]] while a loop clause's own computation runs. */
+    def hide(from: Int): Unit =
+        push(Handler.Gap, size - from, Arrow.id[Any])
 
-    def takePopped(): Chunk[Stack.Snapshot] = takeOwed(size)
+    /** How many entries the gap at `i` hides: the ones just below it. */
+    def hidden(i: Int): Int = states(i).asInstanceOf[Int]
 
-    def takeOwed(i: Int): Chunk[Stack.Snapshot] =
-        val owedHere = owed(i)
-        if !owedHere.isEmpty then owed(i) = Chunk.empty
-        owedHere
-    end takeOwed
+    def releases(i: Int): Stack.Releases = releaseLists(i)
 
-    /** Records that region `i` owes the obligations in `snapshots`.
-      *
-      * A region dumped out of the live stack still has obligations to discharge, a bracket's release among them, and they cannot be
-      * discharged where it was taken from, because the continuation holding it may yet be resumed. The debt moves to a region that is still
-      * installed, which discharges it when its own extent ends.
-      */
-    def owe(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =
-        if !snapshots.isEmpty then
-            owes = true
-            owed(i) = owed(i).concat(snapshots)
+    /** Adds one release to what entry `i` holds. */
+    def owe(i: Int, release: Release): Unit =
+        releaseLists(i) = Stack.owing(releaseLists(i), release)
 
-    /** [[owe]] against the region below `i`, or against the evaluation itself when `i` is the outermost. */
-    def oweBelow(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =
-        if !snapshots.isEmpty then
-            owes = true
-            if i == 0 then evalOwed = evalOwed.concat(snapshots)
-            else owed(i - 1) = owed(i - 1).concat(snapshots)
+    /** Adds a whole list to what entry `i` holds. */
+    def oweAll(i: Int, list: Stack.Releases): Unit =
+        if list ne null then releaseLists(i) = Stack.owing(releaseLists(i), list)
 
-    /** Cancels one snapshot's debt, in the innermost lane recording it, because those regions ended on their own. */
-    def settle(snapshot: Stack.Snapshot): Unit =
-        if owes then
-            @tailrec def loop(i: Int): Unit =
-                if i < 0 then evalOwed = settleIn(evalOwed, snapshot)
-                else
-                    val lane    = owed(i)
-                    val settled = settleIn(lane, snapshot)
-                    if settled ne lane then owed(i) = settled
-                    else loop(i - 1)
-            loop(size - 1)
-    end settle
+    /** [[oweAll]] against the entry below `i`, or against the evaluation itself when `i` is the outermost. */
+    def oweBelow(i: Int, list: Stack.Releases): Unit =
+        if list ne null then
+            if i == 0 then evalReleases = Stack.owing(evalReleases, list)
+            else releaseLists(i - 1) = Stack.owing(releaseLists(i - 1), list)
 
-    private def settleIn(lane: Chunk[Stack.Snapshot], snapshot: Stack.Snapshot): Chunk[Stack.Snapshot] =
-        if lane.isEmpty then lane
-        else
-            val indexed = lane.toIndexed
-            @tailrec def loop(j: Int): Chunk[Stack.Snapshot] =
-                if j < 0 then lane
-                else if indexed(j).asInstanceOf[AnyRef] eq snapshot.asInstanceOf[AnyRef] then
-                    if indexed.length == 1 then Chunk.empty
-                    else indexed.take(j).concat(indexed.drop(j + 1))
-                else loop(j - 1)
-            loop(indexed.length - 1)
-    end settleIn
+    /** Takes what entry `i` holds, leaving it empty. */
+    def takeReleases(i: Int): Stack.Releases =
+        val held = releaseLists(i)
+        if held ne null then releaseLists(i) = null
+        held
+    end takeReleases
 
-    def takeEvalOwed(): Chunk[Stack.Snapshot] =
-        val owedHere = evalOwed
-        if !owedHere.isEmpty then evalOwed = Chunk.empty
-        owedHere
-    end takeEvalOwed
+    def takeEvalReleases(): Stack.Releases =
+        val held = evalReleases
+        if held ne null then evalReleases = null
+        held
+    end takeEvalReleases
 
     def clear(): Unit =
         @tailrec def loop(i: Int): Unit =
             if i < size then
                 handlers(i) = null
                 states(i) = null
-
                 continuations(i) = null
-                owed(i) = Chunk.empty
+                releaseLists(i) = null
                 loop(i + 1)
         loop(0)
         size = 0
         sink = null
-        evalOwed = Chunk.empty
-        owes = false
+        evalReleases = null
         epochCount += 1
     end clear
 
@@ -163,10 +135,11 @@ final private[kernel] class Stack:
                 out(i * 4) = handlers(i)
                 out(i * 4 + 1) = states(i).asInstanceOf[AnyRef]
                 out(i * 4 + 2) = continuations(i)
-                out(i * 4 + 3) = takeOwed(i)
+                out(i * 4 + 3) = releaseLists(i)
                 handlers(i) = null
                 states(i) = null
                 continuations(i) = null
+                releaseLists(i) = null
                 loop(i + 1)
         loop(0)
         size = 0
@@ -179,23 +152,34 @@ final private[kernel] class Stack:
       * continuation slot is [[Arrow.id]] for each: these regions are being reinstalled, not resumed into.
       */
     def contextual(): Stack.Snapshot =
+        // Walked from the top so a gap can skip what it hides: those bindings are out of the computation's reach,
+        // and a fork made from it inherits what it can reach.
         var count = 0
-        var i     = 0
-        while i < size do
-            if handlers(i).isInstanceOf[Handler.ContextHandler[?, ?, ?, ?]] then count += 1
-            i += 1
-        val out = new Array[AnyRef](count * 4)
-        var j   = 0
-        i = 0
-        while i < size do
-            if handlers(i).isInstanceOf[Handler.ContextHandler[?, ?, ?, ?]] then
-                out(j) = handlers(i)
-                out(j + 1) = states(i).asInstanceOf[AnyRef]
-                out(j + 2) = Arrow.id[Any]
-                out(j + 3) = Chunk.empty
-                j += 4
+        var i     = size - 1
+        while i >= 0 do
+            val h = handlers(i)
+            if h eq Handler.Gap then i -= hidden(i) + 1
+            else
+                if h.isInstanceOf[Handler.ContextHandler[?, ?, ?, ?]] then count += 1
+                i -= 1
             end if
-            i += 1
+        end while
+        val out = new Array[AnyRef](count * 4)
+        var j   = count * 4
+        i = size - 1
+        while i >= 0 do
+            val h = handlers(i)
+            if h eq Handler.Gap then i -= hidden(i) + 1
+            else
+                if h.isInstanceOf[Handler.ContextHandler[?, ?, ?, ?]] then
+                    j -= 4
+                    out(j) = h
+                    out(j + 1) = states(i).asInstanceOf[AnyRef]
+                    out(j + 2) = Arrow.id[Any]
+                    out(j + 3) = null
+                end if
+                i -= 1
+            end if
         end while
         Stack.wrap(out)
     end contextual
@@ -206,36 +190,29 @@ final private[kernel] class Stack:
     def setState(i: Int, value: Any): Unit   = states(i) = value
     def continuation(i: Int): Arrow[?, ?, ?] = continuations(i)
 
-    def truncate(to: Int): Unit =
-        @tailrec def loop(i: Int): Unit =
-            if i < size then
-                handlers(i) = null
-                states(i) = null
-                continuations(i) = null
-                owed(i) = Chunk.empty
-                loop(i + 1)
-        loop(to)
-        size = to
-    end truncate
-
     /** The depth of the innermost region answering `tag`, or -1 when nothing does.
       *
       * Walking inward-out is what makes an inner handler shadow an outer one for the same effect, and the match is on tag subtyping so a
-      * handler for a supertype answers an operation of a subtype.
+      * handler for a supertype answers an operation of a subtype. A gap is stepped over together with the entries it hides: a loop clause's
+      * own computation runs outside the region it serves, so neither that region nor the ones above it are in reach until the gap lifts.
       */
     def find[E <: Effect](tag: kyo.Tag[E]): Int =
         @tailrec def loop(i: Int): Int =
             if i < 0 then -1
-            else if handlers(i).tag.erased <:< tag.erased then i
-            else loop(i - 1)
+            else
+                val h = handlers(i)
+                if h.tag.erased <:< tag.erased then i
+                else if h eq Handler.Gap then loop(i - hidden(i) - 1)
+                else loop(i - 1)
         loop(size - 1)
     end find
 
-    /** Takes the regions from `from` upward off the live stack, returning them as a snapshot the region below then owes.
+    /** Takes the regions from `from` upward off the live stack, returning them as a snapshot, their releases moved to the entry below.
       *
       * This is what puts the regions sitting between a handler and a suspension into the continuation the clause receives: they stop being
-      * installed, so the clause runs outside them, and they are reinstalled if the continuation is resumed. The debt recorded below is what
-      * discharges them should it never be.
+      * installed, so the clause runs outside them, and they are reinstalled if the continuation is resumed, however many times. What they
+      * held to release is now the handler's, run when its entry pops: the reinstalled regions carry nothing and release nothing at their
+      * own pops.
       */
     def dump(from: Int): Stack.Snapshot =
         val count = size - from
@@ -246,17 +223,16 @@ final private[kernel] class Stack:
                 out(i * 4) = handlers(j)
                 out(i * 4 + 1) = states(j).asInstanceOf[AnyRef]
                 out(i * 4 + 2) = continuations(j)
-                out(i * 4 + 3) = takeOwed(j)
+                out(i * 4 + 3) = null
+                oweAll(from - 1, releaseLists(j))
                 handlers(j) = null
                 states(j) = null
                 continuations(j) = null
+                releaseLists(j) = null
                 loop(i + 1)
         loop(0)
         size = from
-        val snapshot = Stack.wrap(out)
-        owes = true
-        owed(from - 1) = owed(from - 1).append(snapshot)
-        snapshot
+        Stack.wrap(out)
     end dump
 
     private def grow(): Unit =
@@ -264,29 +240,42 @@ final private[kernel] class Stack:
         val grownHandlers      = new Array[Handler[?, ?, ?]](capacity)
         val grownStates        = new Array[Any](capacity)
         val grownContinuations = new Array[Arrow[?, ?, ?]](capacity)
+        val grownReleases      = new Array[Stack.Releases](capacity)
         Array.copy(handlers, 0, grownHandlers, 0, size)
         Array.copy(states, 0, grownStates, 0, size)
         Array.copy(continuations, 0, grownContinuations, 0, size)
+        Array.copy(releaseLists, 0, grownReleases, 0, size)
         handlers = grownHandlers
         states = grownStates
         continuations = grownContinuations
-        val grownOwed = new Array[Chunk[Stack.Snapshot]](capacity)
-        Array.copy(owed, 0, grownOwed, 0, size)
-        @tailrec def fill(i: Int): Unit =
-            if i < capacity then
-                grownOwed(i) = Chunk.empty
-                fill(i + 1)
-        fill(size)
-        owed = grownOwed
+        releaseLists = grownReleases
     end grow
 end Stack
 
 private[kernel] object Stack:
 
+    /** What an entry holds to release: nothing, one release, or a chunk of them in the order they were added. */
+    type Releases = Release | Chunk[Release]
+
+    /** Appends `more` to `list`, either possibly empty. */
+    def owing(list: Releases, more: Releases): Releases =
+        if list eq null then more
+        else if more eq null then list
+        else
+            val head: Chunk[Release] =
+                list match
+                    case c: Chunk[Release] @unchecked => c
+                    case r: Release                   => Chunk(r)
+            more match
+                case c: Chunk[Release] @unchecked => head.concat(c)
+                case r: Release                   => head.append(r)
+        end if
+    end owing
+
     /** Regions captured out of a stack, in the order it held them.
       *
-      * Flat: four slots per region, the same handler, state, continuation and owed that the stack keeps in parallel arrays. A `Span[AnyRef]`
-      * rather than an array of region objects, so capturing a stack costs one object whatever its depth.
+      * Flat: four slots per region, the same handler, state, continuation and releases that the stack keeps in parallel arrays. A
+      * `Span[AnyRef]` rather than an array of region objects, so capturing a stack costs one object whatever its depth.
       *
       * A snapshot is immutable and complete, which is what lets the same one be reinstalled on another thread, or more than once.
       */
@@ -305,7 +294,7 @@ private[kernel] object Stack:
                 entries(count) = handler
                 entries(count + 1) = state.asInstanceOf[AnyRef]
                 entries(count + 2) = Arrow.id[Any]
-                entries(count + 3) = Chunk.empty
+                entries(count + 3) = null
                 count += 4
             end add
 
@@ -321,7 +310,7 @@ private[kernel] object Stack:
         def handler(i: Int): Handler[?, ?, ?]    = self(i * 4).asInstanceOf[Handler[?, ?, ?]]
         def state(i: Int): Any                   = self(i * 4 + 1)
         def continuation(i: Int): Arrow[?, ?, ?] = self(i * 4 + 2).asInstanceOf[Arrow[?, ?, ?]]
-        def owed(i: Int): Chunk[Snapshot]        = self(i * 4 + 3).asInstanceOf[Chunk[Snapshot]]
+        def releases(i: Int): Releases           = self(i * 4 + 3).asInstanceOf[Releases]
 
     end extension
 
