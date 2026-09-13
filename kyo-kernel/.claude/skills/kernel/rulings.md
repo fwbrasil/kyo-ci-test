@@ -38,6 +38,74 @@ Standing consequence: a new type needs an argument that an existing one cannot s
 array element at the storage boundary is a sanctioned erasure-forced cast (the skill's cast ladder
 names `Stack` as the example) and is not a reason to invent a carrier.
 
+**2026-09-13**, on the release list a stack entry holds:
+> for releases make it Maybe[Throwable] => Unit | Chunk[Maybe[Throwable] => Unit] so we don't need
+> to allocate for a single element.
+
+Standing consequence: a list that is almost always one element is the element or a chunk, never a
+wrapper around one.
+
+## Regions and releases
+
+**2026-09-12**, on the `Ensure` arrow the first walks built the bracket on, after two issues traced
+to it:
+> I think these issues all stem from a fundamental flawed decision at the start of tihs work. I
+> think we need Pending.Bracket and should not have Ensure
+
+**2026-09-12**, on the claim that no stop is honored inside an acquire:
+> this is incorrect: **Inside an acquire, no stop is honored.**
+>
+> acquires should allow stop but not after they're done right before the finalizer being registered
+
+Standing consequence: an acquire is interruptible; the one window that does not exist is between
+the acquire's value and the registration of its release, which is the region's own hook.
+
+**2026-09-13**, on the mechanisms (`discharge`, `owed`, `bound`, `unbound`, `borrow`, `defers`)
+the previous design had accumulated around releases:
+> all these mechanisms dischard, owed, etc seem so overengineered. In the end is in't just a
+> question of moving the release to the outer handler region?
+
+> let's say each reagion in the stack holds a list of release functions. Isn't it a quesitn of
+> "bumping" the release to the outer region?
+
+> I can't see why we need bound/unbound. WTF why wouldn't we have release?
+
+> if we resolve from handlers/stack, then we don't even need Context?
+
+Standing consequence: a region's release lives in its own stack entry; a handler that takes the
+continuation moves the dumped entries' lists to its own entry; an escaping handler moves its list
+to the entry below; a binding is found on the stack the way a handler is, so there is no separate
+context. Every mechanism beyond that is a finding.
+
+**2026-09-13**, on whether the normal and the repeated handler differ:
+> nope, I do not understand and I think you're just trying to defend a design. Please do not take
+> effort into consideration here. I require complete and correct solutions only. I can't see why
+> we'd dump the release into the continuation at all. Once the handling is done then the release
+> must happen
+
+> can normal be == repeated or not? I can't see a single good argument why not
+
+> sorry I meant only the escaping flag. no repeated
+
+Standing consequence: a held continuation runs every shot against the live resource and the
+release runs once, where the holder ends; `escaping` is the only flag on a handler; `repeated`
+does not exist. An argument from effort is not an argument.
+
+**2026-09-13**, on the bracket's shape:
+> oh fuck you really don't understand the task it seems. Are you saying bracket won't use a context
+> effect handler with the proper hooks? Bracket(acquire)(use)(release): the cell region, holding
+> the release from derive on, around an acquire region whose done fills the cell and returns
+> use(a).
+
+Standing consequence: the bracket is a region built on the handler protocol's hooks, its `done`
+taking the acquire's value and continuing with the use. It is not a node kind and not an arrow.
+
+**2026-09-13**, on the overnight report's proposal to fold `handleCont` away:
+> wtf are you talking about before/after!? you're proposing removing handleCont!? WTFFF
+
+Standing consequence: `handleCont` stays. The public handler surface is not a variable of a
+release redesign.
+
 ## Scope
 
 **2026-08-29** on rewriting `run` while changing region handling:
@@ -82,6 +150,19 @@ worktree unless the reviewer asks for it.
 
 **2026-08-29**, on how the previous attempt went:
 > reflect on how you got a lot of instructions and just went ahead producing garbage code
+
+**2026-09-11**, on where work happens and how it is preserved:
+> you must always commit as you go! work on the scaladocs in my worktree directly
+
+**2026-09-13**, sending the redesign to be built overnight:
+> ok, work on it to completion in an isolated worktree. Be diligent to simplify things and ensure
+> correctness by construction. Read the kernel skill again to remember. I'll go to bed and expect
+> you to work fully autonomously without any excuses. Don't stop, I expect the design fully
+> validated by morning and all that can be cleaned properly cleaned
+
+Standing consequence: an isolated worktree, one verified commit per item, the design validated on
+every platform and every downstream suite before it is reported, and the removals the design
+implies made in the same walk rather than left for later.
 
 ## Inference and workarounds
 
