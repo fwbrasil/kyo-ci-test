@@ -56,3 +56,25 @@ Named as the tip of the sources, not as a date.
 `Arrow.apply(v: A)`, named as the tree it describes. The one kernel change since is piece H, the
 unnest on the release walk that this analysis found and recommended; the sources it inventories are
 otherwise those of the package's tip. History, not a date.
+
+The fifth walk's commits, named by `backlog.md`, `analysis/issues.md`, `analysis/derivation-releases.md`
+and `flags-5.md` as the history of the redesign, each one an item closed or a checkpoint taken. History,
+not dates:
+
+d0f19b8f89: `Context` removed, the read finding its binding on the stack.
+5a46dfda1c: the fiber boundary as a loop handler, abandonment as a link-only walk, `finish` completing
+whenever the promise is pending.
+87b21a1ea1: the crossing's capture applied as the body's value arrives.
+90aad2d8f1: releases in stack entries, the gap, `Bracket` as one region, the protocol's `done`.
+726b853c53: the strand leaves and the replay leaf on the held-continuation rules.
+1d3402adc6: an escaping dump keeps the remainder's releases, `runStream` replays under one region; the
+tree `flags-5.md` was generated at, after which the kernel's main sources under the flagged paths did
+not change (the one kernel commit since, b3849fd99c, touches `kyo-kernel/js-wasm`, which emits no flag).
+4d2df91395: the pool's take release as a helper taking the unsafe evidence.
+b3849fd99c: the js-wasm `Safepoint` draining an armed budget on a pending stop.
+e3163ddbaf: the aeron add as a bracket's acquire, its token a nested bracket; also the tip leg of the
+fifth walk's benchmarks, whose kernel, prelude and data sources equal the package's tip's. Named as
+the tip of the numbers, not as a date. The base leg is `bc6a48a2aa` plus the one-line strict-equality
+fix to `Eval.ensuring` that d0f19b8f89 carries (`Maybe` in place of `null`), applied uncommitted in the
+throwaway worktree `robustness-bench-base` so the module compiles from a clean checkout.
+8927f43e83: the kyo-core js-wasm shims' results matching the JDK's, issue 7.
