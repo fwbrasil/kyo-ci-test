@@ -666,3 +666,64 @@ Evidence at the tip: `kyo-kernelJVM/test` 1848 green; `ScopeInterruptTest`, `Sco
 `AsyncTest` green; `kyo-sql-postgresJVM/test` 82 suites and `kyo-sql-mysqlJVM/test` 57 suites green
 against the real backends. Full core JVM, kernel JS and Native, core JS and the JS SQL interrupt test
 run as this is written; the CI matrix on this tip follows the one in progress on `98bdc584b7`.
+
+## Fifth walk: regions own their releases, the gap, and the bracket as one region
+
+The redesign the discussion closed (`analysis/redesign.md`, `analysis/region-protocol.md`,
+`analysis/derivation-releases.md`, whose "As built" section records what the build settled differently).
+The walk starts from the context removal's tip, `bc6a48a2aa`, and ends at the tip `package-check.sh`
+names; `sequence-5.json` holds the edits in the order below, and `flags-5.md` adjudicates the kernel's
+164 flags, none `REMOVE`. The order is the dependency order: the release type, the stack, the protocol,
+the evaluator, the bracket, the crossing, the removals, the callers, the tests, the docs.
+
+1. **`Release.scala`, new:** the release a stack entry holds, `Maybe[Throwable] => Unit` with `ran` and
+   `reenter`, the refusal on re-push living in the release, as ruled.
+2. **`Stack.scala`:** the fourth array holds release lists (`null`, one release, a chunk) and the
+   evaluation holds its own; `owe`, `oweAll`, `oweBelow`, `takeReleases`, `owned`; `dump` moves lists
+   and keeps them in the snapshot for an escaping handler; `hide`, `hidden`, `find` stepping over a gap,
+   `contextual` skipping what a gap hides; `truncate`, the owed lanes and `settle` gone.
+3. **`Handler.scala`:** `escaping` alone; `ContextHandler.done(state, value)` answering with an outcome,
+   and `release(state)`; `Gap`, `Hidden`, `answered`; `running` pushes a gap before rethrowing;
+   `attachReentry` defers a throw from the body's first step until the gap lifts; `reentered` no longer
+   repeated.
+4. **`Loop.scala`:** `settled`, the done outcome for a value already in union representation.
+5. **`Eval.scala`:** the loop arms answering in place under a gap, a pending answer under a gap over the
+   interior, the settled arm's gap and region-hook cases; `popped`, `contextExit`, `arrowExit`,
+   `lifted`, `discarded` and `installed` on releases; the unwind through a gap; `released`,
+   `releasedAtEnd`, `gathered`, `reported`, `releasing`; the walk collecting parks' lists and entries'
+   own releases; `delivering`, `held`, `expandOwed`, `drainOwed`, `drainDiscarded`, `leftmost` and
+   `ensuring` gone.
+6. **`Bracket.scala`:** one `Finalize` region over the acquire; `Cell.Empty` and `Cell.Live`, the live
+   cell being the release; the first `done` takes the value and continues with the use, releasing the
+   live cell if the use throws while building; `ensuring` and `ensuringWith` on the same region.
+7. **`Isolate.scala`:** the capture applied as the body's value arrives; `Forked` delegates `release`,
+   not `done`.
+8. **`PendingInternal.scala`, `Effect.scala`, `Arrow.scala`, `Pending.scala`:** `Park` carries the
+   evaluation's list; the crossing is a plain deferral; `Fused`, `fused`, `Ensure`, `ensure` and
+   `ensureMap` gone.
+9. **`ArrowEffect.scala`, `ContextEffect.scala`:** the `repeated` overrides and `handleFirstRepeated`
+   gone, the contracts restated; `handle` without a `release` arm.
+10. **`Debugger.scala`, `ConsoleDebugger.scala`:** `onRelease(release, outcome)`.
+11. **`Scope.scala`, `Async.scala`, `Exchange.scala`:** brackets in place of `ensureMap`; the timeout's
+    and the exchange's release interrupt what they spawned on an unwind or an abandonment.
+12. **`Topic.scala`:** the two polls fold the ownership flag into the poll's own step.
+13. **`Batch.scala`, `Choice.scala`:** the peel's comment; `runStream` replaying under
+    `handleContRepeated`, emitting each leaf as it completes.
+14. **`SqlConnectionPool.scala`:** the pool's `takeSlot` handoff, its release a plain helper taking the
+    unsafe evidence.
+15. **The kernel tests:** `StackTest` over lists and the gap; `EvalTest`'s parking block, the bracket's
+    hook leaves, the release blocks on `Bracket.ensuring`, "releases moved by a dump"; `BracketTest`'s
+    replayed-scope leaves and the `handleFirst` pair; `ContextEffectTest`'s completion block;
+    `DebuggerTest`, `PendingTest` and `KernelTest` following the surface; `ContextTest` gone with
+    `Context`.
+16. **The core and prelude tests:** the strand leaves and the orphaned-permit leaf on the ownership
+    rule; `SyncTest`'s replay leaf; `ChoiceTest`'s `runStream` pins, one added for the order;
+    `ScopeTest`'s comments.
+17. **`README.md`, `CONTRIBUTING.md`:** the bracket's hook in place of `ensureMap`, the replayed scope,
+    the merged-level example on the overload that exists, the evaluator as built.
+
+What changes for a caller is in `analysis/derivation-releases.md`, "As built": every shot of a held
+continuation runs against the live resource and the release runs once where the holder ends;
+`handleFirst`'s remainder releases at its own completion and refuses a second application;
+`Choice.runStream` streams depth first and stops the branches a consumer never takes;
+`ContextEffect.handle` has no `release` arm. Evidence at this walk's tip is in the section that follows.

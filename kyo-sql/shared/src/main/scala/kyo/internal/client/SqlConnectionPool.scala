@@ -371,33 +371,35 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
       */
     private def takeSlot(slotCh: Channel[Unit], config: SqlConfig)(using frame: Frame): Unit < (Async & Abort[SqlException] & Scope) =
         // Unsafe: the take promise and the release that owns it have to be created in one step.
-        Scope.acquireRelease(Sync.Unsafe.defer(slotCh.unsafe.takeFiber().safe)) { take =>
-            Sync.Unsafe.defer {
-                val promise = take.unsafe
-                // A take still pending is withdrawn: the channel keeps a permit a withdrawn taker refuses. A take
-                // that completed hands its permit back.
-                discard(promise.interrupt(Result.Panic(Interrupted(frame))))
-                promise.poll() match
-                    case Present(Result.Success(())) => discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
-                    case _                           => ()
-                end match
-            }
-        }.map { take =>
-            val wait: Unit < (Async & Abort[SqlException]) =
-                Abort.run[Closed](take.get).flatMap {
-                    case Result.Success(()) => ()
-                    case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
-                    case Result.Panic(t)    => Abort.error(Result.Panic(t))
-                }
-            if config.acquireTimeout == Duration.Infinity then wait
-            else
-                Async.timeoutWithError(
-                    config.acquireTimeout,
-                    Result.Failure(SqlConnectionAcquireTimeoutException(config.acquireTimeout))
-                )(wait)
-            end if
+        Scope.acquireRelease(Sync.Unsafe.defer(slotCh.unsafe.takeFiber().safe))(take => Sync.Unsafe.defer(withdrawn(slotCh, take))).map {
+            take =>
+                val wait: Unit < (Async & Abort[SqlException]) =
+                    Abort.run[Closed](take.get).flatMap {
+                        case Result.Success(()) => ()
+                        case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
+                        case Result.Panic(t)    => Abort.error(Result.Panic(t))
+                    }
+                if config.acquireTimeout == Duration.Infinity then wait
+                else
+                    Async.timeoutWithError(
+                        config.acquireTimeout,
+                        Result.Failure(SqlConnectionAcquireTimeoutException(config.acquireTimeout))
+                    )(wait)
+                end if
         }
     end takeSlot
+
+    /** The release of a take the caller's scope owns: a take still pending is withdrawn, the channel keeping a permit a
+      * withdrawn taker refuses, and a take that completed hands its permit back.
+      */
+    private def withdrawn(slotCh: Channel[Unit], take: Fiber[Unit, Abort[Closed]])(using frame: Frame, allow: AllowUnsafe): Unit =
+        val promise = take.unsafe
+        discard(promise.interrupt(Result.Panic(Interrupted(frame))))
+        promise.poll() match
+            case Present(Result.Success(_)) => discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
+            case _                          => ()
+        end match
+    end withdrawn
 
     private def withSlot[A, S](slotCh: Channel[Unit], config: SqlConfig)(
         body: A < (S & Async & Abort[SqlException])

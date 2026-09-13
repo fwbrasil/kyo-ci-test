@@ -31,8 +31,12 @@ Design: `reviews/robustness/analysis/redesign.md`, `region-protocol.md`, `bracke
 5. [x] 90aad2d8f1. In place: the gap (`Handler.Gap`, `Stack.hide`/`hidden`, `find` stepping over it,
    `contextual` skipping what it hides), the answer gap with `Handler.answered`, `done` discarding through
    it, the boundary parking the whole stack with the gap. See `derivation-releases.md`, "As built".
-6. [ ] Full verification: kernel JS and Native; core JS; sql JVM containers and JS; aeron JVM; net TLS
-   suites JVM and JS; the KernelBench rows base vs tip in a throwaway worktree. Commit the numbers.
+6. [ ] Full verification. Done on JVM: kernel 1839 green, kernel doctest 56 blocks green, prelude 845
+   green, core green (the orphaned-permit leaf rewritten to the handoff, then green). In progress:
+   every JVM module's tests compiling (the pool's `takeSlot` had never compiled; its release is now a
+   helper taking the unsafe evidence). Then: kernel JS and Native; core JS; sql JVM containers and the
+   JS SQL interrupt suite; aeron JVM; net TLS suites JVM and JS; the KernelBench rows base vs tip in a
+   throwaway worktree. Commit the numbers.
 7. [ ] CI: push, dispatch the full matrix, monitor, fix what is red.
 8. [ ] Package: derivation, flags, sequence, review.md for the fifth walk; the report files updated
    (issues.md closed items, test-plan.md, coverage.md); rulings recorded; `.dev/kernel-robustness.md`
