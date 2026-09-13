@@ -746,3 +746,28 @@ continuation runs against the live resource and the release runs once where the 
 `handleFirst`'s remainder releases at its own completion and refuses a second application;
 `Choice.runStream` streams depth first and stops the branches a consumer never takes;
 `ContextEffect.handle` has no `release` arm. Evidence at this walk's tip is in the section that follows.
+
+### Evidence at the fifth walk's tip
+
+The sources of the tip are those of `8927f43e83` (the commits after it touch `reviews/` and the
+package check script only). Each row names the commit the run was made at; where a later commit
+changed nothing the suite compiles, the run stands for the tip.
+
+| run | result | at |
+|---|---|---|
+| `kyo-kernelJVM/test`, `kyo-kernelJVM/doctest` | 1839 passed; 56 blocks green | 1d3402adc6, the kernel's shared and jvm sources unchanged since |
+| `kyo-kernelJVM/testOnly kyo.kernel.internal.EvalTest` | 136 passed, the stop-alone and acquire-under-region leaves included | e3163ddbaf |
+| `kyo-kernelJS/test`, `kyo-kernelNative/test` | 1780 and 1816 passed | b3849fd99c, the js-wasm `Safepoint` fix in |
+| `kyo-kernelJS/testOnly ... EvalTest`, `kyo-kernelNative/testOnly ... EvalTest` | 136 and 136 passed | e3163ddbaf |
+| `kyo-preludeJVM/test` | 845 passed | 1d3402adc6, prelude unchanged since |
+| `kyo-coreJVM/test` | green in full, the orphaned-permit leaf rewritten to the handoff | 1d3402adc6 |
+| `kyo-coreJVM/testOnly kyo.ScopeInterruptTest` | 14 passed, the nested-bracket leaf and its `Sync.ensure` counterpart included | e3163ddbaf |
+| `kyo-coreJVM/doc` | green, `Sync.ensure`'s new paragraph included | 8927f43e83 |
+| `kyo-coreJS/testOnly kyo.SyncTest kyo.FiberTest kyo.ScopeInterruptTest kyo.AsyncTest kyo.ScopeTest` | green; `SyncTest`'s "still runs the finalizer" red before the `Safepoint` fix, green after | b3849fd99c |
+| `kyo-coreJS/test` | 1700 passed, 0 failed, 1 cancelled, 2 pending; the link red at e3163ddbaf (issue 7), green with the shim fix | 8927f43e83 |
+| `kyo-sql-postgresJVM/test`, `kyo-sql-mysqlJVM/test` against the containers; `kyo-sql-postgresJS/testOnly kyo.SqlClientInterruptTest` | 139 suites green; green | 4d2df91395 |
+| `kyo-aeronJVM/test` | green in full; `AeronTransportTest` 34 passed, the two bracket leaves included; the token-ownership leaf red at b3849fd99c with the fourth walk's expectation | e3163ddbaf |
+| `kyo-aeronJS/testOnly kyo.AeronTransportTest`, `kyo-aeronNative/testOnly kyo.AeronTransportTest` | 34 and 34 passed | e3163ddbaf |
+| `kyo-netJVM/testOnly *Tls*`, `kyo-netJS/testOnly *Tls*` | every leaf green, the backend and TLS-implementation combinations this host lacks cancelled; JS 84 passed, 158 cancelled | e3163ddbaf |
+
+Benchmarks and the CI matrix: the two subsections below.
