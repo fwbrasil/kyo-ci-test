@@ -231,3 +231,17 @@ live under `src/main` (kyo-bench, kyo-ffi-bench): the generated benchmark list m
 finds nothing. The walk had applied it to all three "for consistency". Standing consequence: a build
 setting copied to a sibling module is verified on that module, by running the thing it configures,
 before it enters a walk.
+
+## Interrupt versus completion
+
+**2026-09-13**, on the redesign completing an interrupted fiber with its value (the MeterTest
+regression, `IOTask.finish` refusing the interrupt when the body reached its own ending):
+> please fix issue a. no interrupted fiebrs should not complete with a success if it gets interrupted
+> during execution
+
+Standing consequence: an interrupt taken on a slice wins over a value the body produces on that same
+slice. `interrupt()` returning true means the fiber ends interrupted, never a success. The Issue-2
+concern (do not lose the fiber, do not complete with neither outcome) is met by settling with the
+interrupt, a defined ending, not by letting the value win. The FiberTest pin that asserted the value
+wins is inverted to assert the interrupt wins. This supersedes the `finish` comment's "the body's
+ending stands and the interrupt is refused by the completion".

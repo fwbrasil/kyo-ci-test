@@ -54,10 +54,11 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
     /** The one place an ending of the body completes the promise: a value, an abort, a throw of its own.
       *
       * It completes only while the ending is still the body's to settle: not after the abort arm settled it
-      * and answered with a placeholder. An interrupt taken on this slice does not own an ending the body
-      * reaches on its own: the value may be a resource only the promise's consumer can release, so the body's
-      * ending stands and the interrupt is refused by the completion. The interrupt owns a remainder, which is
-      * released and then settled with it. By name, so a value is not restored for an ending nobody settles.
+      * and answered with a placeholder. An interrupt taken on this slice wins over a value the body reaches
+      * on its own: the success caller and the throw arm both guard with `!interrupted`, so a value produced
+      * on an interrupted slice is dropped and `release` settles the promise with the interrupt. The interrupt
+      * owns a remainder when the body parked, or the dropped value when it did not; either way the fiber ends
+      * interrupted, never a success. By name, so a value is not restored for an ending nobody settles.
       */
     private def finish(result: => Result[E, A < S2]): Unit =
         if isPending() then completeDiscard(result)
@@ -157,7 +158,15 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         case other =>
                             bug(s"fiber boundary received an operation it does not answer: $other")
             ,
-            p => finish(Result.succeed(restore(p)))
+            p =>
+                // An interrupt taken on this slice wins over a value the body produced on it. The completion
+                // and `interrupt` both claim the status word by CAS, so exactly one wins: taking it here means
+                // the fiber completes with the value and a racing `interrupt` finds the word gone and returns
+                // false; losing it means an interrupt took the word first, so the value is dropped and the
+                // slice end settles the promise with the interrupt. A plain `!interrupted` check is not enough,
+                // the interrupt can land between the check and the completion, so an interrupted fiber could
+                // still report success. Claiming `Done` is safe because the boundary is the fiber's last step.
+                if casStatus(Thread.currentThread(), Done) then finish(Result.succeed(restore(p)))
             // No call site to name: what a parked fiber reports comes from the operation it stopped at.
         )(using Frame.internal).asInstanceOf[Unit < Any]
     end boundary
@@ -365,8 +374,9 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                     Task.Done
                 case _: Result.Error[?] =>
                     // An interrupt landed on this slice. What the stop left is the remainder, unless the body
-                    // reached its own ending first, which completed the promise: the release then finds
-                    // nothing to release, and the interrupt is refused by the completion.
+                    // reached its own ending first, in which case its value was dropped by the `!interrupted`
+                    // guard and its own finalizers already ran, so there is nothing to release and the promise
+                    // is still pending. Either way `release` settles the promise with the interrupt.
                     curr = if next.evalNow.isDefined then cleared else next
                     release()
                     Task.Done

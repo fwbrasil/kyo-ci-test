@@ -1296,10 +1296,11 @@ class FiberTest extends kyo.test.Test[Any]:
             yield assert(seen)
         }
 
-        // The value a body ends with can be a resource: a permit its last step took, a handle it opened. Only the
-        // promise's consumer knows how to release it, so an ending with a value completes with the value whatever
-        // landed on the slice; dropping it for the interrupt drops what it carries.
-        "a body ending with its value in the slice its interrupt landed on completes with the value" in {
+        // An interrupt taken on a slice wins over a value the body produces on that same slice: `interrupt()`
+        // returned true, so the fiber ends interrupted, never a success. The value is dropped; a resource a body
+        // would hold as its value is the caller's to bracket, not the scheduler's to keep by refusing the
+        // interrupt (ruling 2026-09-13). The fiber still completes, with the interrupt, so nothing is lost.
+        "a body ending with its value in the slice its interrupt landed on completes with the interrupt" in {
             for
                 handoff <- Promise.init[Fiber[Int, Any], Any]
                 fiber <- Fiber.initUnscoped {
@@ -1311,7 +1312,7 @@ class FiberTest extends kyo.test.Test[Any]:
                 }
                 _       <- handoff.complete(Result.succeed(fiber))
                 outcome <- Abort.run[Nothing](fiber.get)
-            yield assert(outcome == Result.succeed(42), s"the value was dropped for $outcome")
+            yield assert(outcome.isPanic, s"the interrupt was refused, the fiber completed with $outcome")
         }
 
         "a scoped fiber's own scope closes after the fiber released" in {
