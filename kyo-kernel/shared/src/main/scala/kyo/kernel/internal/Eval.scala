@@ -346,10 +346,10 @@ import scala.collection.mutable.ArrayBuffer
                                             val handler = stack.handler(h).asInstanceOf[Handler.ArrowHandler[VX, EX, AX, Y, Any]]
                                             val result  = Nested.unnest[Y < Any](Loop.unnest(done.asInstanceOf[Outcome[Any, Y < Any]]))
                                             Debugger.onRegionExit(handler, result)
-                                            val after = stack.continuation(h).asInstanceOf[Arrow[Y, Any, Any]]
+                                            val next = stack.continuation(h).asInstanceOf[Arrow[Y, Any, Any]]
                                             lifted(top, h)
                                             discarded(h, handler)
-                                            loop(result, after, Arrow.id)
+                                            loop(result, next, Arrow.id)
                                     end match
                                 case handler0 =>
                                     val handler = handler0.asInstanceOf[Handler.ArrowHandler[VX, EX, AX, Y, Any]]
