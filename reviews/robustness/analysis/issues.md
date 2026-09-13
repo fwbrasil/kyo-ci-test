@@ -276,3 +276,36 @@ Three mechanisms, named:
 The full writeup, with the trade the design buys, is in `review.md`, "Benchmarks: the fifth walk". The
 decision, accept the trade / invest in closing groups 2 and 3 / reopen group 1's ruling, is the user's,
 explicitly.
+
+## Issue 9: an interrupted fiber could complete with a success (MeterTest), fixed
+
+`MeterTest` "semaphore concurrency with interruptions" failed 3/3 on the tip, 0/3 on the base
+`bc6a48a2aa` (the test and `Meter.scala` unchanged in the range), so a fifth-walk regression. Cause:
+`IOTask.finish` completed the promise with the body's value whenever it was pending, even when
+`interrupt()` had returned true, so a body reaching its own ending in the interrupted slice reported
+success. Ruling of 2026-09-13: no interrupted fiber completes with a success if interrupted during
+execution. Fix (`f38697af16`): the boundary's success completion claims the status word by CAS, the
+same word `interrupt()` claims, so exactly one wins; a value produced on an interrupted slice is
+dropped and the slice end settles the promise with the interrupt (a defined ending, never lost). The
+FiberTest pin is inverted to assert the interrupt wins. Verified: MeterTest 6/6, FiberTest,
+ScopeInterruptTest, SyncTest green on JVM, JS and Native; full core JVM green.
+
+## Issue 10: a channel item taken by an interrupted racer was lost (ScopeTest #1735), fixed
+
+`ScopeTest` "racing scopes, every racer that took an item puts it back" failed intermittently (tip
+2/8, base `bc6a48a2aa` 4/10, so the leak predates the fifth-walk range but is the kernel's
+abandonment behavior, not a `Channel` change; `Channel.scala` and the test are unchanged in the
+range). Cause: `offer` delivers an item into a parked taker's promise, then the kernel abandons the
+taker without resuming it, so the item is consumed by no one and lost. Fix (`934ced5eb6`):
+`Channel.take`'s parked branch is an out-of-line `parkedTake` that, on the taker's abandonment,
+interrupts the take promise to make its state final and offers a delivered-but-unconsumed value back
+to the channel; a `taken` flag marks the normal exit. This is the reclaim the redesign already built
+for the SQL pool (`SqlConnectionPool.withdrawn`), lifted into `Channel.take`. Verified: racing-scopes
+18/18 (was 2/8), ChannelTest 127, MeterTest 42, full core JVM green; JS and Native running.
+
+## The Wasm CI reds are environmental, not the redesign
+
+`ContainerItTest` (kyo-pod, one leaf exercising the container runtime's error handling; the CI
+scripts document the runners' container-stack fragility) and `DomBackendDelegationTest` (kyo-ui DOM,
+which also failed in the prior CI run 34719693185 on a different platform, windows-x64 JS) are flaky
+in other modules, not fifth-walk regressions.
