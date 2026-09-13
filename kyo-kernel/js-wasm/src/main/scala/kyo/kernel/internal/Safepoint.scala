@@ -47,8 +47,10 @@ object Safepoint:
     private var armedDeadline: Long = Long.MaxValue
 
     def get(): Slot =
-
-        if depth.isArmed && expired() then depth = depth.drained
+        // A stop pending against an armed slice drains the budget, so the next bind defers and the evaluator's
+        // poll parks there rather than at the next deferral it happens to reach: the same moment the jvm-native
+        // slot resolves to when a stop has landed on it.
+        if depth.isArmed && (stopRequested || expired()) then depth = depth.drained
         0
     end get
 

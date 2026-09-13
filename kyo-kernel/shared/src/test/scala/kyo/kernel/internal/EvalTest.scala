@@ -686,6 +686,26 @@ class EvalTest extends AnyFreeSpec:
             assert(parked.eval == 22)
         }
 
+        // A stop with no slice deadline behind it, as a fiber's interrupt requests, drains the budget, so the bind
+        // after the step defers and the evaluator parks there: the map does not run under the stop on any
+        // platform, whether or not a deferral happens to stand between the step and it.
+        "a stop alone requested inside a step defers the bind that follows it" in {
+            var later = false
+            val body: Int < Any =
+                Effect.defer {
+                    discard(Safepoint.get())
+                    discard(Safepoint.stop(Thread.currentThread()))
+                    1
+                }.map { a =>
+                    later = true
+                    a + 1
+                }
+            val parked = Eval.partial(body)
+            assert(!later, "the bind after the step ran under the stop")
+            assert(parked.eval == 2)
+            assert(later)
+        }
+
         "parks on a pending stop and the parked value resumes to the same answer" in {
             var afterRan = false
             val body: Int < Ask =

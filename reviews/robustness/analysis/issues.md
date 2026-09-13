@@ -4,6 +4,32 @@ The facts and the evidence, without the author's proposals. A held-out advisor r
 sources it names, and nothing else from the session. Every path is relative to the `robustness`
 worktree unless stated.
 
+## After the fifth walk
+
+The redesign (`redesign.md`, `derivation-releases.md` with its "As built" section) replaced the
+mechanisms every issue below was traced to. Where each stands, at `4d2df91395` and after:
+
+- **Issue 1, the JS SQL strand.** The delivery machinery it needed (`Ensure`, the fused deferral,
+  the answering reporter) is gone. The pool's take is owned by the fiber that spawns it through
+  `Scope.acquireRelease`'s bracket (`SqlConnectionPool.takeSlot`, its release `withdrawn`), so the
+  permit is registered before the wait, on the fiber that waits; an acquire abandoned before it
+  resumed with its value owns nothing (`ScopeInterruptTest`, the two strand leaves). Evidence: the
+  container suites and `kyo-sql-postgresJS/testOnly kyo.SqlClientInterruptTest`, recorded in
+  `review.md`'s evidence section as they complete.
+- **Issue 2, the dropped value.** Two causes, both closed: `IOTask.finish` completes whenever the
+  promise is pending (5a46dfda1c), and the crossing's capture is a step applied as the body's value
+  arrives rather than a `map` the stop parks in front of (87b21a1ea1). `FiberTest`, "a body ending
+  with its value in the slice its interrupt landed on completes with the value", green.
+- **Issue 3, the child's resource.** The design's answer is the handoff: the producing fiber
+  registers the release into the owner's scope, which it reaches through the context, and a scope
+  that closed runs the registration detached (`ScopeInterruptTest`, "a permit a child takes after its
+  owner was abandoned is returned through the owner's closed scope", and the two producing-fiber
+  leaves). The kernel delivers no value to an abandoned owner.
+- **Issue 4, the swallowed stop.** Closed in 61c22b177d by the wildcard merge in `Safepoint.stop`,
+  pinned in `SafepointTest`.
+- **Issues 5 and 6** remain deferred: the scheduler's Native crash on this machine and the scalafmt
+  failure are on `main`, outside this branch.
+
 ## Where the tree stands
 
 The tip carries piece P (commit a5b7d2a512, then 0beb288861): `Eval.release` gained a reporting

@@ -422,52 +422,52 @@ object Topic:
                             Loop.foreach[Maybe[Pub], Async & Abort[TopicTransportException]] {
                                 Sync.Unsafe.defer {
                                     (transport.pollAddPublication(tok): AeronTransport.AddPoll[Pub]) match
-                                            case AeronTransport.AddPoll.Done(pub) =>
+                                        case AeronTransport.AddPoll.Done(pub) =>
+                                            tokOwned = false
+                                            Loop.done[Unit, Maybe[Pub]](Maybe(pub))
+                                        case AeronTransport.AddPoll.Failed(code, detail)
+                                            if code != 0 || detail.nonEmpty =>
+                                            // Driver rejected the registration: abort terminally.
+                                            Sync.Unsafe.defer {
+                                                transport.freeAsyncPub(tok)
                                                 tokOwned = false
-                                                Loop.done[Unit, Maybe[Pub]](Maybe(pub))
-                                            case AeronTransport.AddPoll.Failed(code, detail)
-                                                if code != 0 || detail.nonEmpty =>
-                                                // Driver rejected the registration: abort terminally.
-                                                Sync.Unsafe.defer {
-                                                    transport.freeAsyncPub(tok)
-                                                    tokOwned = false
-                                                }.andThen(Abort.fail(TopicRegistrationFailedException(aeronUri, streamId, code, detail)))
-                                            case AeronTransport.AddPoll.Failed(_, _) =>
-                                                // Failed(0, "") is the closed-client (JVM AeronException) or
-                                                // FFI _get alloc-failure sentinel.
-                                                Sync.Unsafe.defer {
-                                                    transport.freeAsyncPub(tok)
-                                                    tokOwned = false
-                                                }.andThen(Loop.done[Unit, Maybe[Pub]](Absent))
-                                            case _ => // AeronTransport.AddPoll.Awaiting
-                                                Sync.Unsafe.defer(transport.clientClosed).map { closed =>
-                                                    if closed then
-                                                        // The client went away mid-registration, so the
-                                                        // poll can never confirm. Take the same
-                                                        // closed-client exit as Failed(0, "") instead of
-                                                        // polling on to the deadline: the caller's fiber
-                                                        // may outlive the client (Topic.run's scope can
-                                                        // exit under it), and a registration that cannot
-                                                        // complete must not keep a carrier busy.
-                                                        Sync.Unsafe.defer {
-                                                            transport.freeAsyncPub(tok)
-                                                            tokOwned = false
-                                                        }.andThen(Loop.done[Unit, Maybe[Pub]](Absent))
-                                                    else
-                                                        dl.isOverdue.map { over =>
-                                                            if over then
-                                                                // Freed here rather than left to the finalizer: this exit is a typed
-                                                                // Abort, and Sync.ensure does not run its finalizer on that edge, so
-                                                                // relying on it leaks the token on every add that reaches its deadline.
-                                                                // The finalizer still covers the interrupt and panic exits, and
-                                                                // tokOwned keeps the two from freeing twice.
-                                                                Sync.Unsafe.defer {
-                                                                    transport.freeAsyncPub(tok)
-                                                                    tokOwned = false
-                                                                }.andThen(Abort.fail(TopicAddTimeoutException(aeronUri, streamId, timeout)))
-                                                            else Async.sleep(addBackoff).andThen(Loop.continue)
-                                                        }
-                                                }
+                                            }.andThen(Abort.fail(TopicRegistrationFailedException(aeronUri, streamId, code, detail)))
+                                        case AeronTransport.AddPoll.Failed(_, _) =>
+                                            // Failed(0, "") is the closed-client (JVM AeronException) or
+                                            // FFI _get alloc-failure sentinel.
+                                            Sync.Unsafe.defer {
+                                                transport.freeAsyncPub(tok)
+                                                tokOwned = false
+                                            }.andThen(Loop.done[Unit, Maybe[Pub]](Absent))
+                                        case _ => // AeronTransport.AddPoll.Awaiting
+                                            Sync.Unsafe.defer(transport.clientClosed).map { closed =>
+                                                if closed then
+                                                    // The client went away mid-registration, so the
+                                                    // poll can never confirm. Take the same
+                                                    // closed-client exit as Failed(0, "") instead of
+                                                    // polling on to the deadline: the caller's fiber
+                                                    // may outlive the client (Topic.run's scope can
+                                                    // exit under it), and a registration that cannot
+                                                    // complete must not keep a carrier busy.
+                                                    Sync.Unsafe.defer {
+                                                        transport.freeAsyncPub(tok)
+                                                        tokOwned = false
+                                                    }.andThen(Loop.done[Unit, Maybe[Pub]](Absent))
+                                                else
+                                                    dl.isOverdue.map { over =>
+                                                        if over then
+                                                            // Freed here rather than left to the finalizer: this exit is a typed
+                                                            // Abort, and Sync.ensure does not run its finalizer on that edge, so
+                                                            // relying on it leaks the token on every add that reaches its deadline.
+                                                            // The finalizer still covers the interrupt and panic exits, and
+                                                            // tokOwned keeps the two from freeing twice.
+                                                            Sync.Unsafe.defer {
+                                                                transport.freeAsyncPub(tok)
+                                                                tokOwned = false
+                                                            }.andThen(Abort.fail(TopicAddTimeoutException(aeronUri, streamId, timeout)))
+                                                        else Async.sleep(addBackoff).andThen(Loop.continue)
+                                                    }
+                                            }
                                 }
                             }
                         }
@@ -499,44 +499,44 @@ object Topic:
                                 // the poll and the flag are one block, for the same reason as the publication's poll above
                                 Sync.Unsafe.defer {
                                     (transport.pollAddSubscription(tok): AeronTransport.AddPoll[Sub]) match
-                                            case AeronTransport.AddPoll.Done(sub) =>
+                                        case AeronTransport.AddPoll.Done(sub) =>
+                                            tokOwned = false
+                                            Loop.done[Unit, Maybe[Sub]](Maybe(sub))
+                                        case AeronTransport.AddPoll.Failed(code, detail)
+                                            if code != 0 || detail.nonEmpty =>
+                                            // Driver rejected the registration: abort terminally.
+                                            Sync.Unsafe.defer {
+                                                transport.freeAsyncSub(tok)
                                                 tokOwned = false
-                                                Loop.done[Unit, Maybe[Sub]](Maybe(sub))
-                                            case AeronTransport.AddPoll.Failed(code, detail)
-                                                if code != 0 || detail.nonEmpty =>
-                                                // Driver rejected the registration: abort terminally.
-                                                Sync.Unsafe.defer {
-                                                    transport.freeAsyncSub(tok)
-                                                    tokOwned = false
-                                                }.andThen(Abort.fail(TopicRegistrationFailedException(aeronUri, streamId, code, detail)))
-                                            case AeronTransport.AddPoll.Failed(_, _) =>
-                                                // Failed(0, "") is the closed-client (JVM AeronException) or
-                                                // FFI _get alloc-failure sentinel.
-                                                Sync.Unsafe.defer {
-                                                    transport.freeAsyncSub(tok)
-                                                    tokOwned = false
-                                                }.andThen(Loop.done[Unit, Maybe[Sub]](Absent))
-                                            case _ => // AeronTransport.AddPoll.Awaiting
-                                                Sync.Unsafe.defer(transport.clientClosed).map { closed =>
-                                                    if closed then
-                                                        // Same closed-client exit as the publication loop.
-                                                        Sync.Unsafe.defer {
-                                                            transport.freeAsyncSub(tok)
-                                                            tokOwned = false
-                                                        }.andThen(Loop.done[Unit, Maybe[Sub]](Absent))
-                                                    else
-                                                        dl.isOverdue.map { over =>
-                                                            if over then
-                                                                // Same reason as the publication side: a typed Abort skips the
-                                                                // finalizer, so the token is freed here and tokOwned keeps the
-                                                                // finalizer's interrupt and panic coverage from freeing twice.
-                                                                Sync.Unsafe.defer {
-                                                                    transport.freeAsyncSub(tok)
-                                                                    tokOwned = false
-                                                                }.andThen(Abort.fail(TopicAddTimeoutException(aeronUri, streamId, timeout)))
-                                                            else Async.sleep(addBackoff).andThen(Loop.continue)
-                                                        }
-                                                }
+                                            }.andThen(Abort.fail(TopicRegistrationFailedException(aeronUri, streamId, code, detail)))
+                                        case AeronTransport.AddPoll.Failed(_, _) =>
+                                            // Failed(0, "") is the closed-client (JVM AeronException) or
+                                            // FFI _get alloc-failure sentinel.
+                                            Sync.Unsafe.defer {
+                                                transport.freeAsyncSub(tok)
+                                                tokOwned = false
+                                            }.andThen(Loop.done[Unit, Maybe[Sub]](Absent))
+                                        case _ => // AeronTransport.AddPoll.Awaiting
+                                            Sync.Unsafe.defer(transport.clientClosed).map { closed =>
+                                                if closed then
+                                                    // Same closed-client exit as the publication loop.
+                                                    Sync.Unsafe.defer {
+                                                        transport.freeAsyncSub(tok)
+                                                        tokOwned = false
+                                                    }.andThen(Loop.done[Unit, Maybe[Sub]](Absent))
+                                                else
+                                                    dl.isOverdue.map { over =>
+                                                        if over then
+                                                            // Same reason as the publication side: a typed Abort skips the
+                                                            // finalizer, so the token is freed here and tokOwned keeps the
+                                                            // finalizer's interrupt and panic coverage from freeing twice.
+                                                            Sync.Unsafe.defer {
+                                                                transport.freeAsyncSub(tok)
+                                                                tokOwned = false
+                                                            }.andThen(Abort.fail(TopicAddTimeoutException(aeronUri, streamId, timeout)))
+                                                        else Async.sleep(addBackoff).andThen(Loop.continue)
+                                                    }
+                                            }
                                 }
                             }
                         }
