@@ -303,6 +303,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
                 assert(result._2 == Chunk(10, 20))
             }
 
+            // Branches run as the consumer pulls: the two it never takes never update the state.
             "with incremental consumption and state" in {
                 val computation =
                     for
@@ -313,8 +314,17 @@ class ChoiceTest extends kyo.test.Test[Any]:
                 val stream = Choice.runStream(computation)
                 val result = Var.runTuple(0)(stream.take(3).run).eval
 
-                assert(result._1 == 15)
+                assert(result._1 == 6)
                 assert(result._2 == Chunk(1, 2, 3))
+            }
+
+            "nested choice points stream in the order run collects them" in {
+                val computation =
+                    Choice.eval(1, 2).map { a =>
+                        if a == 1 then Choice.eval(10, 11) else a
+                    }
+                assert(Choice.runStream(computation).run.eval == Choice.run(computation).eval)
+                assert(Choice.runStream(computation).run.eval == Chunk(10, 11, 2))
             }
 
             "with isolate" in {
@@ -395,9 +405,9 @@ class ChoiceTest extends kyo.test.Test[Any]:
         }
 
         "a bracket inside the streamed choice is held across every branch and released once" in {
-            // runStream pulls each branch through a handleFirst region and continues it in its own loop, so the
-            // bracket travels with each branch's remainder. The region is escaping, so the bracket's release is
-            // forwarded to the scope below, which runs it once at its own end, after every branch.
+            // runStream replays the branches under one handler region, which holds the bracket dumped into the
+            // continuation: every branch runs against the live resource and the release runs once, where the
+            // region ends.
             var log = Chunk.empty[String]
             val v =
                 Choice.runStream {

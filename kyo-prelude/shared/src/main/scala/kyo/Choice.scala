@@ -111,22 +111,15 @@ object Choice:
       *   A stream that produces the possible outcomes incrementally
       */
     def runStream[A, S](v: A < (Choice & S))(using Frame, Tag[Emit[Chunk[A]]]): Stream[A, S] =
+        // The same replaying handler as `run`, emitting each outcome as its branch completes rather than collecting
+        // them: the branches run in the order `run` produces, and a consumer that stops pulling stops the branches
+        // not yet taken. One handler region holds the resumptions, so a bracket around a choice point is held
+        // across every branch and released once, where the region ends.
         Stream {
-            Loop(Chunk(v)) { curr =>
-                val (done, pending) = curr.partition(_.evalNow.isDefined)
-                Emit
-                    .valueWhen(done.nonEmpty)(done.asInstanceOf[Chunk[A]])
-                    .andThen {
-                        if pending.isEmpty then Loop.done
-                        else
-                            Kyo.foreach(pending) { v =>
-                                ArrowEffect.handleFirst(Tag[Choice], v)(
-                                    handle = [C] => (input, cont) => Chunk.from(input).map(cont(_)),
-                                    done = r => Chunk(r: A < (Choice & S))
-                                )
-                            }.map(r => Loop.continue(r.flattenChunk))
-                    }
-            }
+            ArrowEffect.handleContRepeated(Tag[Choice], v.map(a => Emit.value(Chunk(a))))(
+                [C] => (input, cont) => Kyo.foreachDiscard(Chunk.from(input))(v => cont(v)),
+                u => u
+            )
         }
     end runStream
 

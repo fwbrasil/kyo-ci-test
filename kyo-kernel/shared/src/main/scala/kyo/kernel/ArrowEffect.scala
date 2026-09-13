@@ -890,10 +890,10 @@ object ArrowEffect:
       * unhandled.
       *
       * The continuation handed to `handle` is the remainder of `v`, carrying every region that sat between this handler and the
-      * operation, a bracket included. Those regions are re-installed when the holder resumes the continuation, however many times, and
-      * what they hold to release belongs to the scope enclosing this handler: a bracket inside the remainder releases once, at that
-      * scope's exit, or at the end of the evaluation, told a clean end if its extent ran to one under a resumption and the discard
-      * outcome if it never did. A remainder resumed after that is refused at the bracket it re-enters.
+      * operation, a bracket included. Those regions are re-installed when the holder resumes the continuation, so a bracket inside the
+      * remainder releases once, when the remainder completes. A remainder that is never resumed releases with the discard outcome at the
+      * exit of the scope enclosing this handler, or at the end of the evaluation. A remainder resumed a second time is refused at the
+      * bracket it re-enters.
       *
       * @param effectTag
       *   Identifies which arrow effect to answer
@@ -925,8 +925,8 @@ object ArrowEffect:
                                 def input = input0
                                 def cont  = cont0.asInstanceOf[Arrow[O[X], A, E & S]]
                         def done(state: Unit, r: A | First) = onDone(r)
-                        // the token carries the region's continuation out: what the region holds to release at
-                        // its exit is forwarded to the scope below, which runs it at its own
+                        // the token carries the region's continuation out, with what its regions hold; what this
+                        // region holds at its exit is forwarded to the scope below as the backstop
                         override def escaping = true
 
                 new Pending.HandleArrow[Unit, E, A | First, B, B, S & S2]:

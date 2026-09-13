@@ -2,7 +2,6 @@ package kyo.kernel.internal
 
 import kyo.Chunk
 import kyo.Maybe
-import kyo.Maybe.Present
 import kyo.Span
 import kyo.kernel.Arrow
 import kyo.kernel.Effect
@@ -226,8 +225,12 @@ final private[kernel] class Stack:
       * installed, so the clause runs outside them, and they are reinstalled if the continuation is resumed, however many times. What they
       * held to release is now the handler's, run when its entry pops, outermost region first so that a run backwards releases innermost
       * first: the reinstalled regions carry nothing and release nothing at their own normal pops.
+      *
+      * With `kept`, for a handler that hands the continuation out as a value, the snapshot keeps each region's releases as well: the
+      * remainder carries what it holds and releases it at its own completion, and what the handler's entry holds is the backstop for a
+      * remainder nobody resumes, run once whichever comes first.
       */
-    def dump(from: Int): Stack.Snapshot =
+    def dump(from: Int, kept: Boolean): Stack.Snapshot =
         val count = size - from
         val out   = new Array[AnyRef](count * 4)
         @tailrec def loop(i: Int): Unit =
@@ -236,7 +239,7 @@ final private[kernel] class Stack:
                 out(i * 4) = handlers(j)
                 out(i * 4 + 1) = states(j).asInstanceOf[AnyRef]
                 out(i * 4 + 2) = continuations(j)
-                out(i * 4 + 3) = null
+                out(i * 4 + 3) = if kept then releaseLists(j) else null
                 oweAll(from - 1, releaseLists(j))
                 handlers(j) = null
                 states(j) = null

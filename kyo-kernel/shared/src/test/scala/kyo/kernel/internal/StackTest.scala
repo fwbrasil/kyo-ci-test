@@ -326,7 +326,7 @@ class StackTest extends AnyFreeSpec:
             stack.push(c, 9, kc)
             stack.owe(1, rb)
             stack.owe(2, rc)
-            val snapshot = stack.dump(1)
+            val snapshot = stack.dump(1, false)
             assert(stack.depth == 1)
             assert(stack.handler(0) eq a)
             assert(snapshot.regions == 2)
@@ -347,7 +347,7 @@ class StackTest extends AnyFreeSpec:
             stack.push(askHandler, (), Arrow.id[Int])
             stack.push(statefulHandler, 5, Arrow.id[Int])
             stack.owe(1, release(log, "one"))
-            discard(stack.dump(1))
+            discard(stack.dump(1, false))
             stack.push(sayHandler, (), Arrow.id[Int])
             assert(as[Unit](stack.state(1)) == ())
             assert(stack.releases(1) eq null)
@@ -363,8 +363,25 @@ class StackTest extends AnyFreeSpec:
             stack.push(sayHandler, (), Arrow.id[Int])
             stack.owe(0, ra)
             stack.owe(1, rb)
-            discard(stack.dump(1))
+            discard(stack.dump(1, false))
             assert(all(stack.releases(0)) == List(ra, rb))
+        }
+
+        "a kept dump leaves each region's releases in the snapshot as well" in {
+            val log   = ListBuffer[String]()
+            val stack = new Stack
+            val rb    = release(log, "b")
+            val rc    = release(log, "c")
+            stack.push(askHandler, (), Arrow.id[Int])
+            stack.push(sayHandler, (), Arrow.id[Int])
+            stack.push(statefulHandler, 9, Arrow.id[Int])
+            stack.owe(1, rb)
+            stack.owe(2, rc)
+            val snapshot = stack.dump(1, true)
+            assert(snapshot.releases(0) eq rb)
+            assert(snapshot.releases(1) eq rc)
+            assert(all(stack.releases(0)) == List(rb, rc))
+            assert(log.isEmpty)
         }
     }
 

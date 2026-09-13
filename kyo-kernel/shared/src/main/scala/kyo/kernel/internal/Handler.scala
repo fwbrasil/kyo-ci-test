@@ -32,8 +32,10 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
     /** Whether this handler's clause hands the cont out of the clause as a value.
       *
       * Such a clause has not finished with what it owes when its answer settles: the remainder is still live in
-      * whoever holds it. The releases this handler's entry holds are forwarded to the entry below at its normal end,
-      * to run when that one ends, rather than run here.
+      * whoever holds it. So the remainder carries what its regions hold, to release at its own completion, and
+      * the releases this handler's entry holds are the backstop for a remainder nobody resumes: forwarded to the
+      * entry below at this handler's normal end, to run when that one ends, once whichever comes first. A
+      * remainder resumed after its release ran is refused at the region it re-enters.
       */
     def escaping: Boolean = false
 

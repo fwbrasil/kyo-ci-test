@@ -17,34 +17,20 @@ Design: `reviews/robustness/analysis/redesign.md`, `region-protocol.md`, `bracke
    (`parkOn`'s comment). The worker died, sbt hung. Rule: no field references in scratch prints inside
    lambdas of `IOTask`.
 1. [x] `Context` removed, d0f19b8f89.
-1b. [ ] The boundary as a loop handler, and abandonment as link-then-release. The stopped resumption
-   parks at the isolate's leading deferral and never reaches the join, so a fiber interrupted before its
-   first slice never links its promise (the probe's trace); the walk reaches the join through pending
-   deferrals and links without running anything, which is the design's own rule. `Eval.stopped` removed,
-   the reporter overload back with a `Unit` reporter, the `null` poll arm back, the reporter's reach pins
-   back. Acceptance: kernel JVM and the core interrupt suites green; commit. Sites: `Eval.loop` (the `ctx` parameter, the read arm, `contextExit`,
-   `arrowExit`, `installed`, `rebound`, `rebuilt`, `maskedEntries`, `maskedRead`), `Handler` (`bound`,
-   `unbound`), `Context.scala` (deleted), `Stack.find` for reads, `derive(outer)` through the same lookup,
-   masking by handler kind. Acceptance: `kyo-kernelJVM/test` green; commit.
-2. [ ] Releases in stack entries. Sites: `Stack` (`releases` array, root list, pop runs the list, dump
-   moves lists, escaping forwards), `Handler` (`release(state, outcome)`, `escaping`; remove `repeated`,
-   `borrow`, `defers`, `reenter`, `discharge`, valueless `done`), `Eval` (`held`, `expandOwed`, `drainOwed`,
-   `drainDiscarded` removed; `release` runs lists; the refusal on re-push from the release's ran flag),
-   `Bracket` (`Cell` replaced by the release closure carrying ran and ended). Acceptance: kernel JVM green
-   with `BracketTest`'s multi-shot and peel leaves; commit.
-3. [ ] `done(state, value)` with an outcome on region handlers. Sites: `Handler.ContextHandler.done`,
-   `Eval` settled arm (continue keeps the region, done pops it). Acceptance: kernel JVM green; commit.
-4. [ ] `Bracket` as one `Finalize` region: body is the acquire, first `done` stores and continues with
-   `use`, second `done` ends, `release` at the pop. `Scope.acquireRelease` on it. `Arrow.Ensure`,
-   `ensureMap`, `Pending.Fused`, `Effect.fused`, `Eval.stopped` removed; `crossing` back to a plain
-   deferral; `IOTask.abandon` links and releases. Callers: `Async._timeout`, `Exchange`, `Topic`.
-   Acceptance: kernel JVM green, core JVM interrupt suites green, strand leaves rewritten to the handoff,
-   fused-delivery leaves removed, bracket law leaves added; commit.
-5. [ ] In-place answering: loop handlers and the boundary keep the inner regions on the stack; the floor
-   for a clause's own suspensions, carried through the outcome dispatcher and the park; `done` pops the
-   entries above with the discard signal; the boundary parks the whole stack. Continuation-taking
-   handlers keep the dump and `crossing`. Acceptance: kernel JVM green with the new floor leaves; core
-   JVM green; commit.
+1b. [x] 5a46dfda1c, 87b21a1ea1. The boundary as a loop handler, abandonment as a link-only walk, the
+   crossing's capture applied as the body's value arrives (a stop on the body's last step no longer
+   strands the value).
+2. [x] 90aad2d8f1. Releases in stack entries (`Stack.releases`, `evalReleases`, `owe`/`oweAll`/`oweBelow`,
+   `takeReleases`, `owned`; dump moves lists; escaping forwards; parks carry lists), the protocol
+   (`release(state): Maybe[Release]`, `escaping`; `repeated`, `borrow`, `defers`, `reenter`, `discharge`
+   gone), the refusal through `Release.reenter`.
+3. [x] 90aad2d8f1. `done(state, value)` answering with an `Outcome2` on region handlers.
+4. [x] 90aad2d8f1, 726b853c53. `Bracket` as one `Finalize` region over the acquire; `Scope.acquireRelease`,
+   `Async._timeout`, `Exchange`, `Topic` on it; `Arrow.Ensure`, `ensureMap`, `Pending.Fused`,
+   `Effect.fused` gone; the strand leaves on the ownership rule.
+5. [x] 90aad2d8f1. In place: the gap (`Handler.Gap`, `Stack.hide`/`hidden`, `find` stepping over it,
+   `contextual` skipping what it hides), the answer gap with `Handler.answered`, `done` discarding through
+   it, the boundary parking the whole stack with the gap. See `derivation-releases.md`, "As built".
 6. [ ] Full verification: kernel JS and Native; core JS; sql JVM containers and JS; aeron JVM; net TLS
    suites JVM and JS; the KernelBench rows base vs tip in a throwaway worktree. Commit the numbers.
 7. [ ] CI: push, dispatch the full matrix, monitor, fix what is red.

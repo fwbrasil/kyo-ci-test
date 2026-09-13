@@ -131,9 +131,9 @@ object Batch:
         // Transforms effect suspensions into an item.
         // Captures the continuation in the `Item` objects for `ToExpand` and `Expanded` cases.
         // handleFirst, not handleCont: the clause answers one suspension and carries its cont out inside the
-        // item, resumed by the loop below after this region ended. Only such a hand-out region owes what it
-        // dumped to the scope below instead of draining it, so a bracket opened inside a batched computation
-        // survives into the item that carries it.
+        // item, resumed by the loop below after this region ended. Only such a hand-out region leaves what it
+        // dumped with the remainder instead of releasing it at its own end, so a bracket opened inside a batched
+        // computation survives into the item that carries it and releases when that item completes.
         def capture(v: Item < (Batch & S)): Item < S =
             ArrowEffect.handleFirst(Tag[Batch], v)(
                 handle = [C] =>

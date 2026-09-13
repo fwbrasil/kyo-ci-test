@@ -94,3 +94,50 @@ Tests: `StackTest` (lanes to lists), `EvalTest` (owed dumps, fused delivery, `En
 
 `IOTask` (the boundary is a loop handler already; `abandon` walks). `Safepoint`. The pool. The context
 removal.
+
+## As built (90aad2d8f1, 726b853c53): where the code settled differently from the rules above
+
+- **Rule 7, a region node not yet entered.** It owns what its derived state owes, as before: nothing for a
+  bracket whose acquire never ran (an empty cell), the release it was handed for `ensuring` and
+  `ensuringWith`. `Sync.ensure` on a fiber interrupted before its first step still runs its finalizer.
+- **Rule 8, a pending answer.** The rows place a loop clause's *answer* inside the handler's region but
+  outside the interior (`O[C] < (E & S)`, with `S` the row outside the handled computation), so a pending
+  answer is evaluated under a second gap over the interior alone, and `Handler.answered` turns the value it
+  settles to into the continue the gap dispatches. The gap carries the continuation the answer flows into
+  (`hide(from, k)`); at the top, where there is no interior, the outcome already carries it and the gap's is
+  the identity. A stop landing as a clause answers parks in front of the answer with the answer gap in place,
+  which is the boundary's re-raised join.
+- **A region's own release** stays in its own entry's list from the push (a cell born at the bracket's first
+  `done` is added then). A dump moves lists only; a reinstalled region's normal pop runs nothing of its own.
+  `Stack.owned` derives the region's release from handler and state so an unwind, a discard or an
+  abandonment can tell it the failure wherever the dump left it held; `Release.ran` keeps a release found
+  twice from running twice.
+- **A release that throws.** At its own region's normal end it runs unguarded and fails the computation, as
+  the extent's own failure would (`releasedAtEnd`); at an unwind or an abandonment the throw is attached
+  to the failure as suppressed; at a discard, or for a moved release at its holder's normal end, the
+  throws are gathered on a "remainder discarded" signal and reported once.
+- **The bracket's `use` throwing while it builds its computation** releases the live cell with the throw
+  before it propagates, inside `done`, since the cell owns the value from the hook on.
+- **`Forked` regions** do not delegate `done`: the origin's runs once, at the join.
+- **`ContextEffect.handle`** lost its `release` arm: a binding owns nothing to release; a region that does is
+  a `Bracket`.
+- **Multi-shot.** With one rule for every continuation-taking handler, a `handleCont` clause resuming twice
+  runs both shots against the live resource; the refusal happens only after the release ran (a leaked
+  continuation resumed after the handler ended, a park evaluated twice). `handleContRepeated` keeps the
+  re-entry (each application under a fresh region of the handler); `handleFirstRepeated` is gone.
+- **Rule 5, escaping, as the first full prelude run corrected it.** Forwarding the dumped releases below
+  and nothing else keeps every resource of every resumed-and-completed remainder open until the scope
+  enclosing the peel ends, one release per element in a streaming loop (`BatchTest` caught it as a
+  `closes == 2` read before the enclosing scope ended). So an escaping handler's dump keeps each region's
+  list in the snapshot as well (`Stack.dump(from, kept = true)`): the remainder carries what it holds and
+  releases it at its own completion, and the copy the handler forwards below is the backstop for a
+  remainder nobody resumes, once whichever comes first through `Release.ran`. That is the `handleFirst`
+  contract as it was: a remainder resumed a second time is refused at the bracket it re-enters. The one
+  caller that replayed a peeled token, `Choice.runStream`, now replays under `handleContRepeated` and
+  emits each outcome as its branch completes: the outcomes stream in the order `run` collects them
+  (depth first, where the loop emitted level by level), and a consumer that stops pulling stops the
+  branches it never took (`ChoiceTest` "with incremental consumption and state" now sees the three taken
+  branches' updates, not all five). A bracket around a streamed choice point is held across every branch
+  and released once, as under `run`.
+- **`Stack.truncate`** is gone: a loop handler's `done` pops the hidden entries one at a time through the
+  gap, releasing each.

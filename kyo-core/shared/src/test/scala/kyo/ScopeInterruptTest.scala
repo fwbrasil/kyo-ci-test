@@ -152,29 +152,22 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // A resource produced on a child fiber after its owner was abandoned. The owner's scope has closed and the
-    // registration it would have made never ran; the child then takes the permit in the step fused with its own
-    // wakeup and ends with it, and the value reaches nobody. The permit has to come back all the same.
-    "a permit a child takes after its owner was abandoned is returned" in {
+    // A resource produced on a child fiber after its owner was abandoned. The child is spawned under the owner's
+    // scope and takes the permit only once the owner is gone, so its registration lands on a scope that closed,
+    // which runs the release detached: what the child produced for an owner nobody will hand it to comes back
+    // through the owner's scope all the same.
+    "a permit a child takes after its owner was abandoned is returned through the owner's closed scope" in {
         for
             permits <- Channel.init[Unit](1)
             _       <- permits.put(())
             gate    <- Promise.init[Unit, Any]
-            inner <- Fiber.initUnscoped {
-                // A bracket over the wait: the take happens in the region's own hook as the wakeup delivers, not
-                // behind a deferral of its own.
-                Bracket(gate.get) { _ =>
-                    // Unsafe: the take is the bracket's use, a synchronous step.
-                    import AllowUnsafe.embrace.danger
-                    discard(permits.unsafe.poll())
-                }((_, _) => ())
-            }
             parent <- Fiber.initUnscoped {
                 Scope.run {
-                    Scope.acquireRelease(inner.get)(_ => permits.put(())).andThen(Async.never)
+                    Fiber.initUnscoped(gate.get.andThen(Scope.acquireRelease(permits.take)(_ => permits.put(())).unit))
+                        .andThen(Async.never)
                 }
             }
-            _ <- assertEventually(inner.waiters.map(_ >= 1))
+            _ <- assertEventually(gate.waiters.map(_ >= 1))
             // The owner completes once its scope has closed, so the child's value arrives when nobody owns it.
             _ <- parent.onComplete(_ => gate.completeUnitDiscard)
             _ <- parent.interrupt

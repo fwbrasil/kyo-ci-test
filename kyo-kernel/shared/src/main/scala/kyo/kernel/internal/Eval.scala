@@ -468,10 +468,8 @@ import scala.collection.mutable.ArrayBuffer
             stack.pop()
             released(held, outcome)
             own match
-                case Present(r) =>
-                    val failed = releasing(r, outcome)
-                    if failed ne null then reported(failed)
-                case Absent => ()
+                case Present(r) => reported(releasing(r, outcome))
+                case Absent     => ()
             end match
         end popped
 
@@ -616,7 +614,7 @@ import scala.collection.mutable.ArrayBuffer
     private def unanswerable(handler: Handler[?, ?, ?]): Nothing = bug(s"unhandled: $handler")
 
     private[kernel] def dumped(stack: Stack, idx: Int, kyo: Pending.Suspend[?, ?, ?, ?]): Stack.Snapshot =
-        val entries = stack.dump(idx + 1)
+        val entries = stack.dump(idx + 1, stack.handler(idx).escaping)
         Debugger.whenEnabled {
             var i = entries.regions - 1
             while i >= 0 do
@@ -635,20 +633,16 @@ import scala.collection.mutable.ArrayBuffer
         if held ne null then
             held match
                 case r: Release =>
-                    val failed = releasing(r, outcome)
-                    if failed ne null then reported(failed)
+                    reported(releasing(r, outcome))
                 case c: Chunk[Release] @unchecked =>
-                    val indexed           = c.toIndexed
-                    var failed: Throwable = null
-                    var i                 = indexed.length - 1
+                    val indexed = c.toIndexed
+                    var failed  = Maybe.empty[Throwable]
+                    var i       = indexed.length - 1
                     while i >= 0 do
-                        val t = releasing(indexed(i), outcome)
-                        if t ne null then
-                            if failed eq null then failed = t
-                            else failed.addSuppressed(t)
+                        failed = gathered(failed, releasing(indexed(i), outcome))
                         i -= 1
                     end while
-                    if failed ne null then reported(failed)
+                    reported(failed)
             end match
 
     /** [[released]] at a region's own normal end: `own` runs unguarded, so its failure is the computation's. */
@@ -659,25 +653,20 @@ import scala.collection.mutable.ArrayBuffer
                     if r eq own then releasingAtEnd(r)
                     else released(held, Absent)
                 case c: Chunk[Release] @unchecked =>
-                    val indexed           = c.toIndexed
-                    var failed: Throwable = null
-                    var i                 = indexed.length - 1
+                    val indexed = c.toIndexed
+                    var failed  = Maybe.empty[Throwable]
+                    var i       = indexed.length - 1
                     while i >= 0 do
                         val r = indexed(i)
                         if r eq own then
-                            if failed ne null then
-                                reported(failed)
-                                failed = null
+                            reported(failed)
+                            failed = Maybe.empty
                             releasingAtEnd(r)
-                        else
-                            val t = releasing(r, Absent)
-                            if t ne null then
-                                if failed eq null then failed = t
-                                else failed.addSuppressed(t)
+                        else failed = gathered(failed, releasing(r, Absent))
                         end if
                         i -= 1
                     end while
-                    if failed ne null then reported(failed)
+                    reported(failed)
             end match
 
     private def releasingAtEnd(release: Release): Unit =
@@ -685,27 +674,40 @@ import scala.collection.mutable.ArrayBuffer
             Debugger.onRelease(release, Absent)
             release(Absent)
 
-    private def reported(failed: Throwable): Unit =
-        val signal = new KyoException("remainder discarded")(using Frame.internal)
-        signal.addSuppressed(failed)
-        Report.unhandled(signal)
-    end reported
+    // The first throw carries the ones after it as suppressed.
+    private def gathered(failed: Maybe[Throwable], next: Maybe[Throwable]): Maybe[Throwable] =
+        next match
+            case Absent => failed
+            case Present(t) =>
+                failed match
+                    case Absent => next
+                    case Present(first) =>
+                        first.addSuppressed(t)
+                        failed
+
+    private def reported(failed: Maybe[Throwable]): Unit =
+        failed match
+            case Present(t) =>
+                val signal = new KyoException("remainder discarded")(using Frame.internal)
+                signal.addSuppressed(t)
+                Report.unhandled(signal)
+            case Absent => ()
 
     // Runs one release, guarded: what it throws is attached to a failure being carried, and answered otherwise.
-    private def releasing(release: Release, outcome: Maybe[Throwable]): Throwable =
-        if release.ran then null
+    private def releasing(release: Release, outcome: Maybe[Throwable]): Maybe[Throwable] =
+        if release.ran then Absent
         else
             Debugger.onRelease(release, outcome)
             try
                 release(outcome)
-                null
+                Absent
             catch
                 case t if !IsFatal(t) =>
                     outcome match
                         case Present(ex) =>
                             if ex ne t then ex.addSuppressed(t)
-                            null
-                        case Absent => t
+                            Absent
+                        case Absent => Present(t)
             end try
     end releasing
 

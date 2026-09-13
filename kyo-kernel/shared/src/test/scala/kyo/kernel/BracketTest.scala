@@ -1401,13 +1401,12 @@ class BracketTest extends AnyFreeSpec:
             assert(count == 1)
         }
 
-        "a handleFirst remainder applied more than once runs each application against the live resource, released once where the scope below ends" in {
-            // The clause hands the continuation out as the region's value, so the bracket dumped into it is
-            // forwarded to the scope below, which releases it at its own end: every application of the remainder
-            // runs before that, against the live resource.
+        "a handleFirst remainder carries the bracket it was handed: the first shot completes it, the second is refused" in {
+            // The clause hands the continuation out as the region's value, so the remainder carries the bracket
+            // dumped into it and releases it when it completes. One-shot: the second application finds the cell
+            // released and is refused.
             var closed             = false
             var closedAtClause     = false
-            var closedAfter        = false
             var seen               = List.empty[String]
             val acquire: Int < Ask = Effect.defer(1)
             val v =
@@ -1426,15 +1425,28 @@ class BracketTest extends AnyFreeSpec:
                     ,
                     done = a => a
                 )
-            val r = answerAsk(0)(branches.map { a =>
-                closedAfter = closed
+            discard(intercept[kyo.Closed](answerAsk(0)(branches).eval))
+            assert(!closedAtClause)
+            assert(closed)
+            assert(seen == List("branch 10"))
+        }
+
+        "a handleFirst remainder resumed once releases when it completes, before the scope below ends" in {
+            var outcome     = Maybe.empty[Maybe[Throwable]]
+            var closedAfter = false
+            val v           = Bracket(Effect.defer(1))(r => ask.map(_ + r))((_, o) => outcome = Maybe(o))
+            val first: Int < Ask =
+                ArrowEffect.handleFirst(Tag[Ask], v)(
+                    handle = [C] => (_, cont) => cont(10),
+                    done = a => a
+                )
+            val r = answerAsk(0)(first.map { a =>
+                closedAfter = outcome.isDefined
                 a
             })
-            assert(r.eval == 32)
-            assert(!closedAtClause)
-            assert(!closedAfter)
-            assert(closed)
-            assert(seen == List("branch 10", "branch 20"))
+            assert(r.eval == 11)
+            assert(closedAfter, "the bracket was still open after its remainder completed")
+            assert(outcome.exists(_.isEmpty), s"the bracket saw $outcome")
         }
 
         "a handleFirst remainder that is never resumed releases at the enclosing region's exit, as discarded" in {

@@ -232,7 +232,7 @@ assert(bothAnswers.eval == 30)
 
 That is the whole mechanism behind non-determinism and backtracking: the region after the suspension ran twice, once per answer, and the clause combined the results. A clause that ignores `cont` entirely ends the computation at the operation, which is how early exit and short-circuiting are built.
 
-The declaration is what makes the second application safe. The continuation carries the regions that stood between the handler and the suspension, and a plain `handleCont` hands those back when the clause returns, so the first application is what ends them. Where one of them is a bracket, a second application would re-enter a scope that has already been released, and is refused. `handleContRepeated` holds that obligation until the handler itself ends instead. Reach for the plain form everywhere else, since holding keeps the obligation longer than a single-shot clause needs. The refusal and the ways around it are in [a released scope, entered again](#a-released-scope-entered-again).
+The continuation carries the regions that stood between the handler and the suspension, and what they hold to release is the handler's from the moment the clause is handed it: every application runs against the live resource, and the release runs once, where the handler ends. That holds for the plain `handleCont` as much as for `handleContRepeated`. What the latter adds is re-entry: each application re-enters the region, so the clause's pending work between two applications is never captured by an inner occurrence of the same effect, which is what a clause that resumes more than once needs. How a bracket fares under either is in [a scope replayed](#a-scope-replayed).
 
 > **Note:** the continuation is an `Arrow`, deliberately not a `Function1`. `Function1` is specialized on both parameters, so mixing it into every handler node would emit the whole forwarder grid, measured at 19776 generated definitions across this module with no genuine call site. An `Arrow` is applied the same way, `cont(value)`.
 
@@ -549,11 +549,11 @@ The extent a recovery covers is the whole life of its region: the receiver being
 
 > **Note:** failure a program declares in its own type, rather than a throw, is `Abort`, and it lives in kyo-prelude one layer above this module. The kernel answers throws.
 
-### `ensureMap`: no gap between a value and what it owes
+### No gap between a value and what it owes
 
 `map` polls the safepoint before applying its function, so an interrupt pending when the value arrives parks the computation and the function never runs. That is right nearly everywhere, and wrong in one place: where the function records an obligation the value itself just created. The resource is open, its release is not registered yet, and a park landing between the two loses it, because nothing yet knows there is anything to close.
 
-`ensureMap` is `map` with that poll removed. Its function runs as the value arrives, so an interrupt lands on one side of the pair or the other and never inside it:
+The kernel closes that gap with a region rather than a step. `Bracket` enters its region before the acquire runs, and the acquire's value reaches the region through the region's own hook, with nothing schedulable in between: from that moment the region owns the value and releases it however the extent ends, a park included. A registration that has to happen as the value arrives goes in the use, which the hook continues the region with:
 
 ```scala
 class Connection:
@@ -565,16 +565,16 @@ end Connection
 val registry = Chunk.newBuilder[Connection]
 
 val acquired: Connection < Ask =
-    Ask.get.ensureMap { _ =>
+    Bracket(Ask.get) { _ =>
         val conn = Connection()
         val _    = registry += conn
         conn
-    }
+    }((_, _) => ())
 
 assert(Ask.run(1)(acquired).eval.closings.isEmpty)
 ```
 
-The connection exists and the registry knows about it, with nothing schedulable in between. Under no interruption that is exactly what `map` would have done, which is why no example can show the difference: it is about the one scheduling in which the two diverge. Reach for it only for that pairing, a resource opened and its release registered, or a fiber spawned and its handle stored, and use `map` everywhere else, since skipping the poll also means the computation cannot be preempted at that point.
+The connection exists and the registry knows about it, with nothing schedulable in between. Under no interruption that is exactly what `map` after the acquire would have done, which is why no example can show the difference: it is about the one scheduling in which the two diverge. Reach for the shape only for that pairing, a resource opened and its release registered, or a fiber spawned and its handle stored, and use `map` everywhere else.
 
 ### `Bracket`: acquire, use, release
 
@@ -613,35 +613,28 @@ assert(abandoned.closings.head.exists(_.isInstanceOf[KyoException]))
 
 The clause answered `-1` without ever applying `cont`, so the `Ask.get.map(_ + id)` behind it never ran and the region completed at the operation. The bracket inside the dropped remainder released on the way out, and this is the path where how the extent ended is information the release could not have worked out for itself.
 
-`Bracket.ensuring(release)(body)` is the entry point for the case with nothing to acquire: release first, body second and by name, and the release handed only the ending. It is not sugar for `Bracket(())`, and the difference shows exactly here. `apply` cannot install its region until the acquire's value arrives, the release being owed that value, so a computation abandoned before it ever ran has no region and nothing to release. `ensuring` installs its region from the start, so its release runs whether or not a single step ever did.
+`Bracket.ensuring(release)(body)` is the entry point for the case with nothing to acquire: release first, body second and by name, and the release handed only the ending. It is not sugar for `Bracket(())`, and the difference shows exactly here. `apply`'s region owns nothing until the acquire's value reaches it, the release being owed that value, so a computation abandoned before the acquire ran has nothing to release. `ensuring`'s region owns its release from the start, so it runs whether or not a single step ever did.
 
 > **Note:** a bracket closes only with the scope that installed it. An isolated child, a spawned fiber among them, gets an inert copy of the region that neither completes, releases, nor refuses, so a child never releases a resource the scope that acquired it is still using.
 
-### A released scope, entered again
+### A scope replayed
 
-The mirror case is a clause that applies its continuation more than once with a bracket inside the region. The first branch ends the use, so the resource is released; the second branch would resume code that closed over a resource that no longer exists. Rather than hand that branch a released resource, entering the scope again is refused:
+The mirror case is a clause that applies its continuation more than once with a bracket inside the region. The bracket sits between the handler and the operation, so it travels with the continuation, and from the moment the clause is handed that continuation the release is the handler's: every branch runs against the live resource, and the release runs once, where the handler ends, told a clean end since the extent ran to one:
 
 ```scala
-val spent = Connection()
+val shared = Connection()
 
 val branched: Int < Any =
-    ArrowEffect.handleCont(Tag[Ask], session(spent))(
+    ArrowEffect.handleCont(Tag[Ask], session(shared))(
         handle = [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
         done = a => a
     )
 
-val refused: String =
-    try
-        val _ = branched.eval
-        "no refusal"
-    catch case _: Closed => "refused"
-
-assert(refused == "refused")
+assert(branched.eval == 32)
+assert(shared.closings == Chunk(Absent))
 ```
 
-The refusal is a `kyo.Closed`, and it is also the one signal a caller gets that a release ran, since the scope could only be spent if the first branch had already released it. It carries no stack trace at all, which is why its message names the `Bracket` call site the resource was opened at, and why the message explains itself rather than leaving the reader a frame to chase: the first resumption ends the extent and releases, and a handler that resumes the same continuation more than once, as `Choice` does, has that effect whenever the bracket sits between the handler and the suspension it answers.
-
-Three arrangements avoid it, and which is right depends on what the branches need. Acquire inside the branch, and every resumption gets a resource of its own. Put the bracket outside the handler, and its extent is not what gets replayed: the release point sits below the handler, never folded into the captured continuation, and the extent ends once after every branch has run. Or keep the shape exactly as it is and say what the clause does, which is what `handleContRepeated` is for:
+Nothing has to be declared for that, and the arrangement decides how many resources there are: acquire inside the branch, and every resumption gets a resource of its own, released where that branch ends; put the bracket outside the handler, and its extent is not what gets replayed. `handleContRepeated` is the same handler with one more property, for a clause whose branches are themselves resumed by inner occurrences: each application of the continuation re-enters the region, so the clause's pending work between two applications is never captured by an inner occurrence, and a bracket acquired inside one branch releases where that branch's region ends, before the next:
 
 ```scala
 val held = Connection()
@@ -656,7 +649,7 @@ assert(heldOpen.eval == 32)
 assert(held.closings.size == 1)
 ```
 
-Both branches ran against a live resource, and the bracket released once, when this handler ended rather than when the first branch did. That is the whole difference: the plain form gives the region back as the clause returns, and this one holds it. Declare it only where the clause really does resume more than once, since holding keeps the obligation open longer than a single-shot clause needs.
+What is refused is a resumption after the release ran. A handler that ends while a continuation it was handed is still held somewhere has released what that continuation carried, and resuming it afterwards would run code that closed over a resource that no longer exists: the resumption is refused with a `kyo.Closed` at the bracket it re-enters, before the code inside can read what is gone. It carries no stack trace at all, which is why its message names the `Bracket` call site the resource was opened at and explains itself rather than leaving the reader a frame to chase.
 
 ### `EffectTrace`: what a failure carries out
 
@@ -900,7 +893,8 @@ The second is `join`, which computes what the scope holds once a fork has ended.
 
 ```scala
 def withMergedLevel[A, S](n: Int)(v: A < (Level & S)): A < S =
-    ContextEffect.handle(Tag[Level])(
+    ContextEffect.handle(
+        Tag[Level],
         n,
         (outer: Int) => outer,
         (parent: Int) => parent,
@@ -910,9 +904,9 @@ def withMergedLevel[A, S](n: Int)(v: A < (Level & S)): A < S =
 assert(withMergedLevel(2)(levelPlus(40)).eval == 42)
 ```
 
-Note the shape, since it is not `handleInheritable`'s: the tag stands alone in the first list, the strategies fill the second, and the computation comes last. In order the four are the two that decide the bound value, `ifUndefined` and `ifDefined`, then `fork` and `join`. Keeping the parent's value, which is what `handleInheritable`'s join does, is the do-nothing answer to the second question.
+Note the shape, since it is not `handleInheritable`'s: the tag and the four strategies fill the first list, and the computation comes last. In order the four are the two that decide the bound value, `ifUndefined` and `ifDefined`, then `fork` and `join`. Keeping the parent's value, which is what `handleInheritable`'s join does, is the do-nothing answer to the second question.
 
-`done` and `release` answer a different question, and they fire whether or not anything ever forked. `done` is what the bound value owes when its region completes normally, and `release` is what it owes when the region ends with a failure, which it is handed. Between them they are how a bound value that owns something outside the computation gets to close it at either exit.
+`done` answers a different question, and it fires whether or not anything ever forked: it is what the bound value owes when its region completes normally. A bound value owns nothing to release; a region that does is a `Bracket`.
 
 ## `Mask`: hiding an effect from inner handlers
 
