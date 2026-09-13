@@ -249,3 +249,30 @@ on the merge-base. The file is not named. Not yet identified.
    there a general shape for a value acquired on one fiber and owned by another?
 4. Issue 4: how should `Safepoint.stop` treat a pending stale stop.
 5. Issues 5 and 6: an approach, not a fix.
+
+## Issue 8: five hot-path performance regressions in the redesign (a deviation for the user)
+
+The full `KernelBench` (52 rows) base `bc6a48a2aa` vs tip `e3163ddbaf`, `-f1` then `-f3` on every
+out-of-band row then `-prof gc` on the movers (`bench/compare-base-vs-tip-5*.md`), found four wins and
+five regressions, every one path length, not allocation (`gc.alloc.rate.norm` flat or lower):
+
+Wins: contextRegionsPayEntryExit -51%, bracketPerRound -51%, foreignCrossingsPayRotation -26%,
+repeatedClausesPayReentry -15% (the last three from dropping the `Context` object, 24 KB/op, per region).
+Regressions: emittingClausesPayRegionRebuild +54%, suspensionBaselineAltEnv +45%,
+suspensionBaselineAltInstall +30%, contextReadsUnderBindings +25%, deferBindUnderTrailingMap +21%.
+
+Three mechanisms, named:
+1. Context reads (+25/30/45%): the `Context` removal (`d0f19b8f89`, the user's ruling "we don't even
+   need Context") makes a read resolve via `stack.find` with a `<:<` per entry, where the base had an
+   O(1) lookup. Closing it reopens the ruling. The reviewer's call.
+2. The gap (emit +54%): a loop clause that emits runs under a `Handler.Gap` per emit (push, run, lift,
+   discard) where the base dumped and re-pushed; lower allocation, more steps. Possibly structural.
+3. deferBind +21%: pure defer+map, byte-identical allocation, inlining decisions matching the base;
+   diffuse path length in the reshaped `loop`, whose settled arm grew with the region hooks and the
+   gap. The one with no design story; a targeted `loop`-shape change might recover it, but the settled
+   arm is `@tailrec`-constrained and the mechanism is not pinned to a single method, so a restructure
+   would be speculative. Not closed.
+
+The full writeup, with the trade the design buys, is in `review.md`, "Benchmarks: the fifth walk". The
+decision, accept the trade / invest in closing groups 2 and 3 / reopen group 1's ruling, is the user's,
+explicitly.
