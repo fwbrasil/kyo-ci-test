@@ -281,11 +281,22 @@ object Isolate:
                             case p: Pending[Stack, S2] @unchecked => Effect.defer(p, this, cont2)
                             case _                                => cont2(f(Nested.unnest[Stack](v).contextual()), Arrow.id)
 
-            def isolate[A, S](state: Stack.Snapshot, v: A < S)(using Frame): (Stack.Snapshot, Stack.Snapshot, A) < S =
-                val forked                          = fork(state)
-                val inner: (Stack.Snapshot, A) < S  = v.map(a => capture(finals => (finals, a)))
-                val parked: (Stack.Snapshot, A) < S = Pending.Park[(Stack.Snapshot, A), S](inner.asInstanceOf[Any < Any], forked)
-                parked.map((finals, a) => (forked, finals, a))
+            def isolate[A, S](state: Stack.Snapshot, v: A < S)(using _frame: Frame): (Stack.Snapshot, Stack.Snapshot, A) < S =
+                val forked = fork(state)
+                // The capture is a step of the crossing's own, not of the body: it is applied as the body's value
+                // arrives, with no preemption point between them. `map` polls before its function, so a stop landing
+                // on the body's last step would park in front of the capture and strand the value in a remainder
+                // nobody resumes; applied here, the value reaches the region's `done` with the stop still pending.
+                val captured =
+                    new Arrow.Step[A, (Stack.Snapshot, Stack.Snapshot, A), S]:
+                        def frame = _frame
+                        override def apply[C, S2](v: A < S2, cont: Arrow[(Stack.Snapshot, Stack.Snapshot, A), C, S2]) =
+                            v match
+                                case p: Pending[A, S2] @unchecked => Effect.defer(p, this, cont)
+                                case _ =>
+                                    val a = Nested.unnest[A](v)
+                                    cont(capture(finals => (forked, finals, a)), Arrow.id)
+                Pending.Park[(Stack.Snapshot, Stack.Snapshot, A), S](captured(v).asInstanceOf[Any < Any], forked)
             end isolate
 
             def restore[A, S](v: (Stack.Snapshot, Stack.Snapshot, A) < S)(using _frame: Frame): A < S =
