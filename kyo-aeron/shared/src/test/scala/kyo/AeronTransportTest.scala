@@ -36,6 +36,8 @@ class AeronTransportTest extends Test:
     val oversizeCrossStreamId = 105
 
     val tokenOwnershipStreamId = 117
+    val bracketPubStreamId     = 118
+    val bracketSubStreamId     = 119
 
     val closedClientPubStreamId = 115
     val closedClientSubStreamId = 116
@@ -225,7 +227,11 @@ class AeronTransportTest extends Test:
         @volatile var interruptTook: Boolean     = false
         @volatile var doneObserved: Boolean      = false
 
-        val freesAfterDone = new java.util.concurrent.atomic.AtomicInteger(0)
+        /** Token frees after the Done poll, and closes of what the Done poll produced, per side. */
+        val freesAfterDone    = new java.util.concurrent.atomic.AtomicInteger(0)
+        val subFreesAfterDone = new java.util.concurrent.atomic.AtomicInteger(0)
+        val pubCloses         = new java.util.concurrent.atomic.AtomicInteger(0)
+        val subCloses         = new java.util.concurrent.atomic.AtomicInteger(0)
 
         def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] = Present(streamId)
         def pollAddPublication(async: AsyncPub)(using AllowUnsafe): AeronTransport.AddPoll[Publication] =
@@ -238,14 +244,18 @@ class AeronTransportTest extends Test:
         def publicationIsConnected(pub: Publication)(using AllowUnsafe): Boolean                 = false
         def offer(pub: Publication, message: Array[Byte])(using AllowUnsafe): Long               = 0L
         def maxMessageLength(pub: Publication)(using AllowUnsafe): Int                           = 0
-        def closePublication(pub: Publication)(using AllowUnsafe): Unit                          = ()
+        def closePublication(pub: Publication)(using AllowUnsafe): Unit                          = discard(pubCloses.incrementAndGet())
         def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub] = Present(streamId)
         def pollAddSubscription(async: AsyncSub)(using AllowUnsafe): AeronTransport.AddPoll[Subscription] =
-            AeronTransport.AddPoll.Awaiting
-        def freeAsyncSub(async: AsyncSub)(using AllowUnsafe): Unit                 = ()
+            interruptTook = interrupter()
+            doneObserved = true
+            AeronTransport.AddPoll.Done(async)
+        end pollAddSubscription
+        def freeAsyncSub(async: AsyncSub)(using AllowUnsafe): Unit =
+            if doneObserved then discard(subFreesAfterDone.incrementAndGet())
         def subscriptionIsConnected(sub: Subscription)(using AllowUnsafe): Boolean = false
         def pollOne(sub: Subscription)(using AllowUnsafe): Maybe[Array[Byte]]      = Absent
-        def closeSubscription(sub: Subscription)(using AllowUnsafe): Unit          = ()
+        def closeSubscription(sub: Subscription)(using AllowUnsafe): Unit          = discard(subCloses.incrementAndGet())
 
         def fatalError(using AllowUnsafe): Maybe[String] = Absent
     end InterruptOnDoneTransport
@@ -707,17 +717,97 @@ class AeronTransportTest extends Test:
                             transport.interruptTook,
                             "the fixture's interrupt did not take, so a zero free count says nothing about the window"
                         )
-                        // The interrupt was taken on the slice the Done poll ran in, and the add reached its own ending
-                        // in that slice, so the ending stands and the interrupt is refused by it: an add interrupted
-                        // instead would mean the poll's answer and the flag it sets were split by the interrupt, which
-                        // is the window the flag exists to close.
+                        // The outcome is what separates the two readings of a zero free count: an interrupted add proves the
+                        // interrupt was OBSERVED and the flag still won, while a completed add proves only that the add
+                        // outran the interrupt and the window was never entered at all. The interrupt is taken in the Done
+                        // poll's step and parks at the bind after it, so the add is interrupted; what the poll produced is
+                        // the next two leaves' concern.
                         assert(
-                            !result.isPanic,
-                            s"the interrupt taken on the slice owned an ending the add reached on its own: $result"
+                            result.isPanic,
+                            s"the add was not interrupted, so this leaf did not exercise the ownership window: $result"
                         )
                         assert(
                             transport.freesAfterDone.get() == 0,
                             s"the async token was freed ${transport.freesAfterDone.get()} time(s) after the transport had " +
+                                "already taken ownership of it on a Done poll"
+                        )
+                    }
+            }
+        }
+    }
+
+    // The add is the bracket's acquire in Topic.publish, and the Done poll is the acquire's last step, so the
+    // publication it produced is owned as that step ends and the interrupt taken in it closes the publication on
+    // abandonment. A bind between the add and its finalizer is where the interrupt would park instead, with the
+    // publication in front of it and nothing owning it: an abandonment runs nothing of a remainder, so the
+    // publication would never be closed.
+    "an interrupt on a completed add closes the publication the add produced" in {
+        val transport = new InterruptOnDoneTransport
+        Latch.initWith(1) { gate =>
+            Fiber.initUnscoped(
+                gate.await.andThen(
+                    Abort.run[TopicException](
+                        Topic.runWith(transport) {
+                            Topic.publish[Int](ipcUri, streamId = Present(bracketPubStreamId))(Stream.init(Seq(1)))
+                        }
+                    )
+                )
+            ).flatMap { fiber =>
+                Sync.Unsafe.defer {
+                    // Unsafe: the fake has to interrupt from inside a synchronous transport call, which is the
+                    // only vantage point where the window under test is open.
+                    transport.interrupter = () => fiber.unsafe.interrupt()
+                }
+                    .andThen(gate.release)
+                    .andThen(fiber.getResult)
+                    .map { result =>
+                        assert(transport.doneObserved, "the poll never reported Done, so the fixture never armed the window")
+                        assert(transport.interruptTook, "the fixture's interrupt did not take, so this leaf did not exercise the window")
+                        assert(result.isPanic, s"the publish was not interrupted, so this leaf did not exercise the window: $result")
+                        assert(
+                            transport.pubCloses.get() == 1,
+                            s"the publication the Done poll produced was closed ${transport.pubCloses.get()} time(s)"
+                        )
+                        assert(
+                            transport.freesAfterDone.get() == 0,
+                            s"the async token was freed ${transport.freesAfterDone.get()} time(s) after the transport had " +
+                                "already taken ownership of it on a Done poll"
+                        )
+                    }
+            }
+        }
+    }
+
+    // The same window on Topic.stream's subscription add.
+    "an interrupt on a completed add closes the subscription the add produced" in {
+        val transport = new InterruptOnDoneTransport
+        Latch.initWith(1) { gate =>
+            Fiber.initUnscoped(
+                gate.await.andThen(
+                    Abort.run[TopicException](
+                        Topic.runWith(transport) {
+                            Topic.stream[Int](ipcUri, streamId = Present(bracketSubStreamId)).take(1).run
+                        }
+                    )
+                )
+            ).flatMap { fiber =>
+                Sync.Unsafe.defer {
+                    // Unsafe: as above, the interrupt has to come from inside the transport call.
+                    transport.interrupter = () => fiber.unsafe.interrupt()
+                }
+                    .andThen(gate.release)
+                    .andThen(fiber.getResult)
+                    .map { result =>
+                        assert(transport.doneObserved, "the poll never reported Done, so the fixture never armed the window")
+                        assert(transport.interruptTook, "the fixture's interrupt did not take, so this leaf did not exercise the window")
+                        assert(result.isPanic, s"the stream was not interrupted, so this leaf did not exercise the window: $result")
+                        assert(
+                            transport.subCloses.get() == 1,
+                            s"the subscription the Done poll produced was closed ${transport.subCloses.get()} time(s)"
+                        )
+                        assert(
+                            transport.subFreesAfterDone.get() == 0,
+                            s"the async token was freed ${transport.subFreesAfterDone.get()} time(s) after the transport had " +
                                 "already taken ownership of it on a Done poll"
                         )
                     }

@@ -576,6 +576,8 @@ assert(Ask.run(1)(acquired).eval.closings.isEmpty)
 
 The connection exists and the registry knows about it, with nothing schedulable in between. Under no interruption that is exactly what `map` after the acquire would have done, which is why no example can show the difference: it is about the one scheduling in which the two diverge. Reach for the shape only for that pairing, a resource opened and its release registered, or a fiber spawned and its handle stored, and use `map` everywhere else.
 
+The same gap can open inside the acquire. The hook takes the acquire's value as the acquire's last step ends, and the only thing that may stand between that step and the hook is the end of a region the acquire entered, which runs in place: `Bracket.ensuring` around the step is one. A `map` after the step, a loop combinator's own step, or a handler that binds after its body, `Abort.run` in kyo-prelude and `Sync.ensure` built on it in kyo-core, is a poll the interrupt parks at, with the value in front of it and nothing owning it. A resource the acquire holds until the step that hands it on is a bracket of its own, nested as the acquire, so that its end is all that stands between the step and the outer hook.
+
 ### `Bracket`: acquire, use, release
 
 `Bracket(acquire)(use)(release)` binds a resource for the extent of a use and runs the release exactly once, whichever way that extent ends. It is not exported into the `kyo` package, so it arrives through the `import kyo.kernel.*` at the top of this document; there is no `kyo.Bracket`.

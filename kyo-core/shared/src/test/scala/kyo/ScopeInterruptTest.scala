@@ -57,6 +57,73 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             end for
         }
 
+        // A bracket is the one owner that takes what its acquire produced with nothing schedulable in between, so a
+        // resource an acquire holds until the step that hands it on is itself a bracket, nested as the acquire: its
+        // end runs in place as the value flows to the outer bracket. `Sync.ensure` and `Sync.acquireReleaseWith`
+        // bind after their body, so in that position the interrupt would park at the bind, with the value in front
+        // of it and nothing owning it; the leaf after this one is that shape.
+        "a bracket nested as the acquire of another hands what its use produced to the outer bracket" in {
+            val rounds = 200
+            for
+                acquired <- AtomicInt.init(0)
+                released <- AtomicInt.init(0)
+                freed    <- AtomicInt.init(0)
+                _ <- selfInterrupting(rounds) { self =>
+                    Bracket(
+                        Bracket(Sync.defer(0)) { _ =>
+                            Sync.defer {
+                                // Unsafe: as above, the interrupt is requested from inside the step that produces
+                                // the acquire's value.
+                                import AllowUnsafe.embrace.danger
+                                discard(self.unsafe.interrupt())
+                                acquired.unsafe.incrementAndGet()
+                            }
+                        }((_, _) => discard(freed.unsafe.incrementAndGet()(using AllowUnsafe.embrace.danger)))
+                    )(_ => Sync.defer(()))((_, _) => discard(released.unsafe.incrementAndGet()(using AllowUnsafe.embrace.danger)))
+                }
+                _   <- assertEventually(Kyo.zip(acquired.get, released.get).map((a, r) => a == r))
+                acq <- acquired.get
+                rel <- released.get
+                fin <- freed.get
+            yield assert(
+                acq == rel && acq == fin && acq > 0,
+                s"$acq acquires ran to their end, $fin inner brackets released and $rel outer releases ran"
+            )
+            end for
+        }
+
+        // The acquire under a Sync.ensure of its own: the ensure binds after its body, the interrupt parks there, and
+        // the abandonment finds the ensure's region, which releases, and a bracket that owns nothing.
+        "an acquire stopped under its own Sync.ensure runs that finalizer and owns nothing" in {
+            val rounds = 200
+            for
+                acquired <- AtomicInt.init(0)
+                released <- AtomicInt.init(0)
+                ended    <- AtomicInt.init(0)
+                _ <- selfInterrupting(rounds) { self =>
+                    Sync.acquireReleaseWith {
+                        Sync.ensure(ended.incrementAndGet.unit) {
+                            Sync.defer {
+                                // Unsafe: as above, the interrupt is requested from inside the step that produces
+                                // the acquire's value.
+                                import AllowUnsafe.embrace.danger
+                                discard(self.unsafe.interrupt())
+                                acquired.unsafe.incrementAndGet()
+                            }
+                        }
+                    }(_ => released.incrementAndGet.unit)(_ => Sync.defer(()))
+                }
+                _   <- assertEventually(Kyo.zip(acquired.get, ended.get).map((a, e) => a == e))
+                acq <- acquired.get
+                rel <- released.get
+                fin <- ended.get
+            yield assert(
+                acq == fin && rel == 0 && acq > 0,
+                s"$acq acquires ran to their end, $fin of their own regions released and $rel bracket releases ran"
+            )
+            end for
+        }
+
         // Scope.acquire is acquireRelease(resource)(_.close()), so what it adds is the close path.
         "Scope.acquire closes the handle it opened" in {
             val rounds = 200

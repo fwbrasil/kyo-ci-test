@@ -119,6 +119,11 @@ object Sync:
       * `Maybe[Error[Any]]`: `Absent` when the computation completed, the `Failure` when it aborted, and a `Panic` when it threw or when
       * its extent was ended from outside, as a scheduler does when it abandons a parked remainder.
       *
+      * The finalizer sees a typed failure because `v` runs under `Abort.run`, which binds after it, and the result is bound once more to
+      * raise the failure past the region. As the acquire of a bracket, then, what `v`'s last step produced reaches the bracket through
+      * those binds, and an interrupt pending as that step ends parks at the first of them, with the value in front of it and nothing
+      * owning it. A resource held until that step is a `kyo.kernel.Bracket` of its own, nested as the acquire.
+      *
       * @param f
       *   The finalizer function that receives information about potential errors and performs cleanup actions.
       * @param v

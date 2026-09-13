@@ -3,6 +3,7 @@ package kyo
 import kyo.internal.AeronPlatform
 import kyo.internal.AeronSentinels
 import kyo.internal.AeronTransport
+import kyo.kernel.Bracket
 
 /** Typed publish-subscribe messaging for local and distributed systems.
   *
@@ -250,51 +251,57 @@ object Topic:
         ): Unit < (Topic & S & Abort[TopicBackpressureException | TopicPublishException | TopicTransportException] & Async) =
             Env.use[AeronTransport] { transport =>
                 val resolvedStreamId = streamId.getOrElse(tag.hash.abs)
-                addPublicationDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).map {
+                // The add is the bracket's acquire: the publication is owned from the step that produces it, so an
+                // interrupt landing in that step closes it on abandonment. A bind between the add and a finalizer
+                // installed after it is where such an interrupt would park, with the publication in front of it
+                // and nothing owning it.
+                Bracket(addPublicationDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout)) {
                     case Absent =>
                         Abort.fail(TopicPublicationClosedException(aeronUri, resolvedStreamId))
                     case Present(publication) =>
                         val backpressured = Abort.fail(TopicBackpressureExhaustedException(aeronUri, resolvedStreamId))
-                        Sync.ensure(Sync.Unsafe.defer(transport.closePublication(publication))) {
-                            source.foreachChunk { messages =>
-                                // Encoded outside the retry so the bytes are reused across every attempt.
-                                val bytes = MsgPack.encode(Envelope(tag.show, messages)).toArray
-                                Retry[TopicBackpressureException](retrySchedule) {
-                                    Sync.Unsafe.defer {
-                                        // fatalError is set by the non-exiting conductor error handler
-                                        // (C: kyo_aeron_error_handler; JVM: Aeron.Context.errorHandler).
-                                        transport.fatalError match
-                                            case Present(detail) =>
-                                                Abort.fail(TopicTransportFailedException(detail))
-                                            case Absent if transport.clientClosed =>
-                                                // Terminal: a closed client reports the same
-                                                // "not connected" as a publication still waiting for
-                                                // a subscriber, so without this the retry below would
-                                                // never stop on a client that can never come back.
-                                                Abort.fail(TopicPublicationClosedException(aeronUri, resolvedStreamId))
-                                            case Absent =>
-                                                val maxLen = transport.maxMessageLength(publication)
-                                                // Checked before connectivity: oversize is terminal regardless of
-                                                // whether a subscriber is attached, so retrying could never help.
-                                                // maxLen == 0 is the closed-publication sentinel on both backends,
-                                                // not a real limit, so it falls through to the connectivity check.
-                                                if maxLen > 0 && bytes.length > maxLen then
-                                                    Abort.fail(TopicMessageTooLargeException(bytes.length, maxLen))
-                                                else if !transport.publicationIsConnected(publication) then backpressured
-                                                else
-                                                    mapOfferResult(
-                                                        transport.offer(publication, bytes),
-                                                        aeronUri,
-                                                        resolvedStreamId,
-                                                        backpressured,
-                                                        bytes.length,
-                                                        maxLen
-                                                    )
-                                                end if
-                                    }
+                        source.foreachChunk { messages =>
+                            // Encoded outside the retry so the bytes are reused across every attempt.
+                            val bytes = MsgPack.encode(Envelope(tag.show, messages)).toArray
+                            Retry[TopicBackpressureException](retrySchedule) {
+                                Sync.Unsafe.defer {
+                                    // fatalError is set by the non-exiting conductor error handler
+                                    // (C: kyo_aeron_error_handler; JVM: Aeron.Context.errorHandler).
+                                    transport.fatalError match
+                                        case Present(detail) =>
+                                            Abort.fail(TopicTransportFailedException(detail))
+                                        case Absent if transport.clientClosed =>
+                                            // Terminal: a closed client reports the same
+                                            // "not connected" as a publication still waiting for
+                                            // a subscriber, so without this the retry below would
+                                            // never stop on a client that can never come back.
+                                            Abort.fail(TopicPublicationClosedException(aeronUri, resolvedStreamId))
+                                        case Absent =>
+                                            val maxLen = transport.maxMessageLength(publication)
+                                            // Checked before connectivity: oversize is terminal regardless of
+                                            // whether a subscriber is attached, so retrying could never help.
+                                            // maxLen == 0 is the closed-publication sentinel on both backends,
+                                            // not a real limit, so it falls through to the connectivity check.
+                                            if maxLen > 0 && bytes.length > maxLen then
+                                                Abort.fail(TopicMessageTooLargeException(bytes.length, maxLen))
+                                            else if !transport.publicationIsConnected(publication) then backpressured
+                                            else
+                                                mapOfferResult(
+                                                    transport.offer(publication, bytes),
+                                                    aeronUri,
+                                                    resolvedStreamId,
+                                                    backpressured,
+                                                    bytes.length,
+                                                    maxLen
+                                                )
+                                            end if
                                 }
                             }
                         }
+                } { (publication, _) =>
+                    // Unsafe: the kernel's release is synchronous, and the close is one transport call.
+                    import AllowUnsafe.embrace.danger
+                    publication.foreach(transport.closePublication(_))
                 }
             }
     end PublishTo
@@ -333,57 +340,60 @@ object Topic:
         Stream {
             Env.use[AeronTransport] { transport =>
                 val resolvedStreamId = streamId.getOrElse(tag.hash.abs)
-                addSubscriptionDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).map {
+                // The add is the bracket's acquire, for the reason the publish path gives.
+                Bracket(addSubscriptionDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout)) {
                     case Absent =>
                         // Closed client: reported as backpressure so the retry schedule absorbs it. A driver
                         // rejection already aborted terminally inside addSubscriptionDeadline.
                         Abort.fail(TopicBackpressureExhaustedException(aeronUri, resolvedStreamId))
                     case Present(subscription) =>
                         val backpressured = Abort.fail(TopicBackpressureExhaustedException(aeronUri, resolvedStreamId))
-                        Sync.ensure(Sync.Unsafe.defer(transport.closeSubscription(subscription))) {
-                            def loop(): Unit < (Emit[Chunk[A]] & Async & Abort[TopicBackpressureException | TopicTransportException]) =
-                                Retry[TopicBackpressureException](retrySchedule) {
-                                    Sync.Unsafe.defer {
-                                        // Same fatal-error slot as the publish path.
-                                        transport.fatalError match
-                                            case Present(detail) =>
-                                                Abort.fail(TopicTransportFailedException(detail))
-                                            case Absent if transport.clientClosed =>
-                                                // Terminal, for the reason the publish path documents:
-                                                // a closed client is indistinguishable from a
-                                                // subscription still waiting for a publisher, and no
-                                                // amount of retrying revives it.
-                                                Abort.fail(TopicTransportFailedException("aeron client closed"))
-                                            case Absent =>
-                                                if !transport.subscriptionIsConnected(subscription) then backpressured
-                                                else
-                                                    transport.pollOne(subscription) match
-                                                        case Absent =>
-                                                            backpressured
-                                                        case Present(bytes) =>
-                                                            MsgPack.decode[Envelope[A]](Span.from(bytes)) match
-                                                                case Result.Failure(error) =>
-                                                                    Abort.panic(error)
-                                                                case Result.Panic(t) =>
-                                                                    // MsgPack.decode catches only DecodeException, so other
-                                                                    // throwables arrive here; re-panic rather than masking
-                                                                    // them behind a MatchError.
-                                                                    Abort.panic(t)
-                                                                case Result.Success(envelope) =>
-                                                                    if envelope.typeTag != tag.show then
-                                                                        Abort.panic(
-                                                                            new IllegalStateException(
-                                                                                s"Expected messages of type ${tag.show} but got ${envelope.typeTag}"
-                                                                            )
+                        def loop(): Unit < (Emit[Chunk[A]] & Async & Abort[TopicBackpressureException | TopicTransportException]) =
+                            Retry[TopicBackpressureException](retrySchedule) {
+                                Sync.Unsafe.defer {
+                                    // Same fatal-error slot as the publish path.
+                                    transport.fatalError match
+                                        case Present(detail) =>
+                                            Abort.fail(TopicTransportFailedException(detail))
+                                        case Absent if transport.clientClosed =>
+                                            // Terminal, for the reason the publish path documents:
+                                            // a closed client is indistinguishable from a
+                                            // subscription still waiting for a publisher, and no
+                                            // amount of retrying revives it.
+                                            Abort.fail(TopicTransportFailedException("aeron client closed"))
+                                        case Absent =>
+                                            if !transport.subscriptionIsConnected(subscription) then backpressured
+                                            else
+                                                transport.pollOne(subscription) match
+                                                    case Absent =>
+                                                        backpressured
+                                                    case Present(bytes) =>
+                                                        MsgPack.decode[Envelope[A]](Span.from(bytes)) match
+                                                            case Result.Failure(error) =>
+                                                                Abort.panic(error)
+                                                            case Result.Panic(t) =>
+                                                                // MsgPack.decode catches only DecodeException, so other
+                                                                // throwables arrive here; re-panic rather than masking
+                                                                // them behind a MatchError.
+                                                                Abort.panic(t)
+                                                            case Result.Success(envelope) =>
+                                                                if envelope.typeTag != tag.show then
+                                                                    Abort.panic(
+                                                                        new IllegalStateException(
+                                                                            s"Expected messages of type ${tag.show} but got ${envelope.typeTag}"
                                                                         )
-                                                                    else
-                                                                        Emit.valueWith(envelope.messages)(loop())
-                                                                    end if
-                                    }
+                                                                    )
+                                                                else
+                                                                    Emit.valueWith(envelope.messages)(loop())
+                                                                end if
                                 }
-                            end loop
-                            loop()
-                        }
+                            }
+                        end loop
+                        loop()
+                } { (subscription, _) =>
+                    // Unsafe: the kernel's release is synchronous, and the close is one transport call.
+                    import AllowUnsafe.embrace.danger
+                    subscription.foreach(transport.closeSubscription(_))
                 }
             }
         }
@@ -394,8 +404,9 @@ object Topic:
       * Polls the registration in a cooperative `Async` loop until a deadline, sleeping `addBackoff`
       * between steps. Aborts `TopicAddTimeoutException` on expiry and `TopicRegistrationFailedException`
       * on driver rejection; returns `Absent` on a closed client so the caller maps it to
-      * `TopicPublicationClosedException`. The `Sync.ensure` handler frees the async token when the
-      * fiber is cancelled mid-`Awaiting`, preventing a leak.
+      * `TopicPublicationClosedException`. A bracket owns the async token and frees it when the fiber is
+      * abandoned mid-`Awaiting`, preventing a leak; the caller's bracket owns the publication from the
+      * poll that produces it.
       */
     private[kyo] def addPublicationDeadline(
         transport: AeronTransport,
@@ -406,25 +417,34 @@ object Topic:
         type Pub = transport.Publication
         Clock.use { clock =>
             clock.deadline(timeout).map { dl =>
-                Sync.Unsafe.defer(transport.asyncAddPublication(aeronUri, streamId)).map {
-                    case Absent =>
-                        (Absent: Maybe[Pub])
-                    case Present(tok) =>
-                        // Token free-ownership: on Done, pollAddPublication's _get frees the token; on
-                        // Failed the C layer does not, so each Failed arm frees it and clears tokOwned
-                        // to keep the finalizer from double-freeing. The var is confined to one fiber.
-                        //
-                        // The poll and the flag that records who owns the token after it are one block: an
-                        // interrupt lands before the poll or after the flag, never between the transport
-                        // taking the token and the finalizer learning it, which would free it twice.
-                        var tokOwned = true
-                        Sync.ensure(Sync.Unsafe.defer(if tokOwned then transport.freeAsyncPub(tok) else ())) {
-                            Loop.foreach[Maybe[Pub], Async & Abort[TopicTransportException]] {
+                // Token free-ownership: on Done, pollAddPublication's _get frees the token; on Failed the C
+                // layer does not, so each Failed arm frees it and clears tokOwned to keep the release from
+                // double-freeing. The var is made per run and confined to one fiber.
+                //
+                // The token's owner is a bracket, and so is the publication's, in Topic.publish: a bracket is
+                // the one owner that takes what its acquire produced with nothing schedulable in between. The
+                // poll, the flag that records who owns the token after it, and the add's value on Done are one
+                // step, and that step is the last of the publication's acquire: what stands between it and the
+                // publication's bracket is this bracket's own end, which runs in place. An interrupt lands
+                // before the poll, where this bracket still owns the token, or after the publication's bracket
+                // owns the publication, never between the transport taking the token and the release learning
+                // it, and never between the publication existing and something owning it. A handler that binds
+                // after its body, Sync.ensure or Abort.run, or a loop combinator, in that position would put a
+                // bind between the publication and its owner, which is where an interrupt would park with the
+                // publication in front of it, owned by nothing; so the token is a bracket and the loop is the
+                // poll calling itself.
+                Sync.defer {
+                    var tokOwned = true
+                    Bracket(Sync.Unsafe.defer(transport.asyncAddPublication(aeronUri, streamId))) {
+                        case Absent =>
+                            (Absent: Maybe[Pub])
+                        case Present(tok) =>
+                            def poll(): Maybe[Pub] < (Async & Abort[TopicTransportException]) =
                                 Sync.Unsafe.defer {
                                     (transport.pollAddPublication(tok): AeronTransport.AddPoll[Pub]) match
                                         case AeronTransport.AddPoll.Done(pub) =>
                                             tokOwned = false
-                                            Loop.done[Unit, Maybe[Pub]](Maybe(pub))
+                                            (Maybe(pub): Maybe[Pub])
                                         case AeronTransport.AddPoll.Failed(code, detail)
                                             if code != 0 || detail.nonEmpty =>
                                             // Driver rejected the registration: abort terminally.
@@ -438,7 +458,7 @@ object Topic:
                                             Sync.Unsafe.defer {
                                                 transport.freeAsyncPub(tok)
                                                 tokOwned = false
-                                            }.andThen(Loop.done[Unit, Maybe[Pub]](Absent))
+                                            }.andThen(Absent: Maybe[Pub])
                                         case _ => // AeronTransport.AddPoll.Awaiting
                                             Sync.Unsafe.defer(transport.clientClosed).map { closed =>
                                                 if closed then
@@ -452,25 +472,28 @@ object Topic:
                                                     Sync.Unsafe.defer {
                                                         transport.freeAsyncPub(tok)
                                                         tokOwned = false
-                                                    }.andThen(Loop.done[Unit, Maybe[Pub]](Absent))
+                                                    }.andThen(Absent: Maybe[Pub])
                                                 else
                                                     dl.isOverdue.map { over =>
                                                         if over then
-                                                            // Freed here rather than left to the finalizer: this exit is a typed
-                                                            // Abort, and Sync.ensure does not run its finalizer on that edge, so
-                                                            // relying on it leaks the token on every add that reaches its deadline.
-                                                            // The finalizer still covers the interrupt and panic exits, and
+                                                            // Freed here, in the step that takes the exit, rather than left to
+                                                            // the finalizer: the finalizer runs once the abort is handled, outside
+                                                            // this step. It still covers the interrupt and panic exits, and
                                                             // tokOwned keeps the two from freeing twice.
                                                             Sync.Unsafe.defer {
                                                                 transport.freeAsyncPub(tok)
                                                                 tokOwned = false
                                                             }.andThen(Abort.fail(TopicAddTimeoutException(aeronUri, streamId, timeout)))
-                                                        else Async.sleep(addBackoff).andThen(Loop.continue)
+                                                        else Async.sleep(addBackoff).andThen(poll())
                                                     }
                                             }
                                 }
-                            }
-                        }
+                            poll()
+                    } { (tok, _) =>
+                        // Unsafe: the kernel's release is synchronous, and the free is one transport call.
+                        import AllowUnsafe.embrace.danger
+                        if tokOwned then tok.foreach(transport.freeAsyncPub(_))
+                    }
                 }
             }
         }
@@ -489,19 +512,20 @@ object Topic:
         type Sub = transport.Subscription
         Clock.use { clock =>
             clock.deadline(timeout).map { dl =>
-                Sync.Unsafe.defer(transport.asyncAddSubscription(aeronUri, streamId)).map {
-                    case Absent =>
-                        (Absent: Maybe[Sub])
-                    case Present(tok) =>
-                        var tokOwned = true
-                        Sync.ensure(Sync.Unsafe.defer(if tokOwned then transport.freeAsyncSub(tok) else ())) {
-                            Loop.foreach[Maybe[Sub], Async & Abort[TopicTransportException]] {
-                                // the poll and the flag are one block, for the same reason as the publication's poll above
+                // The token is a bracket, the poll and the value are one step, and the loop is the poll calling
+                // itself, for the reasons the publication's add gives.
+                Sync.defer {
+                    var tokOwned = true
+                    Bracket(Sync.Unsafe.defer(transport.asyncAddSubscription(aeronUri, streamId))) {
+                        case Absent =>
+                            (Absent: Maybe[Sub])
+                        case Present(tok) =>
+                            def poll(): Maybe[Sub] < (Async & Abort[TopicTransportException]) =
                                 Sync.Unsafe.defer {
                                     (transport.pollAddSubscription(tok): AeronTransport.AddPoll[Sub]) match
                                         case AeronTransport.AddPoll.Done(sub) =>
                                             tokOwned = false
-                                            Loop.done[Unit, Maybe[Sub]](Maybe(sub))
+                                            (Maybe(sub): Maybe[Sub])
                                         case AeronTransport.AddPoll.Failed(code, detail)
                                             if code != 0 || detail.nonEmpty =>
                                             // Driver rejected the registration: abort terminally.
@@ -515,7 +539,7 @@ object Topic:
                                             Sync.Unsafe.defer {
                                                 transport.freeAsyncSub(tok)
                                                 tokOwned = false
-                                            }.andThen(Loop.done[Unit, Maybe[Sub]](Absent))
+                                            }.andThen(Absent: Maybe[Sub])
                                         case _ => // AeronTransport.AddPoll.Awaiting
                                             Sync.Unsafe.defer(transport.clientClosed).map { closed =>
                                                 if closed then
@@ -523,23 +547,27 @@ object Topic:
                                                     Sync.Unsafe.defer {
                                                         transport.freeAsyncSub(tok)
                                                         tokOwned = false
-                                                    }.andThen(Loop.done[Unit, Maybe[Sub]](Absent))
+                                                    }.andThen(Absent: Maybe[Sub])
                                                 else
                                                     dl.isOverdue.map { over =>
                                                         if over then
-                                                            // Same reason as the publication side: a typed Abort skips the
-                                                            // finalizer, so the token is freed here and tokOwned keeps the
-                                                            // finalizer's interrupt and panic coverage from freeing twice.
+                                                            // Same reason as the publication side: the token is freed in the
+                                                            // step that takes the exit, and tokOwned keeps the finalizer's
+                                                            // interrupt and panic coverage from freeing twice.
                                                             Sync.Unsafe.defer {
                                                                 transport.freeAsyncSub(tok)
                                                                 tokOwned = false
                                                             }.andThen(Abort.fail(TopicAddTimeoutException(aeronUri, streamId, timeout)))
-                                                        else Async.sleep(addBackoff).andThen(Loop.continue)
+                                                        else Async.sleep(addBackoff).andThen(poll())
                                                     }
                                             }
                                 }
-                            }
-                        }
+                            poll()
+                    } { (tok, _) =>
+                        // Unsafe: the kernel's release is synchronous, and the free is one transport call.
+                        import AllowUnsafe.embrace.danger
+                        if tokOwned then tok.foreach(transport.freeAsyncSub(_))
+                    }
                 }
             }
         }

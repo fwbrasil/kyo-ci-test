@@ -825,6 +825,35 @@ class EvalTest extends AnyFreeSpec:
             assert(released.exists(_.isEmpty), s"the bracket saw $released")
         }
 
+        // The acquire's last step under a region of the acquire's own: the region ends in place as the value flows
+        // to the bracket, its release told a clean end, so the value is owned before the park all the same.
+        "a stop landing on the acquire's last step under the acquire's own region hands the value to the bracket before parking" in {
+            var inner    = Maybe.empty[Maybe[Throwable]]
+            var released = Maybe.empty[Int]
+            var used     = false
+            val acquire: Int < Any =
+                Bracket.ensuring(outcome => inner = Maybe(outcome)) {
+                    Effect.defer {
+                        requestStop()
+                        7
+                    }
+                }
+            val v: Int < Any =
+                Bracket(acquire) { a =>
+                    Effect.defer {
+                        used = true
+                        a + 1
+                    }
+                }((a, _) => released = Maybe(a))
+            val parked = Eval.partial(v)
+            assert(parked.isInstanceOf[Park[?, ?]])
+            assert(inner.exists(_.isEmpty), s"the acquire's own region did not end cleanly before the park, it saw $inner")
+            assert(!used, "the use ran under the stop")
+            assert(released.isEmpty)
+            Eval.release(parked, new RuntimeException("abandoned"))
+            assert(released == Maybe(7), s"the release never ran for what the acquire produced, it saw $released")
+        }
+
         // A resource that is itself a computation is carried boxed once it settles, and every settled arm unnests
         // before delivering; the region's hook receives it unnested too.
         "a release for a resource that is itself a computation receives the computation, not its box" in {
