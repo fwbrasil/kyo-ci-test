@@ -20,6 +20,16 @@ mechanisms every issue below was traced to. Where each stands, at `4d2df91395` a
   promise is pending (5a46dfda1c), and the crossing's capture is a step applied as the body's value
   arrives rather than a `map` the stop parks in front of (87b21a1ea1). `FiberTest`, "a body ending
   with its value in the slice its interrupt landed on completes with the value", green.
+  What the redesign does not do is resume an abandoned remainder, which the fourth walk did
+  (61c22b177d) and which kyo-aeron's token-ownership leaf had been flipped to expect: an add whose
+  Done poll takes the interrupt is interrupted at the bind after the poll, as `main` asserts, and
+  the leaf is restored to that. The consequence in `Topic` (e3163ddbaf): the publication the poll
+  produced sat in front of that bind, owned by nothing, so the add is now the acquire of a kernel
+  `Bracket` that owns it from the poll's step, and the token inside the add is a bracket nested as
+  the acquire rather than a `Sync.ensure`, because `Sync.ensure` and `Abort.run` bind after their
+  body and a loop combinator's step is a bind too. The rule is stated in the kernel README,
+  CONTRIBUTING and `Sync.ensure`'s doc, and pinned in `EvalTest`, `ScopeInterruptTest` and
+  `AeronTransportTest`.
 - **Issue 3, the child's resource.** The design's answer is the handoff: the producing fiber
   registers the release into the owner's scope, which it reaches through the context, and a scope
   that closed runs the registration detached (`ScopeInterruptTest`, "a permit a child takes after its

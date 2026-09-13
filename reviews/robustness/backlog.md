@@ -32,11 +32,15 @@ Design: `reviews/robustness/analysis/redesign.md`, `region-protocol.md`, `bracke
    `contextual` skipping what it hides), the answer gap with `Handler.answered`, `done` discarding through
    it, the boundary parking the whole stack with the gap. See `derivation-releases.md`, "As built".
 6. [ ] Full verification. Done on JVM: kernel 1839 green, kernel doctest 56 blocks green, prelude 845
-   green, core green (the orphaned-permit leaf rewritten to the handoff, then green). In progress:
-   every JVM module's tests compiling (the pool's `takeSlot` had never compiled; its release is now a
-   helper taking the unsafe evidence). Then: kernel JS and Native; core JS; sql JVM containers and the
-   JS SQL interrupt suite; aeron JVM; net TLS suites JVM and JS; the KernelBench rows base vs tip in a
-   throwaway worktree. Commit the numbers.
+   green, core green (the orphaned-permit leaf rewritten to the handoff, then green), every JVM
+   module's tests compiling (the pool's `takeSlot` had never compiled; its release is now a helper
+   taking the unsafe evidence), sql JVM containers 139 suites green, the JS SQL interrupt suite green.
+   Kernel JS 1780 and Native 1816 green after the js-wasm Safepoint fix (b3849fd99c: a pending stop
+   drains the budget, as the jvm-native slot does). Aeron JVM green after e3163ddbaf: the add is a
+   bracket's acquire, its token a nested bracket (the fourth walk's "ending stands" expectation
+   restored to main's). In progress: kernel JS and Native for the new leaf, aeron JS and Native, net
+   TLS suites JVM and JS, core JS in full. Then: KernelBench and ChoiceBench base (bc6a48a2aa) vs tip
+   in the throwaway worktrees `robustness-bench-base` and `robustness-bench-tip`. Commit the numbers.
 7. [ ] CI: push, dispatch the full matrix, monitor, fix what is red.
 8. [ ] Package: derivation, flags, sequence, review.md for the fifth walk; the report files updated
    (issues.md closed items, test-plan.md, coverage.md); rulings recorded; `.dev/kernel-robustness.md`

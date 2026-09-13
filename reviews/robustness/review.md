@@ -706,21 +706,36 @@ the evaluator, the bracket, the crossing, the removals, the callers, the tests, 
 10. **`Debugger.scala`, `ConsoleDebugger.scala`:** `onRelease(release, outcome)`.
 11. **`Scope.scala`, `Async.scala`, `Exchange.scala`:** brackets in place of `ensureMap`; the timeout's
     and the exchange's release interrupt what they spawned on an unwind or an abandonment.
-12. **`Topic.scala`:** the two polls fold the ownership flag into the poll's own step.
+12. **`Topic.scala`:** the add is the acquire of a kernel `Bracket` that owns the publication, or the
+    subscription, from the poll that produces it; inside the add the token is a bracket nested as the
+    acquire, in place of `Sync.ensure`, and the loop is the poll calling itself, so nothing but a
+    region's own end stands between the Done poll and the outer bracket's hook. The stale claim that
+    `Sync.ensure` skips a typed abort is gone from the two deadline comments.
+12b. **`Safepoint.scala`, js-wasm:** `get()` drains an armed budget on a pending stop as well as on the
+    slice's deadline, the moment the jvm-native slot resolves to when a stop has landed on it, so the
+    bind after a stopped step defers on every platform.
 13. **`Batch.scala`, `Choice.scala`:** the peel's comment; `runStream` replaying under
     `handleContRepeated`, emitting each leaf as it completes.
 14. **`SqlConnectionPool.scala`:** the pool's `takeSlot` handoff, its release a plain helper taking the
     unsafe evidence.
 15. **The kernel tests:** `StackTest` over lists and the gap; `EvalTest`'s parking block, the bracket's
-    hook leaves, the release blocks on `Bracket.ensuring`, "releases moved by a dump"; `BracketTest`'s
-    replayed-scope leaves and the `handleFirst` pair; `ContextEffectTest`'s completion block;
-    `DebuggerTest`, `PendingTest` and `KernelTest` following the surface; `ContextTest` gone with
-    `Context`.
-16. **The core and prelude tests:** the strand leaves and the orphaned-permit leaf on the ownership
-    rule; `SyncTest`'s replay leaf; `ChoiceTest`'s `runStream` pins, one added for the order;
-    `ScopeTest`'s comments.
-17. **`README.md`, `CONTRIBUTING.md`:** the bracket's hook in place of `ensureMap`, the replayed scope,
-    the merged-level example on the overload that exists, the evaluator as built.
+    hook leaves ("a stop alone requested inside a step defers the bind that follows it", the
+    platform-independent pin behind 12b, and "a stop landing on the acquire's last step under the
+    acquire's own region hands the value to the bracket before parking", the pin behind 12), the
+    release blocks on `Bracket.ensuring`, "releases moved by a dump"; `BracketTest`'s replayed-scope
+    leaves and the `handleFirst` pair; `ContextEffectTest`'s completion block; `DebuggerTest`,
+    `PendingTest` and `KernelTest` following the surface; `ContextTest` gone with `Context`.
+16. **The core, prelude and aeron tests:** the strand leaves and the orphaned-permit leaf on the
+    ownership rule; `ScopeInterruptTest`'s nested-bracket leaf and its `Sync.ensure` counterpart, an
+    acquire stopped under its own ensure owning nothing; `SyncTest`'s replay leaf; `ChoiceTest`'s
+    `runStream` pins, one added for the order; `ScopeTest`'s comments; `AeronTransportTest`'s
+    token-ownership leaf back on `main`'s expectation, the interrupt honored, with two leaves beside
+    it asserting the publication and the subscription the Done poll produced are closed.
+17. **`README.md`, `CONTRIBUTING.md`, `Sync.scala`'s docs:** the bracket's hook in place of `ensureMap`,
+    the replayed scope, the merged-level example on the overload that exists, the evaluator as built,
+    and the acquire-side rule: only a region's own end may stand between the acquire's last step and
+    the hook; `Abort.run`, `Sync.ensure` and a loop combinator bind after the step and are where a stop
+    parks with the value in front of it.
 
 What changes for a caller is in `analysis/derivation-releases.md`, "As built": every shot of a held
 continuation runs against the live resource and the release runs once where the holder ends;
