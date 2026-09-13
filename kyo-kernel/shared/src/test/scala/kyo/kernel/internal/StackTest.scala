@@ -20,18 +20,21 @@ class StackTest extends AnyFreeSpec:
     // A release that records the outcome it was told under `name`.
     private def release(log: ListBuffer[String], name: String): Release =
         new Release:
-            private var done                           = false
-            def ran: Boolean                           = done
+            private var done = false
+            def ran: Boolean = done
             def apply(outcome: Maybe[Throwable]): Unit =
                 done = true
                 discard(log += s"$name ${if outcome.isEmpty then "absent" else "present"}")
             def reenter(): Unit = ()
 
-    private def all(held: Stack.Releases): Chunk[Release] =
-        held match
-            case null                         => Chunk.empty
-            case c: Chunk[Release] @unchecked => c
-            case r: Release                   => Chunk(r)
+    private given CanEqual[Release, Release] = CanEqual.derived
+
+    private def all(held: Stack.Releases): List[Release] =
+        if held eq null then Nil
+        else
+            held match
+                case c: Chunk[Release] @unchecked => c.toSeq.toList
+                case r: Release                   => List(r)
 
     sealed trait Ask    extends ArrowEffect[Const[Unit], Const[Int]]
     sealed trait AskSub extends Ask
@@ -213,35 +216,6 @@ class StackTest extends AnyFreeSpec:
         }
     }
 
-    "truncate" - {
-        "keeps the outermost entries and drops the rest" in {
-            val stack = new Stack
-            val outer = askHandler
-            stack.push(outer, (), Arrow.id[Int])
-            stack.push(sayHandler, (), Arrow.id[Int])
-            stack.push(sayHandler, (), Arrow.id[Int])
-            stack.truncate(1)
-            assert(stack.depth == 1)
-            assert(stack.handler(0) eq outer)
-            assert(stack.find(Tag[Say]) == -1)
-        }
-
-        "to the current depth keeps everything" in {
-            val stack = new Stack
-            stack.push(askHandler, (), Arrow.id[Int])
-            stack.truncate(1)
-            assert(stack.depth == 1)
-        }
-
-        "to zero empties the stack" in {
-            val stack = new Stack
-            stack.push(askHandler, (), Arrow.id[Int])
-            stack.truncate(0)
-            assert(stack.isEmpty)
-            assert(stack.find(Tag[Ask]) == -1)
-        }
-    }
-
     "clear empties the stack and forgets what it held" in {
         val log   = ListBuffer[String]()
         val stack = new Stack
@@ -252,8 +226,8 @@ class StackTest extends AnyFreeSpec:
         stack.clear()
         assert(stack.isEmpty)
         assert(stack.find(Tag[Ask]) == -1)
-        assert(stack.releases(1) == null)
-        assert(stack.takeEvalReleases() == null)
+        assert(stack.releases(1) eq null)
+        assert(stack.takeEvalReleases() eq null)
         assert(log.isEmpty)
     }
 
@@ -261,7 +235,7 @@ class StackTest extends AnyFreeSpec:
         "an entry starts holding nothing" in {
             val stack = new Stack
             stack.push(askHandler, (), Arrow.id[Int])
-            assert(stack.releases(0) == null)
+            assert(stack.releases(0) eq null)
         }
 
         "one release is held as itself, a second makes a chunk in order" in {
@@ -273,7 +247,7 @@ class StackTest extends AnyFreeSpec:
             stack.owe(0, r1)
             assert(stack.releases(0) eq r1)
             stack.owe(0, r2)
-            assert(all(stack.releases(0)).toIndexed == Chunk(r1, r2).toIndexed)
+            assert(all(stack.releases(0)) == List(r1, r2))
         }
 
         "oweAll appends a whole list after what is held" in {
@@ -285,9 +259,9 @@ class StackTest extends AnyFreeSpec:
             stack.push(askHandler, (), Arrow.id[Int])
             stack.owe(0, r1)
             stack.oweAll(0, Chunk(r2, r3))
-            assert(all(stack.releases(0)).toIndexed == Chunk(r1, r2, r3).toIndexed)
+            assert(all(stack.releases(0)) == List(r1, r2, r3))
             stack.oweAll(0, null)
-            assert(all(stack.releases(0)).toIndexed == Chunk(r1, r2, r3).toIndexed)
+            assert(all(stack.releases(0)) == List(r1, r2, r3))
         }
 
         "oweBelow lands on the entry under the index, and on the evaluation's own list at the bottom" in {
@@ -300,9 +274,9 @@ class StackTest extends AnyFreeSpec:
             stack.oweBelow(1, r1)
             stack.oweBelow(0, r2)
             assert(stack.releases(0) eq r1)
-            assert(stack.releases(1) == null)
+            assert(stack.releases(1) eq null)
             assert(stack.takeEvalReleases() eq r2)
-            assert(stack.takeEvalReleases() == null)
+            assert(stack.takeEvalReleases() eq null)
         }
 
         "takeReleases empties the entry it reads" in {
@@ -312,7 +286,7 @@ class StackTest extends AnyFreeSpec:
             stack.push(askHandler, (), Arrow.id[Int])
             stack.owe(0, r)
             assert(stack.takeReleases(0) eq r)
-            assert(stack.takeReleases(0) == null)
+            assert(stack.takeReleases(0) eq null)
         }
 
         "a popped entry drops what it held" in {
@@ -321,9 +295,9 @@ class StackTest extends AnyFreeSpec:
             stack.push(askHandler, (), Arrow.id[Int])
             stack.owe(0, release(log, "one"))
             stack.pop()
-            assert(stack.releases(0) == null)
+            assert(stack.releases(0) eq null)
             stack.push(sayHandler, (), Arrow.id[Int])
-            assert(stack.releases(0) == null)
+            assert(stack.releases(0) eq null)
         }
 
         "the pop runs nothing itself" in {
@@ -358,12 +332,12 @@ class StackTest extends AnyFreeSpec:
             assert(snapshot.regions == 2)
             assert(snapshot.handler(0) eq b)
             assert(snapshot.continuation(0) eq kb)
-            assert(snapshot.releases(0) == null)
+            assert(snapshot.releases(0) eq null)
             assert(snapshot.handler(1) eq c)
             assert(as[Int](snapshot.state(1)) == 9)
             assert(snapshot.continuation(1) eq kc)
-            assert(snapshot.releases(1) == null)
-            assert(all(stack.releases(0)).toIndexed == Chunk(rb, rc).toIndexed)
+            assert(snapshot.releases(1) eq null)
+            assert(all(stack.releases(0)) == List(rb, rc))
             assert(log.isEmpty)
         }
 
@@ -376,7 +350,7 @@ class StackTest extends AnyFreeSpec:
             discard(stack.dump(1))
             stack.push(sayHandler, (), Arrow.id[Int])
             assert(as[Unit](stack.state(1)) == ())
-            assert(stack.releases(1) == null)
+            assert(stack.releases(1) eq null)
             assert(stack.find(Tag[Ask]) == 0)
         }
 
@@ -390,7 +364,7 @@ class StackTest extends AnyFreeSpec:
             stack.owe(0, ra)
             stack.owe(1, rb)
             discard(stack.dump(1))
-            assert(all(stack.releases(0)).toIndexed == Chunk(ra, rb).toIndexed)
+            assert(all(stack.releases(0)) == List(ra, rb))
         }
     }
 
@@ -401,7 +375,7 @@ class StackTest extends AnyFreeSpec:
             stack.push(a, (), Arrow.id[Int])
             stack.push(sayHandler, (), Arrow.id[Int])
             stack.push(statefulHandler, 1, Arrow.id[Int])
-            stack.hide(1)
+            stack.hide(1, Arrow.id[Int])
             assert(stack.depth == 4)
             assert(stack.handler(3) eq Handler.Gap)
             assert(stack.hidden(3) == 2)
@@ -414,7 +388,7 @@ class StackTest extends AnyFreeSpec:
             val stack = new Stack
             stack.push(askHandler, (), Arrow.id[Int])
             stack.push(sayHandler, (), Arrow.id[Int])
-            stack.hide(0)
+            stack.hide(0, Arrow.id[Int])
             val above = sayHandler
             stack.push(above, (), Arrow.id[Int])
             assert(stack.find(Tag[Say]) == 3)
@@ -426,22 +400,38 @@ class StackTest extends AnyFreeSpec:
             val stack = new Stack
             stack.push(askHandler, (), Arrow.id[Int])
             stack.push(sayHandler, (), Arrow.id[Int])
-            stack.hide(0)
+            stack.hide(0, Arrow.id[Int])
             stack.pop()
             assert(stack.find(Tag[Say]) == 1)
             assert(stack.find(Tag[Ask]) == 0)
         }
 
-        "a gap over a gap hides the inner one and what it hides" in {
+        "nested gaps are stepped over in turn" in {
             val stack = new Stack
-            stack.push(askHandler, (), Arrow.id[Int])
-            stack.hide(0)
+            val below = askHandler
+            stack.push(below, (), Arrow.id[Int])
             stack.push(sayHandler, (), Arrow.id[Int])
-            stack.hide(1)
-            assert(stack.depth == 4)
-            assert(stack.hidden(3) == 2)
+            stack.push(statefulHandler, 1, Arrow.id[Int])
+            stack.hide(1, Arrow.id[Int])
+            stack.push(envHandler, 5, Arrow.id[Int])
+            val above = statefulHandler
+            stack.push(above, 2, Arrow.id[Int])
+            assert(stack.find(Tag[Ask]) == 5)
+            stack.hide(5, Arrow.id[Int])
+            assert(stack.depth == 7)
+            assert(stack.hidden(6) == 1)
+            assert(stack.find(Tag[Ask]) == 0)
+            assert(stack.handler(0) eq below)
+            assert(stack.find(Tag[Env]) == 4)
             assert(stack.find(Tag[Say]) == -1)
-            assert(stack.find(Tag[Ask]) == -1)
+        }
+
+        "the gap keeps the continuation it was pushed with" in {
+            val stack = new Stack
+            val k     = Arrow[Int](_ + 1)
+            stack.push(askHandler, (), Arrow.id[Int])
+            stack.hide(0, k)
+            assert(stack.continuation(1) eq k)
         }
     }
 
@@ -460,8 +450,8 @@ class StackTest extends AnyFreeSpec:
             assert(snapshot.handler(1) eq b)
             assert(as[Int](snapshot.state(1)) == 3)
             assert(snapshot.continuation(1) eq kb)
-            assert(snapshot.releases(0) == null)
-            assert(snapshot.releases(1) == null)
+            assert(snapshot.releases(0) eq null)
+            assert(snapshot.releases(1) eq null)
         }
 
         "carries what each entry held with it, and leaves nothing behind" in {
@@ -474,8 +464,8 @@ class StackTest extends AnyFreeSpec:
             val snapshot = stack.takeAll()
             assert(snapshot.regions == 2)
             assert(snapshot.releases(0) eq r)
-            assert(snapshot.releases(1) == null)
-            assert(stack.releases(0) == null)
+            assert(snapshot.releases(1) eq null)
+            assert(stack.releases(0) eq null)
             assert(log.isEmpty)
         }
 
@@ -483,7 +473,7 @@ class StackTest extends AnyFreeSpec:
             val stack = new Stack
             stack.push(askHandler, (), Arrow.id[Int])
             stack.push(sayHandler, (), Arrow.id[Int])
-            stack.hide(1)
+            stack.hide(1, Arrow.id[Int])
             val snapshot = stack.takeAll()
             assert(snapshot.regions == 3)
             assert(snapshot.handler(2) eq Handler.Gap)
@@ -503,7 +493,7 @@ class StackTest extends AnyFreeSpec:
             assert(snapshot.handler(0) eq env)
             assert(as[Int](snapshot.state(0)) == 5)
             assert(snapshot.continuation(0).isInstanceOf[Arrow.Id[?]])
-            assert(snapshot.releases(0) == null)
+            assert(snapshot.releases(0) eq null)
         }
 
         "keeps the bindings in the order the stack holds them" in {
@@ -528,7 +518,7 @@ class StackTest extends AnyFreeSpec:
             stack.push(below, 5, Arrow.id[Int])
             stack.push(askHandler, (), Arrow.id[Int])
             stack.push(envHandler, 6, Arrow.id[Int])
-            stack.hide(1)
+            stack.hide(1, Arrow.id[Int])
             stack.push(above, 7, Arrow.id[Int])
             val snapshot = stack.contextual()
             assert(snapshot.regions == 2)
@@ -570,8 +560,7 @@ class StackTest extends AnyFreeSpec:
         assert(stack.find(Tag[Ask]) == 100)
         assert(stack.find(Tag[Say]) == 0)
         assert(stack.releases(0) eq r)
-        stack.truncate(1)
-        assert(stack.depth == 1)
+        while stack.depth > 1 do stack.pop()
         assert(stack.handler(0) eq bottom)
         assert(stack.releases(0) eq r)
     }

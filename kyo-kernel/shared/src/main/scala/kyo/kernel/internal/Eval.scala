@@ -3,6 +3,7 @@ package kyo.kernel.internal
 import kyo.Chunk
 import kyo.Frame
 import kyo.IsFatal
+import kyo.KyoException
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
@@ -147,10 +148,11 @@ import scala.collection.mutable.ArrayBuffer
                                             // continued: the answer carries on inside the region
                                             case e: Loop.Continue[C < (EX & S2)] @unchecked =>
                                                 loop(e._1, Arrow.id, Arrow.id)
-                                            // suspended: the clause's own computation runs under a gap hiding the region
+                                            // suspended: the clause's own computation runs under a gap hiding the region; the
+                                            // outcome carries the continuation, so the gap has none to apply
                                             case pending: Pending[Outcome[C < (EX & S2), Y < S2], S2] @unchecked =>
                                                 type OutT = Outcome[C < (EX & S2), Y < S2]
-                                                stack.hide(idx)
+                                                stack.hide(idx, Arrow.id)
                                                 loop[OutT, OutT, OutT, S2](pending, Arrow.id, Arrow.id)
                                             // done: the region ends with its value
                                             case done =>
@@ -171,18 +173,17 @@ import scala.collection.mutable.ArrayBuffer
                                         outcome0 match
                                             case outcome: Loop.Continue[OX[VX] < (EX & S2)] @unchecked =>
                                                 val ans = outcome._1
-                                                // A stop landing as the clause answers with a computation parks in front of
-                                                // it, with every region in place: a boundary re-raising a pending join asks
-                                                // for exactly this.
-                                                if armed && ans.isInstanceOf[Pending[?, ?]] && Safepoint.stopped(slot) then
-                                                    park(ans, kyo.cont, contA.chain(contB))
-                                                else loop(ans, kyo.cont, contA.chain(contB))
+                                                if !ans.isInstanceOf[Pending[?, ?]] then loop(ans, kyo.cont, contA.chain(contB))
+                                                else if answering(idx, kyo.cont.chain(contA.chain(contB))) then
+                                                    park(ans, Handler.answered, Arrow.id)
+                                                else loop(ans, Handler.answered, Arrow.id)
+                                                end if
+                                            // suspended: the clause's own computation runs under a gap hiding the region and
+                                            // the interior, carrying the continuation for the answer it settles to
                                             case pending: Pending[Outcome[OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
-                                                type OutT = Outcome[C < (EX & S2), Y < S2]
-                                                val k        = kyo.cont.chain(contA.chain(contB))
-                                                val answered = Handler.attachReentry[IX, OX, EX, C, Y, S2, VX](k)(pending)
-                                                stack.hide(idx)
-                                                loop[OutT, OutT, OutT, S2](answered, Arrow.id, Arrow.id)
+                                                type OutT = Outcome[OX[VX] < (EX & S2), Y < S2]
+                                                stack.hide(idx, kyo.cont.chain(contA.chain(contB)))
+                                                loop[OutT, OutT, OutT, S2](pending, Arrow.id, Arrow.id)
                                             case outcome =>
                                                 val result =
                                                     Nested.unnest[Y < S2](Loop.unnest(outcome.asInstanceOf[Outcome[
@@ -205,7 +206,7 @@ import scala.collection.mutable.ArrayBuffer
                                                 loop(e._2, Arrow.id, Arrow.id)
                                             case pending: Pending[Outcome2[VX, C < (EX & S2), Y < S2], S2] @unchecked =>
                                                 type OutT = Outcome2[VX, C < (EX & S2), Y < S2]
-                                                stack.hide(idx)
+                                                stack.hide(idx, Arrow.id)
                                                 loop[OutT, OutT, OutT, S2](pending, Arrow.id, Arrow.id)
                                             case done =>
                                                 val result =
@@ -225,15 +226,15 @@ import scala.collection.mutable.ArrayBuffer
                                             case outcome: Loop.Continue2[VX, OX[VX] < (EX & S2)] @unchecked =>
                                                 stack.setState(idx, outcome._1)
                                                 val ans = outcome._2
-                                                if armed && ans.isInstanceOf[Pending[?, ?]] && Safepoint.stopped(slot) then
-                                                    park(ans, kyo.cont, contA.chain(contB))
-                                                else loop(ans, kyo.cont, contA.chain(contB))
+                                                if !ans.isInstanceOf[Pending[?, ?]] then loop(ans, kyo.cont, contA.chain(contB))
+                                                else if answering(idx, kyo.cont.chain(contA.chain(contB))) then
+                                                    park(ans, Handler.answered, Arrow.id)
+                                                else loop(ans, Handler.answered, Arrow.id)
+                                                end if
                                             case pending: Pending[Outcome2[VX, OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
-                                                type OutT = Outcome2[VX, C < (EX & S2), Y < S2]
-                                                val k        = kyo.cont.chain(contA.chain(contB))
-                                                val answered = Handler.attachReentry2[VX, IX, OX, EX, C, Y, S2, VX](k)(pending)
-                                                stack.hide(idx)
-                                                loop[OutT, OutT, OutT, S2](answered, Arrow.id, Arrow.id)
+                                                type OutT = Outcome2[VX, OX[VX] < (EX & S2), Y < S2]
+                                                stack.hide(idx, kyo.cont.chain(contA.chain(contB)))
+                                                loop[OutT, OutT, OutT, S2](pending, Arrow.id, Arrow.id)
                                             case outcome =>
                                                 val result =
                                                     Nested.unnest[Y < S2](Loop.unnest(outcome.asInstanceOf[Outcome2[
@@ -320,17 +321,27 @@ import scala.collection.mutable.ArrayBuffer
                                             contextExit(top)
                                             loop(result.asInstanceOf[Y < Any], next, Arrow.id)
                                     end match
-                                // a gap: the outcome of a loop clause's own computation, the regions it hid still in place
+                                // a gap: the outcome of a loop clause's own computation, or of its pending answer, with the
+                                // regions it hid still in place
                                 case _: Handler.Gap.type =>
                                     val h = top - stack.hidden(top)
+                                    val k = stack.continuation(top).asInstanceOf[Arrow[Any, Any, Any]]
                                     res match
                                         case c: Loop.Continue[Y < Any] @unchecked =>
                                             lifted(top, h)
-                                            loop(c._1, Arrow.id, Arrow.id)
+                                            if k.isInstanceOf[Arrow.Id[?]] || !c._1.isInstanceOf[Pending[?, ?]] then
+                                                loop(c._1, k, Arrow.id)
+                                            else if answering(h, k) then park(c._1, Handler.answered, Arrow.id)
+                                            else loop(c._1, Handler.answered, Arrow.id)
+                                            end if
                                         case c: Loop.Continue2[Any, Y < Any] @unchecked =>
                                             stack.setState(h, c._1)
                                             lifted(top, h)
-                                            loop(c._2, Arrow.id, Arrow.id)
+                                            if k.isInstanceOf[Arrow.Id[?]] || !c._2.isInstanceOf[Pending[?, ?]] then
+                                                loop(c._2, k, Arrow.id)
+                                            else if answering(h, k) then park(c._2, Handler.answered, Arrow.id)
+                                            else loop(c._2, Handler.answered, Arrow.id)
+                                            end if
                                         case done =>
                                             val handler = stack.handler(h).asInstanceOf[Handler.ArrowHandler[VX, EX, AX, Y, Any]]
                                             val result  = Nested.unnest[Y < Any](Loop.unnest(done.asInstanceOf[Outcome[Any, Y < Any]]))
@@ -437,27 +448,44 @@ import scala.collection.mutable.ArrayBuffer
             install(0)
         end installed
 
-        // Pops the entry at `top` and runs what it held, told how the entry ended.
+        // A loop clause's pending answer, once the gap over its outcome has lifted: it is at the row outside the
+        // interior but inside the handler's region, so it is evaluated under a gap over the interior alone, and
+        // `answered` turns what it settles to into the continue the gap dispatches with `k`. Answers whether the
+        // evaluation parks first: a stop landing as the clause answered parks in front of the answer, with the gap
+        // and every region in place, which is what a boundary re-raising a pending join asks for. A settled answer,
+        // or one whose outcome already carried the continuation (at the top, where there is no interior, `k` is the
+        // identity), flows into `k` under the regions the gap hid instead.
+        def answering(h: Int, k: Arrow[?, ?, ?]): Boolean =
+            stack.hide(h + 1, k)
+            armed && Safepoint.stopped(slot)
+        end answering
+
+        // Pops the entry at `top` and runs what it held, then what its region owes when a dump moved that elsewhere,
+        // each told how the entry ended, and each guarded: an unwind or a discard is not the moment to fail on.
         def popped(top: Int, outcome: Maybe[Throwable]): Unit =
+            val own  = stack.owned(top)
             val held = stack.takeReleases(top)
             stack.pop()
             released(held, outcome)
+            own match
+                case Present(r) =>
+                    val failed = releasing(r, outcome)
+                    if failed ne null then reported(failed)
+                case Absent => ()
+            end match
         end popped
 
-        // Pops the entry at `top` for an unwind: what it held is told the failure, and so is the region's own
-        // release when a dump moved it elsewhere, since the failure is the extent's whichever entry holds it.
-        def unwound(top: Int, ex: Throwable): Unit =
-            val own =
-                stack.handler(top) match
-                    case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked => hc.release(stack.state(top).asInstanceOf[VX])
-                    case _                                                   => Absent
-            popped(top, Present(ex))
+        // The region at `top` ended normally: what it held runs guarded, except its own release, which runs unguarded
+        // when the entry still holds it, so a release failing at the end of its own extent fails the computation as
+        // the extent's own failure would. A region whose release a dump moved elsewhere runs nothing of its own here.
+        def contextExit(top: Int): Unit =
+            val own  = stack.owned(top)
+            val held = stack.takeReleases(top)
+            stack.pop()
             own match
-                case Present(r) => releasing(r, Present(ex))
-                case Absent     => ()
-        end unwound
-
-        def contextExit(top: Int): Unit = popped(top, Absent)
+                case Present(r) => releasedAtEnd(held, r)
+                case Absent     => released(held, Absent)
+        end contextExit
 
         // An escaping region has not finished with what it holds: it moves to the entry below, to run when that one ends.
         def arrowExit(handler: Handler.ArrowHandler[?, ?, ?, ?, ?]): Unit =
@@ -506,7 +534,7 @@ import scala.collection.mutable.ArrayBuffer
                 stack.handler(top) match
                     case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
                         Debugger.onRegionExit(hc, ex)
-                        unwound(top, ex)
+                        popped(top, Present(ex))
                         recovered(ex)
                     // a gap: the throw came from a loop clause's own computation, outside the regions the gap hides,
                     // which are released with it and not offered it, since it is not the body's
@@ -515,7 +543,7 @@ import scala.collection.mutable.ArrayBuffer
                         popped(top, Present(ex))
                         while n > 0 do
                             Debugger.onRegionExit(stack.handler(stack.depth - 1), ex)
-                            unwound(stack.depth - 1, ex)
+                            popped(stack.depth - 1, Present(ex))
                             n -= 1
                         end while
                         recovered(ex)
@@ -600,30 +628,84 @@ import scala.collection.mutable.ArrayBuffer
 
     /** Runs what an entry held, last added first, telling each release how the entry ended.
       *
-      * A release that throws at a normal end is reported, since nothing is unwinding to carry it; at an unwind or an abandonment the throw
-      * is attached to the outcome as suppressed.
+      * A release that throws at an unwind or an abandonment has its throw attached to the outcome as suppressed. At a normal end nothing
+      * is unwinding to carry it: the throws are gathered on a signal naming the remainder they were discarded with, reported once.
       */
     private[kernel] def released(held: Stack.Releases, outcome: Maybe[Throwable]): Unit =
         if held ne null then
             held match
-                case r: Release => releasing(r, outcome)
+                case r: Release =>
+                    val failed = releasing(r, outcome)
+                    if failed ne null then reported(failed)
                 case c: Chunk[Release] @unchecked =>
-                    val indexed = c.toIndexed
-                    var i       = indexed.length - 1
+                    val indexed           = c.toIndexed
+                    var failed: Throwable = null
+                    var i                 = indexed.length - 1
                     while i >= 0 do
-                        releasing(indexed(i), outcome)
+                        val t = releasing(indexed(i), outcome)
+                        if t ne null then
+                            if failed eq null then failed = t
+                            else failed.addSuppressed(t)
                         i -= 1
+                    end while
+                    if failed ne null then reported(failed)
             end match
 
-    private def releasing(release: Release, outcome: Maybe[Throwable]): Unit =
+    /** [[released]] at a region's own normal end: `own` runs unguarded, so its failure is the computation's. */
+    private def releasedAtEnd(held: Stack.Releases, own: Release): Unit =
+        if held ne null then
+            held match
+                case r: Release =>
+                    if r eq own then releasingAtEnd(r)
+                    else released(held, Absent)
+                case c: Chunk[Release] @unchecked =>
+                    val indexed           = c.toIndexed
+                    var failed: Throwable = null
+                    var i                 = indexed.length - 1
+                    while i >= 0 do
+                        val r = indexed(i)
+                        if r eq own then
+                            if failed ne null then
+                                reported(failed)
+                                failed = null
+                            releasingAtEnd(r)
+                        else
+                            val t = releasing(r, Absent)
+                            if t ne null then
+                                if failed eq null then failed = t
+                                else failed.addSuppressed(t)
+                        end if
+                        i -= 1
+                    end while
+                    if failed ne null then reported(failed)
+            end match
+
+    private def releasingAtEnd(release: Release): Unit =
         if !release.ran then
+            Debugger.onRelease(release, Absent)
+            release(Absent)
+
+    private def reported(failed: Throwable): Unit =
+        val signal = new KyoException("remainder discarded")(using Frame.internal)
+        signal.addSuppressed(failed)
+        Report.unhandled(signal)
+    end reported
+
+    // Runs one release, guarded: what it throws is attached to a failure being carried, and answered otherwise.
+    private def releasing(release: Release, outcome: Maybe[Throwable]): Throwable =
+        if release.ran then null
+        else
             Debugger.onRelease(release, outcome)
-            try release(outcome)
+            try
+                release(outcome)
+                null
             catch
                 case t if !IsFatal(t) =>
                     outcome match
-                        case Present(ex) => if ex ne t then ex.addSuppressed(t)
-                        case Absent      => Report.unhandled(t)
+                        case Present(ex) =>
+                            if ex ne t then ex.addSuppressed(t)
+                            null
+                        case Absent => t
             end try
     end releasing
 
@@ -661,7 +743,7 @@ import scala.collection.mutable.ArrayBuffer
             handler match
                 case hc: Handler.ContextHandler[Any, ?, ?, ?] @unchecked =>
                     hc.release(state) match
-                        case Present(r) => held += r
+                        case Present(r) => discard(held += r)
                         case Absent     => ()
                 case _ => ()
 

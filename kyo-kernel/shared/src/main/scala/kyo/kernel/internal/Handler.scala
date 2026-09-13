@@ -120,7 +120,7 @@ end Handler
             catch
                 case ex =>
                     EffectTrace.attach(ex, kyo, stack)
-                    stack.hide(idx)
+                    stack.hide(idx, Arrow.id)
                     throw ex
 
         /** Answers one occurrence for a region that is at the top of the stack, applying the continuation to the answer without leaving.
@@ -179,7 +179,7 @@ end Handler
             catch
                 case ex =>
                     EffectTrace.attach(ex, kyo, stack)
-                    stack.hide(idx)
+                    stack.hide(idx, Arrow.id)
                     throw ex
 
         def answers[X](
@@ -252,13 +252,29 @@ end Handler
       * between it and the suspension, while everything below stays in reach. Rather than taking those entries off the
       * stack, the evaluator pushes this over them, with the number of entries it hides as its state and the suspension's
       * continuation as its own, and [[Stack.find]] steps over what it hides. The outcome settling with the gap on top
-      * lifts it with a continue, or discards through it with anything else; an unwind releases what it hides without
-      * offering the throw to them, since it is not the body's.
+      * lifts it: a continue hands the answer to the continuation under the regions the gap hid, and anything else
+      * discards through them. An unwind releases what the gap hides without offering the throw to them, since it is not
+      * the body's.
+      *
+      * A pending answer is the same shape one entry narrower: the answer is at the row outside the interior regions but
+      * inside the handler's, so a gap over the interior alone hides them while it runs, and [[answered]] turns the value
+      * it settles to into the continue the gap dispatches.
       */
     object Gap extends Handler[Hidden, Any, Any]:
         def tag               = Tag[Hidden]
         override def toString = "Gap"
     end Gap
+
+    /** Turns a settled answer into the continue outcome a gap dispatches, so a pending answer evaluated under an answer gap
+      * reaches the gap's settled arm the way a clause's own outcome does.
+      */
+    val answered: Arrow[Any, Outcome[Any, Any], Any] =
+        new Arrow.Step[Any, Outcome[Any, Any], Any]:
+            def frame = Frame.internal
+            override def apply[D, S3](v: Any < S3, cont2: Arrow[Outcome[Any, Any], D, S3]) =
+                v match
+                    case p: Pending[Any, S3] @unchecked => Effect.defer(p, this, cont2)
+                    case _                              => cont2(Loop.continue[Any, Any, Any](v), Arrow.id)
 
     /** The handler a re-entered region runs under: `outer` with `done` as identity, so the region a resumption
       * re-enters yields the body's value and `outer`'s `done` still runs once, at the outer region's end.

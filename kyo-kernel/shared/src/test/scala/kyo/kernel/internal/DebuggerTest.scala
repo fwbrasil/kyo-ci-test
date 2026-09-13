@@ -1,6 +1,7 @@
 package kyo.kernel.internal
 
 import kyo.Const
+import kyo.Maybe
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.<
@@ -34,7 +35,7 @@ class DebuggerTest extends AnyFreeSpec:
         override def onRegionEnter(handler: Handler[?, ?, ?], state: Any): Unit                                  = record("regionEnter")
         override def onRegionExit(handler: Handler[?, ?, ?], result: Any): Unit                                  = record("regionExit")
         override def onResult(value: Any): Unit                                                                  = record("result")
-        override def onRelease(handler: Handler[?, ?, ?], ex: Throwable): Unit                                   = record("release")
+        override def onRelease(release: Release, outcome: Maybe[Throwable]): Unit                                = record("release")
     end Recording
 
     // Cancelled rather than passed vacuously when the hooks are erased: installing a debugger into such a build

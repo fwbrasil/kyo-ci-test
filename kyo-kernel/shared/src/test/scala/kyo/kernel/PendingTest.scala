@@ -471,7 +471,6 @@ class PendingTest extends Test:
         // handled and does not leak past its handler. `drainedBudget` forces that deferral deterministically.
         // One leaf per operation.
 
-
         "multiple effects with the nested map deferred at a denied safepoint" in {
             assert(nestedScenario.map(_.handle(TestEffect2.run)).handle(TestEffect1.run).eval == "Effect1:10".length + 10)
             val deferred =

@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Result.Error
 import kyo.Result.Panic
+import kyo.kernel.Bracket
 import kyo.kernel.ContextEffect
 
 /** A structured effect for safe acquisition and finalization of resources.

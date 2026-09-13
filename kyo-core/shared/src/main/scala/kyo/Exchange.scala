@@ -1,6 +1,7 @@
 package kyo
 
 import java.util.concurrent.ConcurrentHashMap
+import kyo.kernel.Bracket
 
 /** A request/response multiplexer over a shared bidirectional connection.
   *

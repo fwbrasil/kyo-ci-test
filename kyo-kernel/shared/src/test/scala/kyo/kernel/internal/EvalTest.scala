@@ -1019,8 +1019,8 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a bracket is told a clean end when an inner region recovers the failure" in {
-            val log                     = ListBuffer[Boolean]()
-            val body: Int < Ask         = ask.map(_ => (throw Boom): Int)
+            val log             = ListBuffer[Boolean]()
+            val body: Int < Ask = ask.map(_ => (throw Boom): Int)
             val inner: Int < Any = ArrowEffect.handleCont[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], body)(
                 [C] => (_, cont) => cont(0),
                 a => a,

@@ -4,6 +4,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kyo.Absent
 import kyo.Closed
 import kyo.Frame
+import kyo.IsFatal
 import kyo.KyoException
 import kyo.Maybe
 import kyo.Present
@@ -191,7 +192,16 @@ object Bracket:
                 state match
                     case empty: Cell.Empty[Any] @unchecked =>
                         val live = empty.acquired(Nested.unnest[Any](value))
-                        Loop.continue[Cell, Any < (Finalize & S2), Any < S2](live, use(live.state))
+                        // A throw while `use` builds its computation is the extent's own failure: the cell owns the
+                        // value from the hook on, so it is released with the throw before that propagates.
+                        val body =
+                            try use(live.state)
+                            catch
+                                case ex =>
+                                    try live(Present(ex))
+                                    catch case t if !IsFatal(t) && (t ne ex) => ex.addSuppressed(t)
+                                    throw ex
+                        Loop.continue[Cell, Any < (Finalize & S2), Any < S2](live, body)
                     case live: Cell.Live[?] =>
                         live.complete()
                         Loop.settled[Cell, Any < (Finalize & S2), Any, S2](value)

@@ -1,6 +1,8 @@
 package kyo.kernel.internal
 
 import kyo.Chunk
+import kyo.Maybe
+import kyo.Maybe.Present
 import kyo.Span
 import kyo.kernel.Arrow
 import kyo.kernel.Effect
@@ -12,9 +14,10 @@ import scala.annotation.tailrec
   * and the releases it holds. Pushing a region then writes four slots and allocates nothing, which matters because a region is pushed and
   * popped for every handled computation.
   *
-  * The releases an entry holds are what runs when the entry pops: its own region's release, added as it is pushed, plus whatever a dump
-  * moved to it from the regions above or an escaping handler forwarded from the entry above. They are run last added first, so a release
-  * moved from an inner region runs before the entry's own.
+  * The releases an entry holds are what runs when the entry pops, last added first: its own region's release, added as the region is
+  * pushed, plus whatever a dump moved to it from the regions above or an escaping handler forwarded from the entry above. A region
+  * reinstalled from a continuation holds nothing, its own release having moved with the dump; [[owned]] still derives it from the handler
+  * and the state, for an unwind or an abandonment to tell it the failure wherever it is held.
   *
   * The stack is mutable and borrowed from a per-thread pool for one evaluation, then cleared and returned. Nothing that leaves the evaluator
   * points at it: what escapes is a [[Stack.Snapshot]], an immutable copy.
@@ -76,12 +79,22 @@ final private[kernel] class Stack:
         releaseLists(size) = null
     end pop
 
-    /** Pushes a gap over the entries from `from` up, hiding them from [[find]] while a loop clause's own computation runs. */
-    def hide(from: Int): Unit =
-        push(Handler.Gap, size - from, Arrow.id[Any])
+    /** Pushes a gap over the entries from `from` up, hiding them from [[find]] while a loop clause's own computation runs.
+      *
+      * `k` is what the answer settling under the gap flows into once the gap lifts; [[Arrow.id]] when the outcome already
+      * carries it.
+      */
+    def hide(from: Int, k: Arrow[?, ?, ?]): Unit =
+        push(Handler.Gap, size - from, k.asInstanceOf[Arrow[Any, Any, Any]])
 
     /** How many entries the gap at `i` hides: the ones just below it. */
     def hidden(i: Int): Int = states(i).asInstanceOf[Int]
+
+    /** The release the region at `i` owes for its state, if any. */
+    def owned(i: Int): Maybe[Release] =
+        handlers(i) match
+            case hc: Handler.ContextHandler[Any, ?, ?, ?] @unchecked => hc.release(states(i))
+            case _                                                   => Maybe.empty
 
     def releases(i: Int): Stack.Releases = releaseLists(i)
 
@@ -211,8 +224,8 @@ final private[kernel] class Stack:
       *
       * This is what puts the regions sitting between a handler and a suspension into the continuation the clause receives: they stop being
       * installed, so the clause runs outside them, and they are reinstalled if the continuation is resumed, however many times. What they
-      * held to release is now the handler's, run when its entry pops: the reinstalled regions carry nothing and release nothing at their
-      * own pops.
+      * held to release is now the handler's, run when its entry pops, outermost region first so that a run backwards releases innermost
+      * first: the reinstalled regions carry nothing and release nothing at their own normal pops.
       */
     def dump(from: Int): Stack.Snapshot =
         val count = size - from
