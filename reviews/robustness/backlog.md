@@ -12,7 +12,17 @@ validated by morning and all that can be cleaned properly cleaned"
 
 Design: `reviews/robustness/analysis/redesign.md`, `region-protocol.md`, `bracket-node.md`.
 
-1. [ ] `Context` removed. Sites: `Eval.loop` (the `ctx` parameter, the read arm, `contextExit`,
+0. [x] 2026-09-13 03:40 to 10:05 lost: a probe's scratch print referenced `status` inside the boundary's
+   clause lambda, which promotes the field and breaks the platform handle that finds it by name
+   (`parkOn`'s comment). The worker died, sbt hung. Rule: no field references in scratch prints inside
+   lambdas of `IOTask`.
+1. [x] `Context` removed, d0f19b8f89.
+1b. [ ] The boundary as a loop handler, and abandonment as link-then-release. The stopped resumption
+   parks at the isolate's leading deferral and never reaches the join, so a fiber interrupted before its
+   first slice never links its promise (the probe's trace); the walk reaches the join through pending
+   deferrals and links without running anything, which is the design's own rule. `Eval.stopped` removed,
+   the reporter overload back with a `Unit` reporter, the `null` poll arm back, the reporter's reach pins
+   back. Acceptance: kernel JVM and the core interrupt suites green; commit. Sites: `Eval.loop` (the `ctx` parameter, the read arm, `contextExit`,
    `arrowExit`, `installed`, `rebound`, `rebuilt`, `maskedEntries`, `maskedRead`), `Handler` (`bound`,
    `unbound`), `Context.scala` (deleted), `Stack.find` for reads, `derive(outer)` through the same lookup,
    masking by handler kind. Acceptance: `kyo-kernelJVM/test` green; commit.

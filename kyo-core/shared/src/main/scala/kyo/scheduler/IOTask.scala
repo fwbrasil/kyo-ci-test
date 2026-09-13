@@ -92,6 +92,11 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
       * Here rather than in `Fiber` because none of its decisions are effect interpretation: an abort
       * finishes this task, a ready join resumes in place, a pending one parks this task. Every ending of
       * the body reaches the promise through `finish`; `restore` is what the body's value becomes.
+      *
+      * A loop region, not a cont one: it answers in place, so the regions between it and the join stay on
+      * the stack, the answer flows into the body under them, and a park takes the stack as it stands. The
+      * clause never holds the continuation, which is what lets a bracket inside the body release at its
+      * own end rather than at the fiber's.
       */
     protected def boundary[P](v: P < (Abort[E] & Async))(restore: P => A < S2): Unit < Any =
         // Typed at Unit: a fiber answers with its promise, so every exit completes this task or hands the
@@ -105,39 +110,39 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         //
         // `Abort[E] & Async` rides in the region's `S` and is dropped from the row after: a row is
         // contravariant, while `Abort[E]` is an `Abort[Nothing]` and `Async` is opaque outside its package.
-        ArrowEffect.handleCont[[X] =>> Any, [X] =>> Any, ArrowEffect[[X] =>> Any, [X] =>> Any], P, Unit, Abort[E] & Async, Any](
+        ArrowEffect.handleLoop[[X] =>> Any, [X] =>> Any, ArrowEffect[[X] =>> Any, [X] =>> Any], P, Unit, Abort[E] & Async, Any](
             Tag[Async.Join & Abort[Any]].asInstanceOf[Tag[ArrowEffect[[X] =>> Any, [X] =>> Any]]],
             v
         )(
             [C] =>
-                (input, cont) =>
+                input =>
                     // one clause for two families, discriminated by what the operation carries: an abort's
                     // input is its error, a join's is the thunk that hands over the promise
                     input match
                         case error: Result.Error[E] @unchecked =>
-                            // Answering without applying the continuation discards the rest of the
-                            // computation, so no stop is needed. The answer is never read: the done lane
-                            // below finishes only while the task is pending, and this arm settled it.
+                            // Ending the region discards the rest of the computation and releases the regions
+                            // above it, so no stop is needed. The done lane below is not reached for this
+                            // ending; `finish` settles the promise here.
                             finish(error)
-                            null.asInstanceOf[P]
+                            Loop.done(())
                         case joinInput: Async.JoinInput[C] @unchecked =>
                             // invoking it registers the interrupt cascade on this task before the promise's
                             // state is read, so an interrupt landing in between still reaches what is awaited
                             val promise = joinInput(this)
                             promise.poll() match
                                 case null =>
-                                    cont(null)
+                                    // a promise completed with null holds null as its result, and polls as such
+                                    Loop.continue(null.asInstanceOf[Any < Any])
                                 case Present(r) =>
                                     // already complete when the thunk ran, so drop the link it pre-registered
                                     // rather than letting it accumulate
                                     removeInterrupt(promise)(using joinInput.frame)
-                                    cont(r)
+                                    Loop.continue(r)
                                 case Absent =>
-                                    // Waiting. The operation is left unanswered and raised again behind a
-                                    // deferral, with a stop requested, so the eval parks in front of it.
-                                    // Answering without applying the continuation would tell the region the
-                                    // computation is over, draining finalizers a resumption still needs:
-                                    // parking is the only exit that carries owed releases with the remainder.
+                                    // Waiting. The operation is raised again as the answer, with a stop
+                                    // requested, so the eval parks in front of it with every region still
+                                    // installed: the park is what carries the body's regions and their
+                                    // releases with the remainder.
                                     //
                                     // The wakeup is armed by `run`, not here: the remainder does not exist
                                     // until the eval finishes unwinding, and arming early would let a second
@@ -147,12 +152,11 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                     // Under the join's own frame, carried by the input: a clause is never
                                     // handed the frame of what it answers, and the scheduler's own would
                                     // lose where the fiber stopped.
-                                    ArrowEffect.suspendWith[C](using joinInput.frame)(Tag[Async.Join], joinInput)(r => cont(r))
+                                    Loop.continue(ArrowEffect.suspend[C](using joinInput.frame)(Tag[Async.Join], joinInput))
                             end match
                         case other =>
                             bug(s"fiber boundary received an operation it does not answer: $other")
             ,
-            // The placeholder the abort arm answers with is never restored: `finish` settles nothing then.
             p => finish(Result.succeed(restore(p)))
             // No call site to name: what a parked fiber reports comes from the operation it stopped at.
         )(using Frame.internal).asInstanceOf[Unit < Any]
@@ -402,18 +406,15 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
     /** Releases what an abandoned remainder still holds, links what it stands waiting on, and completes the
       * promise with the interrupt taken, when one was.
       *
-      * The remainder is resumed first, with the stop pending from the start, for exactly what a resumption
-      * could not have separated from where it stands: a join it stands at is answered by the boundary, which
-      * links the promise as it always does, and a promise that already holds its result has that result
-      * delivered and the step fused with it run, under the remainder's own regions, so a release registered
-      * in that step is registered here too. The first step boundary parks, and what parked is released: a
-      * parked computation carries its owed releases rather than running them, and this fiber will not
-      * resume. A join the remainder has not reached is not linked, since nothing under a step that never ran
-      * is waited on yet, and the resumption runs no such step. The completion comes last: the cascade to what
-      * this fiber linked, and every observer of its result, run only once its finalizers have.
-      *
-      * An ending the resumption reaches is the body's own and completes the promise through `finish`, as it
-      * would have in a slice; the interrupt is then refused by the completion.
+      * A parked computation carries its owed releases rather than running them, and this fiber will not
+      * resume, so they are run here. The link comes first: an interrupt arriving as the fiber reached its
+      * join can find a remainder standing at one whose promise is not yet tied to this fiber. The walk
+      * reaches the join the way it reaches everything, through the nodes, and runs no step of the remainder
+      * to get there: a join behind a step that never ran is not waited on yet and is not linked. Nothing is
+      * delivered: an acquire that has not reached its region's `done` owns nothing, and whoever produced a
+      * value that arrived meanwhile owns it until a handoff the owner registered before waiting. The
+      * completion comes last: the cascade to what this fiber linked, and every observer of its result, run
+      * only once its finalizers have.
       *
       * Only reached by a thread owning the task, so the release happens once. `Done` keeps a later schedule
       * from resuming what was just released.
@@ -423,18 +424,10 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         curr = cleared
         status = Done
         if !isNull(remainder) then
-            val previous = IOTask.current.get()
-            IOTask.current.set(this)
-            val parked =
-                try Eval.stopped(remainder)
-                catch
-                    case ex if !IsFatal(ex) =>
-                        // The step fused with the delivery threw: the body's own ending, and the unwind released
-                        // what the remainder held on its way out.
-                        finish(new Result.Panic(ex))
-                        cleared
-                finally IOTask.current.set(previous)
-            if !isNull(parked) then Eval.release(parked, new KyoException("fiber abandoned")(using Frame.internal))
+            Eval.release(remainder, new KyoException("fiber abandoned")(using Frame.internal), Tag[Async.Join]) {
+                // Invoking the input registers the link, the same call the boundary makes.
+                [C] => input => discard(input(this))
+            }
         end if
         interruption.foreach(error => discard(settleInterrupt(error)))
     end abandon

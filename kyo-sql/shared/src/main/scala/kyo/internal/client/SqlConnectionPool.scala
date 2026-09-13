@@ -361,33 +361,42 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                 ch
         )
 
-    /** Takes a permit and registers its return in the step the permit arrives in, on the fiber that takes it.
+    /** Takes a permit, owning the take from the step that issues it.
       *
-      * Under a finite acquire timeout the take runs on the timeout's own fiber, so the registration has to happen there: a caller
-      * registering on receipt can be abandoned while the take is still in flight, and the permit its child then produces would be
-      * returned by nobody. The registration lands in the caller's scope, reached through the context, or runs detached when that
-      * scope has already closed.
+      * The take is a promise the channel completes, and this fiber owns it from the moment it exists: the release registered in the
+      * same step withdraws a take still pending and hands back the permit a completed one delivered, whether or not this fiber ever
+      * read it. The acquire timeout then bounds only the wait for the promise, so the timeout's own fiber does nothing but join, and
+      * no window leaves a permit with a fiber that cannot return it. `takeFiber` enqueues the taker and flushes, so a buffered permit
+      * completes the promise in this same step.
       */
-    private def takeSlot(slotCh: Channel[Unit], config: SqlConfig)(using Frame): Unit < (Async & Abort[SqlException] & Scope) =
-        val take: Unit < (Async & Abort[SqlException] & Scope) =
-            Abort.run[Closed](
-                Scope.acquireRelease(slotCh.take) { _ =>
-                    Sync.Unsafe.defer {
-                        discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
-                    }
-                }
-            ).flatMap {
-                case Result.Success(()) => ()
-                case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
-                case Result.Panic(t)    => Abort.error(Result.Panic(t))
+    private def takeSlot(slotCh: Channel[Unit], config: SqlConfig)(using frame: Frame): Unit < (Async & Abort[SqlException] & Scope) =
+        // Unsafe: the take promise and the release that owns it have to be created in one step.
+        Scope.acquireRelease(Sync.Unsafe.defer(slotCh.unsafe.takeFiber().safe)) { take =>
+            Sync.Unsafe.defer {
+                val promise = take.unsafe
+                // A take still pending is withdrawn: the channel keeps a permit a withdrawn taker refuses. A take
+                // that completed hands its permit back.
+                discard(promise.interrupt(Result.Panic(Interrupted(frame))))
+                promise.poll() match
+                    case Present(Result.Success(())) => discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
+                    case _                           => ()
+                end match
             }
-        if config.acquireTimeout == Duration.Infinity then take
-        else
-            Async.timeoutWithError(
-                config.acquireTimeout,
-                Result.Failure(SqlConnectionAcquireTimeoutException(config.acquireTimeout))
-            )(take)
-        end if
+        }.map { take =>
+            val wait: Unit < (Async & Abort[SqlException]) =
+                Abort.run[Closed](take.get).flatMap {
+                    case Result.Success(()) => ()
+                    case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
+                    case Result.Panic(t)    => Abort.error(Result.Panic(t))
+                }
+            if config.acquireTimeout == Duration.Infinity then wait
+            else
+                Async.timeoutWithError(
+                    config.acquireTimeout,
+                    Result.Failure(SqlConnectionAcquireTimeoutException(config.acquireTimeout))
+                )(wait)
+            end if
+        }
     end takeSlot
 
     private def withSlot[A, S](slotCh: Channel[Unit], config: SqlConfig)(

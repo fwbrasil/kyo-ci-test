@@ -61,21 +61,6 @@ import scala.collection.mutable.ArrayBuffer
         end if
     end partial
 
-    /** Evaluates what `v` stands at and nothing past it: a slice with the stop already pending as it begins.
-      *
-      * An operation `v` stands at is answered by its region; an answer that had already arrived is delivered, and the step fused with it
-      * runs under the regions the operation was issued under; the first step boundary after that parks. A deferral at the head is such a
-      * boundary, so a computation standing at one runs nothing. What a scheduler runs to release a remainder whose operation may already
-      * hold its answer: the release then finds what the delivery registered.
-      */
-    def stopped[A](v: A < Any): A < Any =
-        val slot = Safepoint.get()
-        discard(Safepoint.consumeStopped(slot))
-        discard(Safepoint.stop(Thread.currentThread()))
-        try apply(v, armed = true)
-        finally discard(Safepoint.consumeStopped(slot))
-    end stopped
-
     // `armed` is a parameter rather than a test inside the loop: it is constant for the whole evaluation, so the
     // stop check folds away entirely for a run that cannot be preempted.
     private def apply[A, S](v: A < S, armed: Boolean): A < S =
@@ -199,6 +184,11 @@ import scala.collection.mutable.ArrayBuffer
                                                 val ans = outcome._1
                                                 if !ans.isInstanceOf[Pending[?, ?]] then
                                                     loop(ans, kyo.cont, contA.chain(contB))
+                                                else if armed && Safepoint.stopped(slot) then
+                                                    // A stop landed as the clause answered with a computation: park in front
+                                                    // of it with every region in place, rather than dumping them into a
+                                                    // crossing. A boundary re-raising a pending join asks for exactly this.
+                                                    park(ans, kyo.cont, contA.chain(contB))
                                                 else
                                                     val entries = dumped(stack, idx, kyo)
                                                     loop(ans, kyo.crossing(entries, contA.chain(contB)), Arrow.id)
@@ -263,6 +253,11 @@ import scala.collection.mutable.ArrayBuffer
                                                 val ans = outcome._2
                                                 if !ans.isInstanceOf[Pending[?, ?]] then
                                                     loop(ans, kyo.cont, contA.chain(contB))
+                                                else if armed && Safepoint.stopped(slot) then
+                                                    // A stop landed as the clause answered with a computation: park in front
+                                                    // of it with every region in place, rather than dumping them into a
+                                                    // crossing. A boundary re-raising a pending join asks for exactly this.
+                                                    park(ans, kyo.cont, contA.chain(contB))
                                                 else
                                                     val entries = dumped(stack, idx, kyo)
                                                     loop(ans, kyo.crossing(entries, contA.chain(contB)), Arrow.id)
@@ -614,11 +609,25 @@ import scala.collection.mutable.ArrayBuffer
       * it has just refused would otherwise run the very thing the refusal exists to stop, and a caller
       * abandoning a computation whole would otherwise run a step of it after the interrupt, acquiring what
       * nothing will release. What a deferral has not run has not acquired anything, so there is nothing under
-      * it to release. An operation the computation stands at is left as it stands: a caller that owes it
-      * something resumes the computation with [[stopped]] first, which answers the operation, runs the step
-      * fused with its answer, and parks at the first step boundary, and releases what parked.
+      * it to release.
       */
     def release[A, S](v: A < S, ex: Throwable): Unit =
+        release(v, ex, Absent, _ => ())
+
+    /** Releases the regions `v` still holds, and hands `f` the input of the first operation under them that
+      * `effectTag` answers, so a caller that owes something to an operation the computation stands at can
+      * settle it without walking the computation a second time. `f` runs before anything is released, and
+      * nothing is delivered to the operation: a fiber links the promise its remainder waits on, and that is
+      * all. An operation under a deferral does not exist yet, and neither does anything it would have waited
+      * on, so it is not reported: as in [[release]] above, a deferral is walked, not evaluated.
+      */
+    def release[I[_], O[_], E <: ArrowEffect[I, O], A, S](v: A < S, ex: Throwable, effectTag: Tag[E])(
+        f: [C] => I[C] => Unit
+    ): Unit =
+        // Erasure-forced: the operation's state type is existential here, and `f` takes it back at that type.
+        release(v, ex, Present(effectTag.erased), input => f[Any](input.asInstanceOf[I[Any]]))
+
+    private def release[A, S](v: A < S, ex: Throwable, effectTag: Maybe[Tag[Any]], f: Any => Unit): Unit =
         val collected = ArrayBuffer.empty[AnyRef]
 
         // An `Arrow.Ensure` waiting on an already-settled value is a release nobody will run, so the cont is
@@ -686,6 +695,9 @@ import scala.collection.mutable.ArrayBuffer
                                 i += 1
                             end while
                             collect(kyo.value, cont)
+                        // the operation the remainder stands at is reported, and left as it stands
+                        case kyo: Pending.SuspendArrow[?, ?, ?, ?, ?, ?] @unchecked =>
+                            effectTag.foreach(t => if t <:< kyo.tag.erased then f(kyo.input))
                         case _: Pending.Suspend[?, ?, ?, ?] => ()
                         case _: Pending.Snapshot[?, ?]      => ()
                 case settled => ensuring(settled, cont)
