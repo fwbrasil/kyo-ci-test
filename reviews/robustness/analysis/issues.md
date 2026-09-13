@@ -39,6 +39,15 @@ mechanisms every issue below was traced to. Where each stands, at `4d2df91395` a
   pinned in `SafepointTest`.
 - **Issues 5 and 6** remain deferred: the scheduler's Native crash on this machine and the scalafmt
   failure are on `main`, outside this branch.
+- **Issue 7, the core JS link after an incremental recompile.** Found by the full core JS run at
+  e3163ddbaf: `Test/fastLinkJS` reported `VarHandle.storeStoreFence()void`, `loadLoadFence()void` and
+  `LockSupport.parkNanos(Object,long)void` as non-existent, with the shims' IR on disk. The shims
+  (`kyo-core/js-wasm/src/main/scala/kyo/VarHandle.scala`, `AsyncStubs.scala`) returned `Void` and an
+  inferred `Nothing`, so a caller compiled in the same run resolved to the shim and linked, while
+  `Fiber` and `IOPromise` recompiled alone resolved to the JDK's `void` methods and did not; `park`,
+  which already returned `Unit`, linked. Fixed in 8927f43e83 by giving the shims the JDK's result
+  types. Latent on `main`: it needs an incremental recompile that reaches those two files without
+  the shims.
 
 ## Where the tree stands
 

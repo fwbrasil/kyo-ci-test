@@ -714,6 +714,10 @@ the evaluator, the bracket, the crossing, the removals, the callers, the tests, 
 12b. **`Safepoint.scala`, js-wasm:** `get()` drains an armed budget on a pending stop as well as on the
     slice's deadline, the moment the jvm-native slot resolves to when a stop has landed on it, so the
     bind after a stopped step defers on every platform.
+12c. **`VarHandle.scala`, `AsyncStubs.scala`, kyo-core js-wasm:** the JDK shims' results are `Unit`, as
+    the JDK's are `void`; a `Void` or an inferred `Nothing` result linked only when the shim and its
+    caller compiled in one run, and an incremental recompile of `Fiber` and `IOPromise` alone failed
+    the core JS link on this branch (on `main` as well, latent).
 13. **`Batch.scala`, `Choice.scala`:** the peel's comment; `runStream` replaying under
     `handleContRepeated`, emitting each leaf as it completes.
 14. **`SqlConnectionPool.scala`:** the pool's `takeSlot` handoff, its release a plain helper taking the
