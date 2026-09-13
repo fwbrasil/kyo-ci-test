@@ -16,7 +16,10 @@ what it removes, and what pins it.
 
 ## 2. `Handler`: the protocol
 
-- Keep: `tag`, `run`, `done(state, value)`, `recover`, `derive`, `fork`, `join`.
+- Keep: `tag`, `run`, `recover`, `derive`, `fork`, `join`.
+- `done(state, value)` on every region handler, binding regions included, receives the body's value
+  and answers with an outcome: continue under this region with more body, or end with a result.
+  `Loop.continue` and `Loop.done` are the outcomes. This is the hook a bracket's acquire arrives at.
 - Add: `release(state, outcome)` on regions with releasable state, called once by the entry's pop.
 - Add: `escaping` as the one declaration on continuation-taking handlers: forward the held list to
   the outer region at the pop instead of running it.
@@ -60,13 +63,15 @@ what it removes, and what pins it.
 - Pins: the `#1820` settled-shape leaves go with `Ensure`; the parking leaves that assert fusion
   across a crossing go, since no in-place answer crosses.
 
-## 6. `Bracket`: a region with an acquire
+## 6. `Bracket`: one region, the hooks do the work
 
-- `Bracket(acquire)(use)(release)`: the cell region, holding the release from `derive` on, around an
-  acquire region whose `done` fills the cell and returns `use(a)`. The acquire region is the one new
-  `ArrowHandler` shape: `done` and `recover` only, a tag nothing raises. Public, since `Scope`,
-  `Async` and `Exchange` use it.
-- `ensuring` and `ensuringWith` unchanged in shape.
+- `Bracket(acquire)(use)(release)` is a `Finalize` region whose body is `acquire`. `derive` gives
+  the state, an empty cell holding the release. The first `done` receives the acquire's value,
+  stores it, and continues the region with `use(value)`; the second `done` receives `use`'s value
+  and ends the region; `release` runs at the pop with the cell's contents. `fork` hands a child an
+  inert copy, `join` keeps the parent's. No second region, no new handler shape.
+- `Scope.acquireRelease` is the same region with a `use` that registers with the scope and hands
+  the cell off. `ensuring` and `ensuringWith` keep their shape.
 - Remove `Cell` and its hierarchy; the release closure carries the ran-once and extent-ended bits.
 - Pins: `BracketTest` gains "a stop inside the acquire releases nothing", "a stop after done
   releases the cell", the multi-shot and peel leaves rewritten over lists.
