@@ -670,11 +670,29 @@ run as this is written; the CI matrix on this tip follows the one in progress on
 ## Fifth walk: regions own their releases, the gap, and the bracket as one region
 
 The redesign the discussion closed (`analysis/redesign.md`, `analysis/region-protocol.md`,
-`analysis/derivation-releases.md`, whose "As built" section records what the build settled differently).
-The walk starts from the context removal's tip, `bc6a48a2aa`, and ends at the tip `package-check.sh`
-names; `sequence-5.json` holds the edits in the order below, and `flags-5.md` adjudicates the kernel's
-164 flags, none `REMOVE`. The order is the dependency order: the release type, the stack, the protocol,
-the evaluator, the bracket, the crossing, the removals, the callers, the tests, the docs.
+`analysis/derivation-releases.md`, whose "As built" section records what the build settled differently
+from `redesign.md`'s plan, including the three `redesign.md` predates: the reporter overload kept, not
+removed; `maskedRead` kept, not removed; the gap in place of the planned `floor`).
+The base is `bc6a48a2aa`, the redesign's first design commit, where `Context` is still present, and the
+walk ends at the tip `package-check.sh` names; `sequence-5.json` holds the edits in the order below, and
+`flags-5.md` adjudicates the kernel's 162 flags, none `REMOVE`. The order is the dependency order: two
+groundwork removals the range opens with, then the release type, the stack, the protocol, the evaluator,
+the bracket, the crossing, the removals, the callers, the tests, the docs.
+
+0a. **`Context` removed (`d0f19b8f89`):** `Context.scala` deleted; a context read resolves through the
+   stack the way an operation finds its handler (`Eval`'s `SuspendContext` arm does `stack.find(tag)`,
+   `stack.state`, and a masking check), and the evaluator's `loop` loses its `ctx` parameter.
+   `ContextEffect.handle` loses its release arm; `ContextTest` goes with `Context`. This is the first
+   commit in the range, and its cost is the context-read regression in the benchmark section below.
+0b. **`IOTask`, the fiber boundary and abandonment (`5a46dfda1c`, `87b21a1ea1`):** the boundary is a
+   loop region (`ArrowEffect.handleLoop`), not a continuation-taking one, so the regions between it and
+   a join stay installed and a bracket inside the body releases at its own end; the abort arm ends the
+   region with `Loop.done(())`, a waiting join is raised again as the answer with a stop requested, and
+   `abandon` links what the remainder waits on and releases what parked in a walk that resumes nothing.
+   `Eval.release` regains its reporter overload for that walk (the one `redesign.md` section 4 had
+   planned to remove; `derivation-releases.md` rule 7 requires it). The crossing's capture is applied as
+   the body's value arrives (item 7 covers the `Isolate` half). `FiberTest` pins the value-on-interrupt
+   ending.
 
 1. **`Release.scala`, new:** the release a stack entry holds, `Maybe[Throwable] => Unit` with `ran` and
    `reenter`, the refusal on re-push living in the release, as ruled.
@@ -740,6 +758,12 @@ the evaluator, the bracket, the crossing, the removals, the callers, the tests, 
     and the acquire-side rule: only a region's own end may stand between the acquire's last step and
     the hook; `Abort.run`, `Sync.ensure` and a loop combinator bind after the step and are where a stop
     parks with the value in front of it.
+18. **The pipeline (`kyo-kernel/.claude/skills/kernel/rulings.md`, `package-check.sh`):** not kernel
+    sources and not applied at the live review, but tracked and in-range, so they appear in
+    `sequence-5.json`. `rulings.md` records the redesign's rulings of 2026-09-12 and 2026-09-13
+    verbatim; `package-check.sh` gains the per-walk `PACKAGE_FLAGS`/`PACKAGE_SEQUENCE` selection and
+    counts against the walk's own table and sequence. Listed for completeness of the range, not for the
+    reviewer to apply.
 
 What changes for a caller is in `analysis/derivation-releases.md`, "As built": every shot of a held
 continuation runs against the live resource and the release runs once where the holder ends;
@@ -749,9 +773,12 @@ continuation runs against the live resource and the release runs once where the 
 
 ### Evidence at the fifth walk's tip
 
-The sources of the tip are those of `8927f43e83` (the commits after it touch `reviews/` and the
-package check script only). Each row names the commit the run was made at; where a later commit
-changed nothing the suite compiles, the run stands for the tip.
+The runnable sources of the tip are those of `96f279c752`, the `after` to `next` rename, which is the
+last commit to touch a compiled source; every commit after it touches only `reviews/`, the kernel skill
+files (`rulings.md`, `package-check.sh`, both under `kyo-kernel/.claude`, gitignored and not compiled)
+and `sequence-5.json`. The rename is a local-variable name only, so the runs recorded at `8927f43e83`
+and earlier commits below stand for the tip; each row names the commit the run was made at, and where a
+later commit changed nothing the suite compiles, the run stands for the tip.
 
 | run | result | at |
 |---|---|---|

@@ -90,12 +90,31 @@ already represented), `ArrowEffect` (`repeated` overrides, `handleFirstRepeated`
 Tests: `StackTest` (lanes to lists), `EvalTest` (owed dumps, fused delivery, `Ensure` walk pins),
 `BracketTest` (multi-shot and messages), `ChoiceTest` (a comment).
 
-## Not touched
+## Not touched by the release/gap/bracket pieces
 
-`IOTask` (the boundary is a loop handler already; `abandon` walks). `Safepoint`. The pool. The context
-removal.
+This document derives the release-in-entries, gap and bracket pieces, whose base is `87b21a1ea1`: there
+`IOTask`'s boundary is already a loop handler, `abandon` already walks, and `Context` is already removed.
+The package range is wider, `bc6a48a2aa..HEAD`, opening with the `Context` removal (`d0f19b8f89`) and the
+boundary and abandonment rework (`5a46dfda1c`); the package presents those as items 0a and 0b, in-range
+and separately reasoned, rather than as untouched. `Safepoint` (beyond the js-wasm drain `b3849fd99c`)
+and the pool are untouched here.
 
 ## As built (90aad2d8f1, 726b853c53): where the code settled differently from the rules above
+
+`redesign.md` is an earlier plan; the build diverged from it in three ways `redesign.md` still states as
+written, and the reconciliation is here:
+
+- **The `floor` became the gap.** `redesign.md` section 4 planned a `floor` index carried through the
+  outcome dispatcher to mark how far a loop clause's own computation may see. The build has no floor: the
+  gap (`Handler.Gap` over `Hidden`, `Stack.hide`/`hidden`, `find` stepping over it) hides the region and
+  the interior in place instead, which is the mechanism the rest of this document derives.
+- **`maskedRead` is kept.** `redesign.md` section 3 listed `maskedRead` among the context removal's
+  deletions. The build keeps it: a masking region still shadows a binding a read would answer from, and
+  the `SuspendContext` arm dispatches there by the arrow route. `maskedEntries` and `Context.Masked` are
+  gone; `maskedRead` is not.
+- **The reporter overload of `Eval.release` is kept.** `redesign.md` section 4 listed it among the
+  removals; rule 7 above requires it (abandonment reports the first operation the remainder stands at, so
+  a join is linked). It is present, restored by `5a46dfda1c`, and item 0b presents it.
 
 - **Rule 7, a region node not yet entered.** It owns what its derived state owes, as before: nothing for a
   bracket whose acquire never ran (an empty cell), the release it was handed for `ensuring` and
