@@ -33,8 +33,9 @@ import scala.collection.mutable.ArrayBuffer
   * a region, or hands an answer to a handler. It is a tail-recursive loop rather than a recursive walk, which is where stack safety comes
   * from: depth in the computation costs heap, not call frames.
   *
-  * Two things live beside it. [[Stack]] holds the regions installed around the node in hand, and [[Context]] holds the values bound by
-  * context regions; the loop threads the context and mutates the stack, and both are borrowed for one evaluation.
+  * One thing lives beside it. [[Stack]] holds the regions installed around the node in hand, bindings included: a context read finds
+  * the innermost region of its tag the way an operation finds its handler, so a binding is visible exactly while its region is installed.
+  * The stack is mutable and borrowed for one evaluation.
   *
   * The loop is far too large to inline and every effect in the program passes through it, so its dispatch is megamorphic. That is the reason
   * the combinators fuse at their own call sites and reach the loop only when they must, and the reason cold work here is kept out of line
@@ -84,7 +85,13 @@ import scala.collection.mutable.ArrayBuffer
         val saved = Safepoint.save(slot)
         if armed then Safepoint.arm(slot)
 
-        @tailrec def loop[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2], ctx: Context): A < S =
+        // A clause's answer the stop is not honored on: a parked slice, which is a crossing delivering the answer
+        // under the regions it crosses into, or a fused deferral, which is the answer's own step already begun.
+        // Both poll on their own inside. A re-raised operation does not, so the stop parks in front of it.
+        inline def delivering(result: Any): Boolean =
+            result.isInstanceOf[Pending.Park[?, ?]] || result.isInstanceOf[Pending.Fused[?, ?, ?, ?]]
+
+        @tailrec def loop[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2]): A < S =
             Debugger.onLoop(v, contA, contB)
             v match
                 // a deferral: unfold it, its two continuations going in front of ours
@@ -94,23 +101,27 @@ import scala.collection.mutable.ArrayBuffer
                     if armed && Safepoint.stopped(slot) && !kyo.isInstanceOf[Pending.Fused[?, ?, ?, ?]] then
                         park(v, contA, contB)
                     else
-                        loop(kyo.value, kyo.contA, kyo.contB.chain(contA.chain(contB)), ctx)
+                        loop(kyo.value, kyo.contA, kyo.contB.chain(contA.chain(contB)))
 
                 case kyo: Pending.Suspend[?, ?, T, S2] @unchecked =>
                     kyo match
-                        // a context read: answered from the context, no region involved
+                        // a context read: answered by the innermost binding of its tag, straight from the stack
                         case kyo: Pending.SuspendContext[VX, CX, T, CX & S2] @unchecked =>
-                            val state = ctx.get(kyo.tag).orElse(kyo.default).getOrElse(unhandled(kyo, stack))
-                            if state.asInstanceOf[AnyRef] ne Context.Masked then
-                                Debugger.onContext(kyo, ctx)
-                                loop(kyo.cont(state, contA.chain(contB)), Arrow.id, Arrow.id, ctx)
-                            else
+                            val idx = stack.find(kyo.tag)
+                            if idx >= 0 && stack.handler(idx).isInstanceOf[Handler.MaskingHandler[?, ?, ?, ?]] then
                                 // A masking region shadows the binding this read would have answered from, so it
                                 // dispatches there by the route an arrow operation takes.
-                                val entries = maskedEntries(kyo)
+                                val entries = if idx == stack.depth - 1 then Stack.Snapshot.empty else dumped(stack, idx, kyo)
                                 val result  = maskedRead(kyo, entries, contA.chain(contB))
                                 if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
-                                else loop(result, Arrow.id, Arrow.id, rebound(entries, ctx))
+                                else loop(result, Arrow.id, Arrow.id)
+                            else
+                                // Erasure-forced: the binding's state is stored at the storage boundary's type.
+                                val state =
+                                    if idx >= 0 then stack.state(idx).asInstanceOf[VX]
+                                    else kyo.default.getOrElse(unhandled(kyo, stack))
+                                Debugger.onContext(kyo, state)
+                                loop(kyo.cont(state, contA.chain(contB)), Arrow.id, Arrow.id)
                             end if
 
                         // an operation: the innermost region for its tag answers, by the shape of its handler
@@ -126,7 +137,6 @@ import scala.collection.mutable.ArrayBuffer
                                     // a cont clause: handed the continuation, with the regions above dumped into it
                                     case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
                                         val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
-                                        val ctx2    = if atTop then ctx else rebound(entries, ctx)
                                         val continuation =
                                             if atTop then kyo.cont.chain(contA.chain(contB))
                                             else kyo.crossing(entries, contA.chain(contB))
@@ -134,24 +144,22 @@ import scala.collection.mutable.ArrayBuffer
                                         Debugger.onResult(result)
                                         // The stop is honored on the clause's answer: one that re-raises the
                                         // operation would otherwise dispatch straight back here with no deferral to
-                                        // park at. A parked slice the answer carries is entered instead: it is a
-                                        // crossing delivering the answer under the regions it crosses into, and
-                                        // what it holds polls on its own.
-                                        if armed && Safepoint.stopped(slot) && !result.isInstanceOf[Pending.Park[?, ?]] then
+                                        // park at. An answer still being delivered is entered instead, and what it
+                                        // holds polls on its own; see `delivering`.
+                                        if armed && Safepoint.stopped(slot) && !delivering(result) then
                                             park(result, Arrow.id, Arrow.id)
-                                        else loop(result, Arrow.id, Arrow.id, ctx2)
+                                        else loop(result, Arrow.id, Arrow.id)
                                     // a masking clause: the same, handed the operation re-raised instead of its input
                                     case handler: Handler.MaskingHandler[EX, C, Y, S2] @unchecked =>
                                         val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
-                                        val ctx2    = if atTop then ctx else rebound(entries, ctx)
                                         val continuation =
                                             if atTop then kyo.cont.chain(contA.chain(contB))
                                             else kyo.crossing(entries, contA.chain(contB))
                                         val result = handler.answering(kyo.reraise, continuation, kyo, stack)
                                         Debugger.onResult(result)
-                                        if armed && Safepoint.stopped(slot) && !result.isInstanceOf[Pending.Park[?, ?]] then
+                                        if armed && Safepoint.stopped(slot) && !delivering(result) then
                                             park(result, Arrow.id, Arrow.id)
-                                        else loop(result, Arrow.id, Arrow.id, ctx2)
+                                        else loop(result, Arrow.id, Arrow.id)
                                     // a loop clause at the top: answered in place, the region staying installed
                                     case handler: Handler.LoopHandler[IX, OX, EX, C, Y, S2] @unchecked if atTop =>
                                         val k    = kyo.cont.chain(contA.chain(contB))
@@ -160,7 +168,7 @@ import scala.collection.mutable.ArrayBuffer
                                         exit match
                                             // continued: the answer carries on inside the region
                                             case e: Loop.Continue[C < (EX & S2)] @unchecked =>
-                                                loop(e._1, Arrow.id, Arrow.id, ctx)
+                                                loop(e._1, Arrow.id, Arrow.id)
                                             // suspended: the region ends, its outcome dispatched as the region's own continuation
                                             case pending: Pending[Outcome[C < (EX & S2), Y < S2], S2] @unchecked =>
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
@@ -168,7 +176,7 @@ import scala.collection.mutable.ArrayBuffer
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
                                                 type OutT = Outcome[C < (EX & S2), Y < S2]
-                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch, next, ctx)
+                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch, next)
                                             // done: the region ends with its value
                                             case done =>
                                                 val result =
@@ -177,7 +185,7 @@ import scala.collection.mutable.ArrayBuffer
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
                                                 if stack.owesAny then drainDiscarded(stack.takeOwed(idx))
                                                 stack.truncate(idx)
-                                                loop(result, next, Arrow.id, ctx)
+                                                loop(result, next, Arrow.id)
                                         end match
                                     // a loop clause with regions above it: answered outside them, the same three outcomes as
                                     // above with the answer crossing back into the regions it left
@@ -190,15 +198,13 @@ import scala.collection.mutable.ArrayBuffer
                                             case outcome: Loop.Continue[OX[VX] < (EX & S2)] @unchecked =>
                                                 val ans = outcome._1
                                                 if !ans.isInstanceOf[Pending[?, ?]] then
-                                                    loop(ans, kyo.cont, contA.chain(contB), ctx)
+                                                    loop(ans, kyo.cont, contA.chain(contB))
                                                 else
                                                     val entries = dumped(stack, idx, kyo)
-                                                    val ctx2    = rebound(entries, ctx)
-                                                    loop(ans, kyo.crossing(entries, contA.chain(contB)), Arrow.id, ctx2)
+                                                    loop(ans, kyo.crossing(entries, contA.chain(contB)), Arrow.id)
                                                 end if
                                             case pending: Pending[Outcome[OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
                                                 val entries = dumped(stack, idx, kyo)
-                                                val ctx2    = rebound(entries, ctx)
                                                 val next    = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
@@ -206,10 +212,9 @@ import scala.collection.mutable.ArrayBuffer
                                                 val reentry2 = kyo.crossing(entries, contA.chain(contB))
                                                 val answered = Handler.attachReentry[IX, OX, EX, C, Y, S2, VX](reentry2)(pending)
                                                 Debugger.onRegionExit(handler, answered)
-                                                loop[OutT, Y, Any, S2](answered, handler.clauseDispatch, next, ctx2)
+                                                loop[OutT, Y, Any, S2](answered, handler.clauseDispatch, next)
                                             case outcome =>
                                                 val entries = dumped(stack, idx, kyo)
-                                                val ctx2    = rebound(entries, ctx)
                                                 val result =
                                                     Nested.unnest[Y < S2](Loop.unnest(outcome.asInstanceOf[Outcome[
                                                         OX[VX] < (EX & S2),
@@ -219,7 +224,7 @@ import scala.collection.mutable.ArrayBuffer
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
                                                 if stack.owesAny then drainDiscarded(stack.takeOwed(idx))
                                                 stack.truncate(idx)
-                                                loop(result, next, Arrow.id, ctx2)
+                                                loop(result, next, Arrow.id)
                                         end match
                                     // the stateful loop clause at the top: as the loop clause, with the state in the region's slot
                                     case handler: Handler.LoopStateHandler[VX, IX, OX, EX, C, Y, S2] @unchecked if atTop =>
@@ -229,14 +234,14 @@ import scala.collection.mutable.ArrayBuffer
                                         exit match
                                             case e: Loop.Continue2[VX, C < (EX & S2)] @unchecked =>
                                                 stack.setState(idx, e._1)
-                                                loop(e._2, Arrow.id, Arrow.id, ctx)
+                                                loop(e._2, Arrow.id, Arrow.id)
                                             case pending: Pending[Outcome2[VX, C < (EX & S2), Y < S2], S2] @unchecked =>
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 Debugger.onRegionExit(handler, pending)
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
                                                 type OutT = Outcome2[VX, C < (EX & S2), Y < S2]
-                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch, next, ctx)
+                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch, next)
                                             case done =>
                                                 val result =
                                                     Nested.unnest[Y < S2](Loop.unnest(done.asInstanceOf[Outcome2[VX, Any, Y < S2]]))
@@ -244,7 +249,7 @@ import scala.collection.mutable.ArrayBuffer
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
                                                 if stack.owesAny then drainDiscarded(stack.takeOwed(idx))
                                                 stack.truncate(idx)
-                                                loop(result, next, Arrow.id, ctx)
+                                                loop(result, next, Arrow.id)
                                         end match
                                     // the stateful loop clause with regions above it: as the loop clause, with the state
                                     case handler: Handler.LoopStateHandler[VX, IX, OX, EX, C, Y, S2] @unchecked =>
@@ -257,15 +262,13 @@ import scala.collection.mutable.ArrayBuffer
                                                 stack.setState(idx, outcome._1)
                                                 val ans = outcome._2
                                                 if !ans.isInstanceOf[Pending[?, ?]] then
-                                                    loop(ans, kyo.cont, contA.chain(contB), ctx)
+                                                    loop(ans, kyo.cont, contA.chain(contB))
                                                 else
                                                     val entries = dumped(stack, idx, kyo)
-                                                    val ctx2    = rebound(entries, ctx)
-                                                    loop(ans, kyo.crossing(entries, contA.chain(contB)), Arrow.id, ctx2)
+                                                    loop(ans, kyo.crossing(entries, contA.chain(contB)), Arrow.id)
                                                 end if
                                             case pending: Pending[Outcome2[VX, OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
                                                 val entries = dumped(stack, idx, kyo)
-                                                val ctx2    = rebound(entries, ctx)
                                                 val next    = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
@@ -274,10 +277,9 @@ import scala.collection.mutable.ArrayBuffer
                                                 val answered =
                                                     Handler.attachReentry2[VX, IX, OX, EX, C, Y, S2, VX](reentry2)(pending)
                                                 Debugger.onRegionExit(handler, answered)
-                                                loop[OutT, Y, Any, S2](answered, handler.clauseDispatch, next, ctx2)
+                                                loop[OutT, Y, Any, S2](answered, handler.clauseDispatch, next)
                                             case outcome =>
                                                 val entries = dumped(stack, idx, kyo)
-                                                val ctx2    = rebound(entries, ctx)
                                                 val result =
                                                     Nested.unnest[Y < S2](Loop.unnest(outcome.asInstanceOf[Outcome2[
                                                         VX,
@@ -288,7 +290,7 @@ import scala.collection.mutable.ArrayBuffer
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
                                                 if stack.owesAny then drainDiscarded(stack.takeOwed(idx))
                                                 stack.truncate(idx)
-                                                loop(result, next, Arrow.id, ctx2)
+                                                loop(result, next, Arrow.id)
                                         end match
                                     case handler =>
                                         unanswerable(handler)
@@ -299,29 +301,35 @@ import scala.collection.mutable.ArrayBuffer
                 case kyo: Pending.HandleArrow[?, ?, ?, ?, T, S2] @unchecked =>
                     Debugger.onRegionEnter(kyo.handler, kyo.state)
                     stack.push(kyo.handler, kyo.state, kyo.cont.chain(contA.chain(contB)))
-                    loop(kyo.value, Arrow.id, Arrow.id, kyo.handler.bound(ctx, kyo.state))
+                    loop(kyo.value, Arrow.id, Arrow.id)
 
-                // entering a binding: derive its value from the one outside, bind it, push it
+                // entering a binding: derive its value from the enclosing one on the stack, push it
                 case kyo: Pending.HandleContext[VX, CX, T, S2] @unchecked =>
-                    val handler    = kyo.handler
-                    val newState   = handler.derive(ctx.get(handler.tag))
-                    val newContext = handler.bound(ctx, newState)
-                    Debugger.onContext(kyo, newContext)
+                    val handler  = kyo.handler
+                    val outerIdx = stack.find(handler.tag)
+                    // a masking region found first shadows whatever is bound outside it
+                    val outer =
+                        if outerIdx >= 0 && !stack.handler(outerIdx).isInstanceOf[Handler.MaskingHandler[?, ?, ?, ?]] then
+                            Maybe(stack.state(outerIdx).asInstanceOf[VX])
+                        else Maybe.empty
+                    val newState = handler.derive(outer)
+                    Debugger.onContext(kyo, newState)
                     Debugger.onRegionEnter(handler, newState)
                     stack.push(handler, newState, contA.chain(contB))
-                    loop(kyo.value, Arrow.id, Arrow.id, newContext)
+                    loop(kyo.value, Arrow.id, Arrow.id)
 
                 // a parked slice with nothing to reinstall: take on its debt and continue in place
                 case kyo: Pending.Park[?, ?] if kyo.entries.isEmpty =>
                     stack.oweBelow(stack.depth, kyo.owed)
-                    loop(kyo.value.asInstanceOf[T < S2], contA, contB, ctx)
+                    loop(kyo.value.asInstanceOf[T < S2], contA, contB)
 
                 // a parked slice: reinstall the regions it carries, then continue inside them
                 case kyo: Pending.Park[?, ?] =>
-                    loop(kyo.value, Arrow.id, Arrow.id, installed(kyo, contA.chain(contB).asInstanceOf[Arrow[Any, Any, Any]], ctx))
+                    installed(kyo, contA.chain(contB).asInstanceOf[Arrow[Any, Any, Any]])
+                    loop(kyo.value, Arrow.id, Arrow.id)
 
                 case kyo: Pending.Snapshot[T, S2] @unchecked =>
-                    loop(kyo.cont(stack, contA.chain(contB)), Arrow.id, Arrow.id, rebuilt())
+                    loop(kyo.cont(stack, contA.chain(contB)), Arrow.id, Arrow.id)
 
                 // a settled value
                 case res =>
@@ -335,20 +343,22 @@ import scala.collection.mutable.ArrayBuffer
                             stack.handler(top) match
                                 case hc: Handler.ContextHandler[VX, CX, AX, ?] @unchecked =>
                                     Debugger.onRegionExit(hc, res)
-                                    loop(res.asInstanceOf[Y < Any], next, Arrow.id, contextExit(hc, top, ctx))
+                                    contextExit(hc, top)
+                                    loop(res.asInstanceOf[Y < Any], next, Arrow.id)
                                 case handler0 =>
                                     val handler = handler0.asInstanceOf[Handler.ArrowHandler[VX, EX, AX, Y, Any]]
                                     val result  = handler.done(stack.state(top).asInstanceOf[VX], Nested.unnest[AX](res))
                                     Debugger.onRegionExit(handler, result)
-                                    loop(result, next, Arrow.id, arrowExit(handler, ctx))
+                                    arrowExit(handler)
+                                    loop(result, next, Arrow.id)
                             end match
                     else
                         // something composed after it: apply the head, keep the tail
                         contA match
                             case contA: Arrow.Chain[T, Any, B, S2] @unchecked =>
-                                loop(res, contA.a, contA.b.chain(contB), ctx)
+                                loop(res, contA.a, contA.b.chain(contB))
                             case _ =>
-                                loop(contA(res, contB), Arrow.id, Arrow.id, ctx)
+                                loop(contA(res, contB), Arrow.id, Arrow.id)
             end match
         end loop
 
@@ -378,11 +388,7 @@ import scala.collection.mutable.ArrayBuffer
         end park
 
         // Out of line to keep `loop` small. Dumping the regions between pops the stack down to the masking
-        // region, so it is at the top by the time `maskedRead` looks for it.
-        def maskedEntries(kyo: Pending.Suspend[?, ?, ?, ?]): Stack.Snapshot =
-            val idx = stack.find(kyo.tag)
-            if idx == stack.depth - 1 then Stack.Snapshot.empty else dumped(stack, idx, kyo)
-
+        // region, so it is at the top by the time this looks for it.
         def maskedRead[VX2, CX2 <: ContextEffect[VX2], T2, Y, S3](
             kyo: Pending.SuspendContext[VX2, CX2, T2, CX2 & S3],
             entries: Stack.Snapshot,
@@ -397,7 +403,7 @@ import scala.collection.mutable.ArrayBuffer
             result
         end maskedRead
 
-        def installed(kyo: Pending.Park[?, ?], resume: Arrow[Any, Any, Any], ctx: Context): Context =
+        def installed(kyo: Pending.Park[?, ?], resume: Arrow[Any, Any, Any]): Unit =
             val entries = kyo.entries
             var ri      = 0
             var defers  = false
@@ -421,9 +427,8 @@ import scala.collection.mutable.ArrayBuffer
             if !defers then stack.settle(entries)
             stack.oweBelow(stack.depth, kyo.owed)
 
-            @tailrec def install(i: Int, c: Context): Context =
-                if i == entries.regions then c
-                else
+            @tailrec def install(i: Int): Unit =
+                if i < entries.regions then
                     val stored = entries.continuation(i).asInstanceOf[Arrow[Y, Any, Any]]
                     val cont =
                         if i == 0 then stored.chain(resume)
@@ -433,34 +438,24 @@ import scala.collection.mutable.ArrayBuffer
                     Debugger.onRegionEnter(handler, st)
                     stack.push(handler, st, cont)
                     stack.owe(stack.depth - 1, entries.owed(i))
-                    // each region puts back what `rebound` took off on the way out
-                    install(i + 1, handler.bound(c, st))
-            install(0, ctx)
+                    install(i + 1)
+            install(0)
         end installed
 
-        def contextExit(hc: Handler.ContextHandler[VX, CX, AX, ?], top: Int, ctx: Context): Context =
+        def contextExit(hc: Handler.ContextHandler[VX, CX, AX, ?], top: Int): Unit =
             hc.done(stack.state(top).asInstanceOf[VX])
             stack.pop()
             if stack.owesAny then
                 drainDiscarded(stack.takePopped())
-            hc.unbound(ctx)
         end contextExit
 
         // An escaping region has not discarded what it owes, so the debt moves to the scope below.
-        def arrowExit(handler: Handler.ArrowHandler[?, ?, ?, ?, ?], ctx: Context): Context =
+        def arrowExit(handler: Handler.ArrowHandler[?, ?, ?, ?, ?]): Unit =
             stack.pop()
             if stack.owesAny then
                 if handler.escaping then stack.oweBelow(stack.depth, stack.takePopped())
                 else drainDiscarded(stack.takePopped())
-            handler.unbound(ctx)
         end arrowExit
-
-        def rebuilt(): Context =
-            @tailrec def rebuild(i: Int, c: Context): Context =
-                if i == stack.depth then c
-                else rebuild(i + 1, stack.handler(i).bound(c, stack.state(i)))
-            rebuild(0, Context.empty)
-        end rebuilt
 
         /** Unwinds the stack for a throwable, offering it to each region's recover arm from the innermost outward.
           *
@@ -518,12 +513,11 @@ import scala.collection.mutable.ArrayBuffer
         /** Runs the loop and catches what it throws, so a recover arm can resume the evaluation rather than only observe the failure.
           *
           * A region that recovers answers with a computation, which has to be evaluated from a loop that is itself still guarded, hence the
-          * re-entry here rather than a return into the loop that just unwound. The context is rebuilt from the stack that survived, since the
-          * one the throwing loop carried described regions that are no longer installed.
+          * re-entry here rather than a return into the loop that just unwound.
           */
-        @tailrec def guarded(curr: A < S, ctx: Context): A < S =
+        @tailrec def guarded(curr: A < S): A < S =
             val res =
-                try loop(curr, Arrow.id, Arrow.id, ctx)
+                try loop(curr, Arrow.id, Arrow.id)
                 catch
                     case failure =>
 
@@ -535,7 +529,7 @@ import scala.collection.mutable.ArrayBuffer
                         stack.pop()
                         val owedHere = stack.takePopped()
                         if !owedHere.isEmpty then drainOwed(owedHere, failure)
-                        return guarded(resumed, rebuilt())
+                        return guarded(resumed)
             res match
                 case susp: Pending.Suspend[?, ?, ?, ?] =>
 
@@ -545,7 +539,7 @@ import scala.collection.mutable.ArrayBuffer
         end guarded
 
         try
-            val out = guarded(v, Context.empty)
+            val out = guarded(v)
             drainDiscarded(stack.takeEvalOwed())
             out
         finally
@@ -598,16 +592,6 @@ import scala.collection.mutable.ArrayBuffer
             drainOwed(owed, signal, discharging = true)
             if signal.getSuppressed.length != 0 then Report.unhandled(signal)
 
-    private def rebound(entries: Stack.Snapshot, ctx: Context): Context =
-        var c = ctx
-        var i = 0
-        while i < entries.regions do
-            c = entries.handler(i).unbound(c)
-            i += 1
-        end while
-        c
-    end rebound
-
     private def released(
         handler: Handler.ContextHandler[?, ?, ?, ?],
         state: Any,
@@ -656,13 +640,13 @@ import scala.collection.mutable.ArrayBuffer
         def ensuring(v: Any, cont: Arrow[Any, Any, Any]): Unit =
             leftmost(cont) match
                 case step: Arrow.Ensure[Any, Any, Any] @unchecked =>
-                    val applied =
-                        try step(Nested.unnest[Any](v))
+                    val applied: Maybe[Any] =
+                        try Maybe(step(Nested.unnest[Any](v)))
                         catch
                             case t if !IsFatal(t) =>
                                 ex.addSuppressed(t)
-                                null
-                    if applied != null then collect(applied, Arrow.id)
+                                Maybe.empty
+                    applied.foreach(a => collect(a, Arrow.id))
                 case _ => ()
 
         @tailrec def collect(v: Any, cont: Arrow[Any, Any, Any]): Unit =

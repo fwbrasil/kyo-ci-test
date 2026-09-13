@@ -48,18 +48,6 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
       */
     def escaping: Boolean = false
 
-    /** What entering this region contributes to the context, and what leaving it takes back.
-      *
-      * A context region binds its value. A masking region binds the marker that sends a read to the region
-      * instead of answering it. Every other region is transparent to reads, which is the default here.
-      *
-      * The evaluator maps a region to a binding in five places (entry, exit, and the three that rebuild a
-      * context from the stack); asking the handler keeps every one of them on the same answer.
-      */
-    private[kernel] def bound(ctx: Context, state: Any): Context = ctx
-
-    private[kernel] def unbound(ctx: Context): Context = ctx
-
     override def toString = s"Handler(${tag.show})"
 end Handler
 
@@ -109,9 +97,6 @@ end Handler
     abstract class MaskingHandler[E <: Effect, A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
 
         def run[X](operation: X < E, next: Arrow[X, A, E & S]): A < (E & S)
-
-        override private[kernel] def bound(ctx: Context, state: Any): Context = ctx.mask(tag)
-        override private[kernel] def unbound(ctx: Context): Context           = ctx.unbind
 
         private[kyo] def answering[X](operation: X < E, next: Arrow[X, A, E & S], kyo: Pending[?, ?], stack: Stack): A < (E & S) =
             try run(operation, next)
@@ -284,7 +269,7 @@ end Handler
 
     /** A region that binds a value rather than answering operations.
       *
-      * It has no clause: a read finds the value in the [[Context]] and continues in place, never reaching this handler. What is here is the
+      * It has no clause: a read finds the region on the stack and takes its state, never reaching this handler. What is here is the
       * value's life instead: how it is derived on entry, what a fork takes and what a join puts back, and the lifecycle hooks below that let
       * a binding own something releasable.
       */
@@ -292,9 +277,6 @@ end Handler
         def derive(outer: Maybe[State]): State
         def fork(parent: State): State
         def join(parent: State, forked: State, child: State): State
-
-        override private[kernel] def bound(ctx: Context, state: Any): Context = ctx.bind(tag, state.asInstanceOf[State])
-        override private[kernel] def unbound(ctx: Context): Context           = ctx.unbind
 
         /** This region's extent ran to an end.
           *
