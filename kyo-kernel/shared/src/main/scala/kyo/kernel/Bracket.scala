@@ -44,16 +44,21 @@ object Bracket:
 
     private[kyo] object Cell:
 
-        // compareAndSet makes the release fire once, whichever ending reaches it first: an unwind, a drop, or the clean end.
-        final class Live(fin: Maybe[Throwable] => Unit, frame: Frame) extends Cell:
+        // compareAndSet makes the release fire once, whichever ending reaches it first: an unwind, a drop, or the clean
+        // end. `state` is the per-run value the release owes: the acquired resource for a bracket, or the slot an
+        // `ensuringWith` region makes as it is entered, so a value run twice shares nothing between the runs.
+        final class Live[R](val state: R, fin: (R, Maybe[Throwable]) => Unit, frame: Frame) extends Cell:
             @volatile private var ended              = false
             private[kyo] def endedItsExtent: Boolean = ended
             private[kyo] def run(failure: Maybe[Throwable]): Unit =
                 if compareAndSet(false, true) then
-                    fin(failure match
-                        case Absent if ended => Absent
-                        case Absent          => Present(new KyoException("remainder discarded")(using frame))
-                        case told            => told)
+                    fin(
+                        state,
+                        failure match
+                            case Absent if ended => Absent
+                            case Absent          => Present(new KyoException("remainder discarded")(using frame))
+                            case told            => told
+                    )
             private[kyo] def complete(): Unit = ended = true
         end Live
 
@@ -77,7 +82,7 @@ object Bracket:
         val ensure = new Arrow.Ensure[A, B, S1 & S2]:
             def frame = _frame
             override def apply(a: A) =
-                val cell = new Cell.Live(outcome => release(a, outcome), _frame)
+                val cell = new Cell.Live(a, release, _frame)
                 val body =
                     // A throw while building the use body happens before the region is installed, so the unwind
                     // would not reach the release; run it here and re-raise.
@@ -104,17 +109,35 @@ object Bracket:
         val b =
             try body
             catch case ex => Effect.defer(throw ex)
-        region(new Cell.Live(release, _frame), b)
+        region(new Cell.Live((), (_, failure) => release(failure), _frame), b)
     end ensuring
 
-    private def region[B, S](cell: => Cell, body: B < S)(using _frame: Frame): B < S =
+    /** Runs `release` when `body`'s extent ends, with a per-run state made as the region is entered.
+      *
+      * Like [[ensuring]], the region is a node from the start, so the abandonment walk finds it whether or not a step ever ran; `init` runs
+      * once per run, as the region is entered, so `release` and `body` share a slot that a value run twice does not carry between its runs. A
+      * caller wraps its region in `Effect.defer` for that per-run freshness otherwise, and the walk stops at the deferral above the region.
+      */
+    def ensuringWith[R, B, S](init: => R)(release: (R, Maybe[Throwable]) => Unit)(body: R => B < S)(using _frame: Frame): B < S =
+        region(
+            new Cell.Live(init, release, _frame),
+            // The read is the first step under the region above, which derived the cell it made with `init`, so this is
+            // that cell and `R` is what it holds.
+            ContextEffect.suspendWith(Tag[Finalize]) { cell =>
+                body(cell.asInstanceOf[Cell.Live[R]].state)
+            }
+        )
+    end ensuringWith
+
+    private def region[B, S](cell: => Cell, body: B < (Finalize & S))(using _frame: Frame): B < S =
         val h = new Handler.ContextHandler[Cell, Finalize, B, S]:
             def tag                                             = Tag[Finalize]
             def derive(outer: Maybe[Cell])                      = cell
             def fork(parent: Cell)                              = Cell.inert
             def join(parent: Cell, fk: Cell, child: Cell)       = parent
             def release(state: Cell, failure: Maybe[Throwable]) = state.run(failure)
-            // Extent ran to a clean end in place: fire the release told the clean ending and record which way it fired.
+            // The extent ran to a clean end: record it so the release, run here or by a scope that holds the cell,
+            // tells a clean ending rather than the discard signal. Does not fire; the release does.
             override def complete(state: Cell): Unit = state.complete()
             // A remainder resumed after its bracket's resource was released is a use-after-release: the cell has fired,
             // so refuse rather than run the body against a released resource. The two ways it gets re-entered want

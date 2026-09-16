@@ -139,14 +139,14 @@ object Sync:
         ct: ConcreteTag[E],
         inline frame: Frame
     ): A < (Sync & Abort[E] & S) =
-        // `Bracket.ensuring` rather than a bracket over a `()` acquire: a bracket cannot install its region until the acquire's value
-        // arrives, so a computation abandoned before it ran would get no finalizer, while `ensuring` installs the region as a node the
-        // abandonment walk finds whether or not a step ran. Abort routing and first-failure-wins are `acquireReleaseWith`'s; the finalizer
-        // runs only from the release, not the body, since a replaying handler ends the extent per branch but the release runs once (from
-        // the body it would close at the first branch's ending).
-        Sync.Unsafe.defer {
-            val aborted = AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)
-            Bracket.ensuring { failure =>
+        // `Bracket.ensuringWith` rather than a bracket over a `()` acquire: a bracket cannot install its region until the acquire's value
+        // arrives, so a computation abandoned before it ran would get no finalizer. `ensuringWith` installs the region as a node from the
+        // start, with nothing deferred above it, so the abandonment walk finds it whether or not a step ran, and it makes the slot the
+        // failure is recorded in once per run, as the region is entered, so a value run twice shares nothing between the runs. Abort
+        // routing and first-failure-wins are `acquireReleaseWith`'s; the finalizer runs only from the release, not the body, since a
+        // replaying handler ends the extent per branch but the release runs once (from the body it would close at the first branch's ending).
+        Bracket.ensuringWith(AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)) {
+            (aborted, failure) =>
                 val outcome: Maybe[Result.Error[Any]] =
                     failure match
                         // constructed rather than through `Result.Panic.apply`, which refuses to hold a fatal
@@ -154,16 +154,15 @@ object Sync:
                         case Absent      => aborted.get()(using AllowUnsafe.embrace.danger)
                 // Unsafe: the kernel's release is synchronous, so the effectful finalizer runs to completion here
                 discard(Sync.Unsafe.evalOrThrow(f(outcome))(using summon[Frame], AllowUnsafe.embrace.danger))
-            } {
-                Abort.run[E](v).map { result =>
-                    result.foldError(
-                        _ => (),
-                        e => discard(aborted.compareAndSet(Absent, Maybe(e))(using AllowUnsafe.embrace.danger))
-                    )
-                    result
-                }
-            }.map(result => Abort.get(result))
-        }
+        } { aborted =>
+            Abort.run[E](v).map { result =>
+                result.foldError(
+                    _ => (),
+                    e => discard(aborted.compareAndSet(Absent, Maybe(e))(using AllowUnsafe.embrace.danger))
+                )
+                result
+            }
+        }.map(result => Abort.get(result))
     end ensure
 
     /** Retrieves a local value and applies a function that can perform side effects.
