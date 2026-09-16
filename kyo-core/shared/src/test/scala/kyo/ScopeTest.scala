@@ -1289,33 +1289,75 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "release ordering under an outer handler (#1723)" - {
 
-        // When an outer handler discards Scope.run's continuation, the scope does not await its own release before
-        // the continuation proceeds: Finalizer.close hands its backlog to a detached fiber nothing awaits, so the
-        // next effect runs while the release is still in flight. What is missing is backpressure, not the release:
-        // nothing is lost, but a loop that keeps failing acquires again before the previous release finished.
-        // Scope.run awaits on the paths it controls, so this path and fiber abandonment are the exposure.
-        //
-        // Gating the release on `gate` makes the ordering deterministic rather than a race against the detached
-        // fiber: at the observation point the release provably cannot have run, so the assertion is stable. When
-        // the backpressure gap is closed the scope will await the release and this test will need to be revisited.
-        "a scope short-circuited by an outer handler does not await its release before the next effect (no backpressure)" in {
-            for
-                log  <- AtomicRef.init(Chunk.empty[String])
-                gate <- Latch.init(1)
-                write = (s: String) => log.updateAndGet(_.append(s)).unit
-                _ <- Abort.run {
-                    Check.runAbort {
-                        Scope.run {
-                            Scope.acquireRelease(write("acquire"))(_ => gate.await.andThen(write("release")))
-                                .map(_ => Check.require(false, "boom"))
+        // When an outer handler discards Scope.run's continuation, the scope hands its async finalizers to a
+        // detached drain nothing awaits: Finalizer.close runs the synchronous releases and returns, so the next
+        // effect runs while an async finalizer is still in flight. The desired behavior is backpressure, the same
+        // `finalizer.await` the normal Scope.run path has; by decision it is not applied on abnormal exit yet, so
+        // this is pending. The async finalizer suspends on a fiber join before its final step, so a drain that is
+        // kicked off but not awaited leaves `released` false when the next effect observes it; the loop makes a
+        // round that races the drain fail rather than pass, so the pending marker is stable.
+        "a scope short-circuited by an outer handler awaits its async release before the next effect".pendingUntilFixed(
+            "by decision there is no backpressure on abnormal exit: the scope's synchronous releases run, but the detached drain that runs its async finalizers is not awaited before the next effect"
+        ) in {
+            val rounds = 50
+            Loop.indexed { i =>
+                if i >= rounds then Loop.done
+                else
+                    for
+                        released <- AtomicBoolean.init(false)
+                        _ <- Abort.run {
+                            Check.runAbort {
+                                Scope.run {
+                                    Scope.ensure(Fiber.initUnscoped(Kyo.unit).map(_.getResult).andThen(released.set(true)))
+                                        .andThen(Check.require(false, "boom"))
+                                }
+                            }
                         }
-                    }
-                }.andThen(write("after"))
-                // the release is parked on `gate`, so it cannot have written yet: the next effect ran first
-                midway <- log.get
-                _      <- gate.release
-            yield assert(midway == Chunk("acquire", "after"), s"midway was $midway")
-            end for
+                        r <- released.get
+                    yield
+                        assert(r, s"round $i: the async finalizer had not completed before the next effect ran")
+                        Loop.continue
+            }
+        }
+    }
+
+    "async finalizers under fiber abandonment (#1723/#1876)" - {
+
+        // The fiber-abandonment half of the exposure #1723 names. An interrupted fiber runs its scope's
+        // finalizers off the abandonment walk, which runs the kernel's synchronous releases and settles the
+        // promise. Scope's own release is synchronous, `Finalizer.close`, and it hands the async finalizers to a
+        // detached uninterruptible drain nothing awaits, so an async finalizer's later steps run after the
+        // fiber's result is observed. The resources still close; what is missing is the backpressure the normal
+        // `Scope.run` path has, where it awaits `finalizer.await`. By decision this is not solved: an abnormal
+        // exit gets no backpressure, the same call as the outer-handler abort above. Pending, like that one.
+        "an interrupted fiber does not complete until its async scope finalizers have".pendingUntilFixed(
+            "by decision there is no backpressure on abnormal exit: an interrupted fiber settles once its synchronous releases have run, before the detached drain that runs the async finalizers completes"
+        ) in {
+            val rounds = 50
+            Loop.indexed { i =>
+                if i >= rounds then Loop.done
+                else
+                    for
+                        done    <- AtomicBoolean.init(false)
+                        entered <- Latch.init(1)
+                        fiber <- Fiber.initUnscoped {
+                            Scope.run {
+                                // An async finalizer: it suspends on a fiber join before its final step, so a
+                                // drain that is kicked off but not awaited leaves `done` false at the moment the
+                                // abandoned fiber's result is observed.
+                                Scope.ensure(Fiber.initUnscoped(Kyo.unit).map(_.getResult).andThen(done.set(true)))
+                                    .andThen(entered.release)
+                                    .andThen(Async.never)
+                            }
+                        }
+                        _ <- entered.await
+                        _ <- fiber.interrupt
+                        _ <- fiber.getResult
+                        d <- done.get
+                    yield
+                        assert(d, s"round $i: the async finalizer had not completed when the fiber's result was observed")
+                        Loop.continue
+            }
         }
     }
 
