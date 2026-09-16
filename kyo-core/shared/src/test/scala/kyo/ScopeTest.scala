@@ -1321,46 +1321,6 @@ class ScopeTest extends kyo.test.Test[Any]:
         }
     }
 
-    "async finalizers under fiber abandonment (#1723/#1876)" - {
-
-        // The fiber-abandonment half of the exposure #1723 names. An interrupted fiber runs its scope's
-        // finalizers off the abandonment walk, which runs the kernel's synchronous releases and settles the
-        // promise. Scope's own release is synchronous, `Finalizer.close`, and it hands the async finalizers to a
-        // detached uninterruptible drain nothing awaits, so an async finalizer's later steps run after the
-        // fiber's result is observed. The resources still close; what is missing is the backpressure the normal
-        // `Scope.run` path has, where it awaits `finalizer.await`. By decision this is not solved: an abnormal
-        // exit gets no backpressure, the same call as the outer-handler abort above. Pending, like that one.
-        "an interrupted fiber does not complete until its async scope finalizers have".pendingUntilFixed(
-            "by decision there is no backpressure on abnormal exit: an interrupted fiber settles once its synchronous releases have run, before the detached drain that runs the async finalizers completes"
-        ) in {
-            val rounds = 50
-            Loop.indexed { i =>
-                if i >= rounds then Loop.done
-                else
-                    for
-                        done    <- AtomicBoolean.init(false)
-                        entered <- Latch.init(1)
-                        fiber <- Fiber.initUnscoped {
-                            Scope.run {
-                                // An async finalizer: it suspends on a fiber join before its final step, so a
-                                // drain that is kicked off but not awaited leaves `done` false at the moment the
-                                // abandoned fiber's result is observed.
-                                Scope.ensure(Fiber.initUnscoped(Kyo.unit).map(_.getResult).andThen(done.set(true)))
-                                    .andThen(entered.release)
-                                    .andThen(Async.never)
-                            }
-                        }
-                        _ <- entered.await
-                        _ <- fiber.interrupt
-                        _ <- fiber.getResult
-                        d <- done.get
-                    yield
-                        assert(d, s"round $i: the async finalizer had not completed when the fiber's result was observed")
-                        Loop.continue
-            }
-        }
-    }
-
     "hierarchical scopes (#1131)" - {
 
         // A scoped fiber is interrupted by the scope it was spawned in, and the run nested inside it releases
