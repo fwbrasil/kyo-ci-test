@@ -159,7 +159,8 @@ class BracketTest extends AnyFreeSpec:
             val r: Int < Any =
                 ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.done(-1), b => b)
             assert(r.eval == -1)
-            assert(seen.exists(_.isEmpty)) // uniform: a dropped bracket is told the clean ending its holder reached
+            // the clause answers done without resuming, so the bracket's use never ran to an end: discard signal
+            assert(seen.exists(_.exists(_.isInstanceOf[kyo.KyoException])))
         }
 
         "the acquire is not guarded before it settles" in {
@@ -200,18 +201,6 @@ class BracketTest extends AnyFreeSpec:
     }
 
     "captured continuations" - {
-        "a discarded captured continuation still releases the bracket" in {
-            var seen = Maybe.empty[Maybe[Throwable]]
-            val body: Int < Ask =
-                Bracket(Effect.defer(7)) { a =>
-                    ask.map(x => a + x)
-                }((_, outcome) => seen = Maybe(outcome))
-            val dropped: Int < Any =
-                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
-            assert(dropped.eval == -1)
-            assert(seen.exists(_.isEmpty)) // uniform: a dropped bracket is told the clean ending its holder reached
-        }
-
         "a captured continuation resumed in the clause completes the bracket there" in {
             var seen = Maybe.empty[Maybe[Throwable]]
             val body: Int < Ask =
@@ -266,7 +255,8 @@ class BracketTest extends AnyFreeSpec:
                 b => b
             )
             assert(r.eval == -1)
-            assert(seen.exists(_.isEmpty)) // uniform: a dropped bracket is told the clean ending its holder reached
+            // the clause answers done without resuming, so the bracket's use never ran to an end: discard signal
+            assert(seen.exists(_.exists(_.isInstanceOf[kyo.KyoException])))
         }
 
         "a clause that throws after capturing releases the bracket with the failure" in {
@@ -299,7 +289,8 @@ class BracketTest extends AnyFreeSpec:
             )
             assert(r.eval == -1)
             assert(outcomes.size == 1)
-            assert(outcomes.head.isEmpty) // the dropped bracket is told the clean holder ending
+            // the leaked continuation is dropped, so the bracket's use never ran to an end: discard signal
+            assert(outcomes.head.exists(_.isInstanceOf[kyo.KyoException]))
             // the leaked continuation re-enters a region already released, which is refused
             discard(intercept[kyo.Closed](answerAsk(0)(leaked.get(1)).eval))
             assert(outcomes.size == 1)
@@ -321,34 +312,6 @@ class BracketTest extends AnyFreeSpec:
             assert(ex eq failure)
             assert(ex.getSuppressed.exists(_ eq Bad))
             assert(log.toList == List("inner", "outer"))
-        }
-
-        "a leaked capture resumed after its region completed is refused as closed" in {
-            // pendingUntilFixed (ported from robustness): the leaked capture's bracket outcome is Absent (a clean
-            // end) rather than a defined discard failure, so outcomes.head.isDefined is false; design-difference
-            // vs this branch's discard-signal semantics.
-            pendingUntilFixed {
-                val outcomes = ListBuffer[Maybe[Throwable]]()
-                var leaked   = Maybe.empty[Arrow[Int, Int, Ask]]
-                val body: Int < Ask =
-                    Bracket(Effect.defer(7)) { a =>
-                        ask.map(x => a + x)
-                    }((_, outcome) => discard(outcomes += outcome))
-                val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
-                    [C] =>
-                        (_, cont) =>
-                            leaked = Maybe(Region.leak(cont))
-                            -1
-                    ,
-                    b => b
-                )
-                assert(r.eval == -1)
-                assert(outcomes.size == 1)
-                assert(outcomes.head.isDefined)
-                discard(intercept[kyo.Closed](answerAsk(0)(leaked.get(1)).eval))
-                assert(outcomes.size == 1)
-                ()
-            }
         }
     }
 
@@ -615,20 +578,6 @@ class BracketTest extends AnyFreeSpec:
             assert(seen.exists(_.exists(_ eq Boom)))
         }
 
-        "a discarded capture's bracket is told the clean ending its holder reached" in {
-            var seen = Maybe.empty[Maybe[Throwable]]
-            val body: Int < Ask =
-                Bracket(Effect.defer(7))(a => ask.map(x => a + x))((_, outcome) => seen = Maybe(outcome))
-            val dropped: Int < Any =
-                ArrowEffect.handleCont[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], body)(
-                    [C] => (_, _) => -1,
-                    b => b
-                )
-            assert(dropped.eval == -1)
-            // uniform: no discard signal; the dropped bracket is released once, told the holder's clean ending
-            assert(seen.exists(_.isEmpty))
-        }
-
         "two brackets dumped together release inner first on discard" in {
             val log = ListBuffer[String]()
             val body: Int < Ask =
@@ -662,22 +611,16 @@ class BracketTest extends AnyFreeSpec:
         }
 
         "a discarded capture's bracket is told the discard signal" in {
-            // pendingUntilFixed (ported from robustness): the discarded capture's bracket is told a clean end
-            // (outcome Absent) rather than a discard signal, so seen holds no kyo.KyoException; design-difference
-            // vs this branch's discard-signal semantics.
-            pendingUntilFixed {
-                var seen = Maybe.empty[Maybe[Throwable]]
-                val body: Int < Ask =
-                    Bracket(Effect.defer(7))(a => ask.map(x => a + x))((_, outcome) => seen = Maybe(outcome))
-                val dropped: Int < Any =
-                    ArrowEffect.handleCont[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], body)(
-                        [C] => (_, _) => -1,
-                        b => b
-                    )
-                assert(dropped.eval == -1)
-                assert(seen.exists(_.exists(_.isInstanceOf[kyo.KyoException])))
-                ()
-            }
+            var seen = Maybe.empty[Maybe[Throwable]]
+            val body: Int < Ask =
+                Bracket(Effect.defer(7))(a => ask.map(x => a + x))((_, outcome) => seen = Maybe(outcome))
+            val dropped: Int < Any =
+                ArrowEffect.handleCont[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], body)(
+                    [C] => (_, _) => -1,
+                    b => b
+                )
+            assert(dropped.eval == -1)
+            assert(seen.exists(_.exists(_.isInstanceOf[kyo.KyoException])))
         }
     }
 
@@ -1514,7 +1457,8 @@ class BracketTest extends AnyFreeSpec:
             assert(r.eval == 0)
             assert(!closedAtClause)
             assert(!closedAfter)
-            assert(outcome.exists(_.isEmpty)) // uniform: a never-resumed remainder's bracket is told the clean ending
+            // the remainder is never resumed, so the bracket's use never ran to an end: discard signal
+            assert(outcome.exists(_.exists(_.isInstanceOf[kyo.KyoException])))
         }
 
         "a park between the hand-out and the resume carries the remainder's debt" in {
@@ -1614,7 +1558,8 @@ class BracketTest extends AnyFreeSpec:
                 }
             assert(r.eval == -1)
             assert(openAfterDrop)
-            assert(outcome.exists(_.isEmpty)) // uniform: the dropped nested remainder is told the clean enclosing ending
+            // the nested remainder is dropped without being resumed, so its bracket's use never ran: discard signal
+            assert(outcome.exists(_.exists(_.isInstanceOf[kyo.KyoException])))
         }
 
         "branches of a multi-shot clause share the resource the use closed over" in {

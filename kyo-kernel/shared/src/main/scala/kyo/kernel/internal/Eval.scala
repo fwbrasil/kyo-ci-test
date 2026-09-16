@@ -370,6 +370,11 @@ import scala.annotation.tailrec
                             stack.handler(top) match
                                 case hc: Handler.ContextHandler[VX, CX, AX, ?] @unchecked =>
                                     Debugger.onRegionExit(hc, res)
+                                    // the extent ran to a clean end: record it on the region, whether the region is here in
+                                    // place or was reinstalled by a resumed remainder, so its release (run here or by the
+                                    // scope that holds it) tells a clean ending rather than the discard signal a dropped
+                                    // remainder gets.
+                                    hc.complete(stack.state(top).asInstanceOf[VX])
                                     // the region's own release runs its clean end against the entry's live state (a fork's
                                     // join may have written it), before the pop while the entry is live. A remainder still
                                     // owed to it was never resumed, so its regions drain as discarded.
@@ -486,10 +491,10 @@ import scala.annotation.tailrec
         def drainClean(releases: Stack.Releases): Unit =
             releases.run(Absent)(t => Report.unhandled(t))
 
-        // a context region's own clean completion: the own release runs through `complete` (the extent ran to an end in
-        // place), and a finalizer that throws here fails the computation, so the throw propagates.
+        // a context region's clean completion: the extent ran to an end (recorded above), so the release runs told the
+        // clean ending, and a finalizer that throws here fails the computation, so the throw propagates.
         def drainCleanOwn(releases: Stack.Releases, state: Any): Unit =
-            releases.runOwnComplete(state)(t => throw t)
+            releases.runOwn(state, Absent)(t => throw t)
 
         // A dropped remainder (its region ended without resuming it) is drained here, each release resolved against the
         // state its snapshot carried since no entry is live; a throw is reported on a clean end, suppressed on an unwind.
