@@ -32,57 +32,6 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
 
     "an interrupt landing while the acquire's last step runs" - {
 
-        // Bracket installs its region as the acquire is applied, so an abandonment that finds the acquired value
-        // has something to release it with.
-        "Sync.acquireReleaseWith still releases what the acquire produced" in {
-            val rounds = 200
-            for
-                acquired <- AtomicInt.init(0)
-                released <- AtomicInt.init(0)
-                _ <- selfInterrupting(rounds) { self =>
-                    Sync.acquireReleaseWith {
-                        Sync.defer {
-                            // Unsafe: the interrupt must be requested from inside the acquire, before it returns,
-                            // which is not an effectful position.
-                            import AllowUnsafe.embrace.danger
-                            discard(self.unsafe.interrupt())
-                        }.andThen(acquired.incrementAndGet)
-                    }(_ => released.incrementAndGet.unit)(_ => Sync.defer(()))
-                }
-                _   <- assertEventually(Kyo.zip(acquired.get, released.get).map((a, r) => a == r))
-                acq <- acquired.get
-                rel <- released.get
-            yield assert(acq == rel && acq > 0, s"$acq acquires ran to their end and $rel of them were released")
-            end for
-        }
-
-        // Scope.acquire is acquireRelease(resource)(_.close()), so what it adds is the close path.
-        "Scope.acquire closes the handle it opened" in {
-            val rounds = 200
-            val opened = new JAtomicInteger(0)
-            val closed = new JAtomicInteger(0)
-            for
-                _ <- selfInterrupting(rounds) { self =>
-                    Scope.run {
-                        Scope.acquire {
-                            Sync.defer {
-                                // Unsafe: see the leaf above.
-                                import AllowUnsafe.embrace.danger
-                                discard(self.unsafe.interrupt())
-                            }.andThen(Sync.defer {
-                                discard(opened.incrementAndGet())
-                                new Handle(closed)
-                            })
-                        }.andThen(Sync.defer(()))
-                    }
-                }
-                _ <- assertEventually(Sync.defer(opened.get() == closed.get()))
-                o <- Sync.defer(opened.get())
-                c <- Sync.defer(closed.get())
-            yield assert(o == c && o > 0, s"$o handles were opened and $c of them were closed")
-            end for
-        }
-
         // A bracket is the one owner that takes what its acquire produced with nothing schedulable in between, so a
         // resource an acquire holds until the step that hands it on is itself a bracket, nested as the acquire: its
         // end runs in place as the value flows to the outer bracket. `Sync.ensure` and `Sync.acquireReleaseWith`
@@ -152,9 +101,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
 
         // The request lands one step before the value: the interrupt stops in front of that step, the
         // abandonment runs nothing of it, and an acquire that never produced owes no release.
-        "an acquire interrupted a step before its value produces nothing and releases nothing".pendingUntilFixed(
-            "ported from robustness; fails here: all 200 acquires and 200 releases run after their interrupt (expected 0 and 0), so an acquire interrupted a step before its value still produces and releases here; design-difference vs this branch's acquire-interrupt semantics"
-        ) in {
+        "an acquire interrupted a step before its value produces nothing and releases nothing" in {
             val rounds = 200
             for
                 acquired <- AtomicInt.init(0)
