@@ -1388,7 +1388,7 @@ class AeronTransportTest extends Test:
     // publication in front of it and nothing owning it: an abandonment runs nothing of a remainder, so the
     // publication would never be closed.
     "an interrupt on a completed add closes the publication the add produced".pendingUntilFixed(
-        "ported from robustness; the publication the completed add produced is not closed on interrupt (leak)"
+        "known gap: the publication the completed add produced is not closed on interrupt (leak)"
     ) in {
         val transport = new InterruptOnDoneTransport
         Latch.initWith(1) { gate =>
@@ -1428,7 +1428,7 @@ class AeronTransportTest extends Test:
 
     // The same window on Topic.stream's subscription add.
     "an interrupt on a completed add closes the subscription the add produced".pendingUntilFixed(
-        "ported from robustness; the subscription the completed add produced is not closed on interrupt (leak)"
+        "known gap: the subscription the completed add produced is not closed on interrupt (leak)"
     ) in {
         val transport = new InterruptOnDoneTransport
         Latch.initWith(1) { gate =>

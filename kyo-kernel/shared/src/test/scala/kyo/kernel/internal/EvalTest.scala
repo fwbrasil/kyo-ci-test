@@ -989,9 +989,8 @@ class EvalTest extends AnyFreeSpec:
         // body's last step leaves the value for the region's `done` rather than parking in front of the capture,
         // where an abandonment would drop it.
         "a stop landing on the body's last step does not park in front of the crossing's capture" in {
-            // pendingUntilFixed (ported from robustness): partial parks in front of the crossing's capture (result
-            // stays Defer(21) whose evalNow is Absent) instead of the value reaching the region's done;
-            // design-difference vs this branch's crossing/park redesign.
+            // Known gap: partial parks in front of the crossing's capture (result
+            // stays Defer(21) whose evalNow is Absent) instead of the value reaching the region's done.
             pendingUntilFixed {
                 val body: Int < Any =
                     Effect.defer(20).map { a =>
@@ -1263,7 +1262,7 @@ class EvalTest extends AnyFreeSpec:
             assert(log.toList == List("release 1"))
         }
 
-        // PORTED FROM robustness; needs Bracket.ensuringWith, absent on this branch
+        // Disabled: needs Bracket.ensuringWith, which this kernel does not provide.
         /*
         "a bracket owes its release through the public surface" in {
             val log = ListBuffer[Int]()
@@ -1280,7 +1279,7 @@ class EvalTest extends AnyFreeSpec:
         }
          */
 
-        // PORTED FROM robustness; needs Bracket.ensuringWith, absent on this branch
+        // Disabled: needs Bracket.ensuringWith, which this kernel does not provide.
         /*
         "a failure unwinding past a bracket runs its release" in {
             val log                = ListBuffer[Int]()
@@ -1604,7 +1603,7 @@ class EvalTest extends AnyFreeSpec:
         r
     end trailing
 
-    "values and map, ported" - {
+    "values and map" - {
         "evaluates andThen and unit" in {
             assert((1: Int < Any).andThen(2: Int < Any).eval == 2)
             assert((1: Int < Any).unit.eval == ())
@@ -1627,7 +1626,7 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    "handleLoop, ported" - {
+    "handleLoop" - {
         "regions exit innermost first" in {
             val log   = ListBuffer[String]()
             val inner = answerAsk(41)(ask.map(_ + 1)).map(_ * 10)
@@ -1689,7 +1688,7 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    "handleLoopState, ported" - {
+    "handleLoopState" - {
         "composes a state update with a done" in {
             def go(n: Int): Int < Ask =
                 if n == 0 then 0 else ask.map(_ => go(n - 1))
@@ -1729,7 +1728,7 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    "clause scope, ported" - {
+    "clause scope" - {
         def innerProgram: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
 
         "a stateful clause's suspension is answered outside its scope" in {
@@ -1801,7 +1800,7 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    "a captured continuation is a value, ported" - {
+    "a captured continuation is a value" - {
         "a continuation folded from the eval stack runs every pending map exactly once" in {
             for depth <- List(8, 64) do
                 val runs = new Array[Int](depth)
@@ -1844,7 +1843,7 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    "top level, ported" - {
+    "top level" - {
         "an operation no region in the row handles is a bug" in {
             val program: Int < (Ask & Say) = say("x").map(_ => ask)
             val r                          = answerAsk(41)(program)
@@ -1890,7 +1889,7 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    "partial evaluation, ported" - {
+    "partial evaluation" - {
         "partial completes when nothing stops" in {
             assert(Eval.partial(answerAsk(21)(ask.map(_ * 2))).evalNow == Maybe(42))
         }

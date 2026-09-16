@@ -1635,7 +1635,7 @@ class BracketTest extends AnyFreeSpec:
             assert(closed)
         }
 
-        // PORTED FROM robustness; needs ArrowEffect.handleContRepeated, absent on this branch
+        // Disabled: needs ArrowEffect.handleContRepeated, which this kernel does not provide.
         /*
         "a recovering multi-shot clause releases once at its end" in {
             var events = List.empty[String]
@@ -1654,7 +1654,7 @@ class BracketTest extends AnyFreeSpec:
         }
          */
 
-        // PORTED FROM robustness; needs ArrowEffect.handleContRepeated, absent on this branch
+        // Disabled: needs ArrowEffect.handleContRepeated, which this kernel does not provide.
         /*
         // Every resumption re-enters the region, and the re-entered region repeats as the outer one does: a bracket
         // acquired inside one resumption and captured by an inner occurrence's continuation is held across that
@@ -1867,7 +1867,7 @@ class BracketTest extends AnyFreeSpec:
     }
 
     "ensuringWith" - {
-        // PORTED FROM robustness; needs Bracket.ensuringWith, absent on this branch
+        // Disabled: needs Bracket.ensuringWith, which this kernel does not provide.
         /*
         "makes a state for the run, hands it to the body, and releases with it" in {
             var seen = Maybe.empty[(AnyRef, Maybe[Throwable])]
@@ -1885,7 +1885,7 @@ class BracketTest extends AnyFreeSpec:
         }
          */
 
-        // PORTED FROM robustness; needs Bracket.ensuringWith, absent on this branch
+        // Disabled: needs Bracket.ensuringWith, which this kernel does not provide.
         /*
         "each run makes a state of its own" in {
             val states = ListBuffer[AnyRef]()
@@ -1897,7 +1897,7 @@ class BracketTest extends AnyFreeSpec:
         }
          */
 
-        // PORTED FROM robustness; needs Bracket.ensuringWith, absent on this branch
+        // Disabled: needs Bracket.ensuringWith, which this kernel does not provide.
         /*
         "releases with the failure and the state when the body throws" in {
             var seen = Maybe.empty[(Int, Maybe[Throwable])]
@@ -1910,7 +1910,7 @@ class BracketTest extends AnyFreeSpec:
         }
          */
 
-        // PORTED FROM robustness; needs Bracket.ensuringWith, absent on this branch
+        // Disabled: needs Bracket.ensuringWith, which this kernel does not provide.
         /*
         // The region is a node from the start, so a computation abandoned before it ran a single step still
         // owes the release, told a state made for that run which nothing ever wrote.

@@ -122,7 +122,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
 
         // Bracket installs its region as the acquire is applied, so an abandonment that finds the acquired value
         // has something to release it with.
-        "Sync.acquireReleaseWith still releases what the acquire produced (robustness variant)" in {
+        "Sync.acquireReleaseWith still releases what the acquire produced (value in the same node as the interrupt)" in {
             val rounds = 200
             for
                 acquired <- AtomicInt.init(0)
@@ -146,7 +146,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         }
 
         // Scope.acquire is acquireRelease(resource)(_.close()), so what it adds is the close path.
-        "Scope.acquire closes the handle it opened (robustness variant)" in {
+        "Scope.acquire closes the handle it opened (value in the same node as the interrupt)" in {
             val rounds = 200
             val opened = new JAtomicInteger(0)
             val closed = new JAtomicInteger(0)
