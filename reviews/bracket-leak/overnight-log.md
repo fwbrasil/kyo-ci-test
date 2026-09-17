@@ -144,3 +144,17 @@ distinct causes, both owned:
    vs the JVM-only-validated Safepoint save/restore removal (`bfba740693`). Full diagnosis + evidence:
    `reviews/bracket-leak/1928-regression.md`. Commit 758f4127c6. Fix pending the bisect; #1928 is the work, not a
    known issue.
+
+## #1928 RESOLVED — root cause found and fixed
+
+JS/linux-x64 bisect verdict: `6d87653b91` (recovery removed, **save/restore present**) PASSES #1928 (118ms);
+`778f630155` (both present) PASSES (78ms); HEAD without the save/restore HANGS. So the **Safepoint save/restore
+removal (`bfba740693`) was the regression**, not the recovery removal. The `bfba` "now-dead" claim was argued, not
+verified, and validated JVM-only; #1928 is a JS/Native-only invariant.
+
+**Fix** (commit `d55aa4da9a`): restored the tagged-form Safepoint save/restore around the abandonment walk in
+`Eval.release`, with the comment corrected (recovery is gone -> no Ensure applied, but the tagged walk still needs
+a live state on a stopped Safepoint or #1735/#1928 break). Byte-identical to `6d87653b91`, which the bisect proved
+passes #1928. JVM green (BracketTest, ScopeTest, ScopeInterruptTest). JS+Native CI validation: run 35188597180
+(linux-x64 + linux-arm64). Review package updated: the fix now KEEPS the save/restore; only the recovery is removed
+(commit `6a9c0def3e`). Full arc in `1928-regression.md`.
