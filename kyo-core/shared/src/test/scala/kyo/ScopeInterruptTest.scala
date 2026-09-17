@@ -67,10 +67,10 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // The acquire runs under a Sync.ensure of its own, interrupted as its value arrives. That value parks in front of the
-        // outer bracket's un-applied release, which abandonment recovers, so the bracket releases every acquired value (rel == acq)
-        // alongside each ensure's own finalizer (fin == acq), on every platform.
-        "an acquire stopped under its own Sync.ensure runs that finalizer and the bracket releases each value" in {
+        // The acquire runs under a Sync.ensure of its own and is interrupted as its inner value arrives, before the
+        // acquire finishes: the value has not reached the outer bracket, so the bracket acquired nothing and owns
+        // nothing (rel == 0). The inner Sync.ensure, a region from the start, still runs its own finalizer (fin == acq).
+        "an acquire stopped under its own Sync.ensure runs that finalizer and owns nothing" in {
             val rounds = 200
             for
                 acquired <- AtomicInt.init(0)
@@ -94,7 +94,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                 rel <- released.get
                 fin <- ended.get
             yield assert(
-                acq == fin && rel == acq && acq > 0,
+                acq == fin && rel == 0 && acq > 0,
                 s"$acq acquires ran to their end, $fin of their own regions released and $rel bracket releases ran"
             )
             end for
