@@ -82,3 +82,33 @@ re-derive from that result.
 - The `bfba740693` removal was wrong: "now-dead" was argued, not verified, and the JVM-only validation missed a
   JS/Native-only invariant. The lesson is a Safepoint/abandonment change must be validated on JS and Native, and
   a "dead code" claim about the abandonment walk needs a cross-platform run behind it.
+
+## RESOLUTION (confirmed)
+
+Bisect verdict on JS/linux-x64 (the real failing env):
+
+| ref | recovery | save/restore | #1928 |
+|-----|----------|--------------|-------|
+| `4ed38c8ac9` (pre-release-model base) | absent | absent-era | PASS (209ms) |
+| `778f630155` (bracket-leak base) | present | present | **PASS (78ms)** |
+| `6d87653b91` (recovery removed) | absent | **present** | **PASS (118ms)** |
+| HEAD before the fix | absent | **removed** | **HANG (2m)** |
+
+So the leading hypothesis is confirmed: **the Safepoint save/restore removal (`bfba740693`) is the regression**,
+and the stranded-`Ensure` recovery removal is not involved (6d87653b91 passes #1928 without it). The recovery
+analysis stands: no `Arrow.Ensure` in #1928's path.
+
+**Fix applied** (commit `d55aa4da9a`): restore the tagged-form Safepoint save/restore around `collect(v, Arrow.id)`
+in `Eval.release`, with the comment corrected (the recovery is gone, so it applies no `Ensure`, but the tagged
+walk still needs a live state on a just-interrupted fiber's stopped Safepoint). The restored code is byte-identical
+to `6d87653b91`, which the bisect proved passes #1928. JVM re-validated green (BracketTest, ScopeTest,
+ScopeInterruptTest). JS/Native validation via CI run 35188597180 (JS+Native on linux-x64 and linux-arm64).
+
+The exact micro-mechanism (which sub-step of the walk needs the live state on JS) is not fully traced: the walk's
+one non-structural act is `f(kyo.input)` = `task.interrupts(v)`, the "link comes first" step of the abandonment;
+the CI bisect is the evidence that a live state there is load-bearing. This is faithful to the original author's
+intent, which added the save/restore for exactly #1735 and #1928.
+
+**Process note**: the removal's error was declaring code dead by argument, then validating JVM-only. A change to
+the abandonment walk / Safepoint handling must be validated on JS and Native, since the invariant it protects
+(#1928's drain) is only observable there.

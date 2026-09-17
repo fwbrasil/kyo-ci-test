@@ -47,8 +47,12 @@ returns. `ensureMap` is the poll-free registration for exactly that: own it in t
 ## The fix, per file
 
 - **`Eval.release`**: delete the recovery helpers and the Park-case recovery block; a settled value owns nothing.
-  The tagged/untagged Safepoint save/restore went with it: the walk no longer applies an `Ensure` (the only thing
-  that needed a live Safepoint on a stopped fiber), so it needs no Safepoint of its own. Net −52 lines here.
+  **Keep** the tagged-form Safepoint save/restore around the abandonment walk, and correct its comment (drop the
+  now-stale "applies a region's `Ensure`" clause). The recovery removal (contract change) is independent of the
+  save/restore: the tagged walk still runs on a just-interrupted fiber's stopped Safepoint and needs a live state,
+  or #1735's regions and #1928's drain are lost. An earlier pass removed the save/restore as "dead" on a JVM-only
+  check; CI then showed #1928 hangs on JS/Native without it, and the JS/linux-x64 bisect confirms `6d87653b91`
+  (recovery removed, save/restore present) passes #1928 while HEAD without it hangs. See `1928-regression.md`.
 - **`BracketTest`**: the two recovery tests become one, "a bracket whose acquire is interrupted before it finishes
   owns nothing" (the outer release does not run; the inner region's finalizer does).
 - **`ScopeInterruptTest`**: the `rel == acq` case becomes platform-aware. At the base tip the recovery masked the

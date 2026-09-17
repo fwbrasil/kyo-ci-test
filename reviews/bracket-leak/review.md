@@ -2,7 +2,7 @@
 
 Applies the fix delta to `effervescent-painting-backus` (currently at `778f630155`, the tip of the first live
 review). Each hunk is applied with the Edit tool, one at a time, with the one sentence below. Full delta:
-`reviews/bracket-leak/fix.diff` (net +85 / −132, 5 files). Derivation: `reviews/bracket-leak/derivation.md`.
+`reviews/bracket-leak/fix.diff` (net +86 / −125, 5 files). Derivation: `reviews/bracket-leak/derivation.md`.
 
 Order is dependency-first: the kernel change and its tests, then the aeron consumer and its test.
 
@@ -22,9 +22,12 @@ Order is dependency-first: the kernel change and its tests, then the aeron consu
 1d. Top-level settled arm `case settled => ()` (was `ensuring(settled, cont)`).
     *"Same: a settled top-level value owns nothing."*
 
-1e. Replace the tagged/untagged Safepoint save/restore with a bare `collect(v, Arrow.id)` and update the comment.
-    *"The walk applies no `Ensure` now, so nothing in it polls or steps a deferral; it needs no Safepoint of its
-    own, even on a stopped fiber."*
+1e. Keep the tagged-form Safepoint save/restore; only correct its comment (drop the stale "applies a region's
+    `Ensure`" clause, since the recovery is gone).
+    *"The recovery is gone, so the walk applies no `Ensure`, but the tagged walk still runs on a just-interrupted
+    fiber's stopped Safepoint and needs a live state or #1735's regions and #1928's drain are lost; keep the
+    save/restore and correct the comment. (An earlier pass removed this as 'dead' on a JVM-only check; CI showed
+    #1928 hangs on JS without it, and the JS/linux-x64 bisect confirms 6d87653b91 with it present passes #1928.)"*
 
 ## 2. `kyo-kernel/.../BracketTest.scala` — owns-nothing regression test
 

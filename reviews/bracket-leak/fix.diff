@@ -173,7 +173,7 @@ index 92501c37ba..54b2c419dc 100644
              )
              end for
 diff --git a/kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Eval.scala b/kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Eval.scala
-index 17526681fe..e844cf678d 100644
+index 17526681fe..79a6a52be0 100644
 --- a/kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Eval.scala
 +++ b/kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Eval.scala
 @@ -674,66 +674,22 @@ import scala.annotation.tailrec
@@ -248,7 +248,7 @@ index 17526681fe..e844cf678d 100644
                              end match
                          case kyo: Pending.HandleContext[VX, CX, ?, ?] @unchecked =>
                              val hc = kyo.handler
-@@ -766,35 +722,17 @@ import scala.annotation.tailrec
+@@ -766,28 +722,18 @@ import scala.annotation.tailrec
                                  if i < entryOwed.size then collectOwed(entryOwed(i))
                                  i += 1
                              end while
@@ -274,21 +274,15 @@ index 17526681fe..e844cf678d 100644
 -        // a stopped Safepoint needs a live state, so the walk takes its own and restores the caller's after. Without
 -        // it the abandoned regions are not reached and their releases are lost (#1735, and #1928's drain never ends).
 -        // The untagged walk (releasing a refused cont) runs where nothing is stopped, so it uses the caller's state.
--        if effectTag.isDefined then
--            val slot  = Safepoint.get()
--            val saved = Safepoint.save(slot)
--            try collect(v, Arrow.id)
--            finally Safepoint.restore(slot, saved)
--        else collect(v, Arrow.id)
--        end if
 +                case _ => ()
-+        // The walk runs none of the computation: it reads each node's regions and releases into `collected`, and for
-+        // the tagged form hands `f` the input of a suspended operation. Nothing here polls or steps a deferral, so it
-+        // needs no Safepoint of its own, even on the stopped Safepoint of a just-interrupted fiber.
-+        collect(v, Arrow.id)
-         collected.run(Maybe(ex))(t => if t ne ex then ex.addSuppressed(t))
-     end release
- 
++        // The tagged walk (a fiber abandonment) runs on the just-interrupted fiber's stopped Safepoint. Reaching the
++        // abandoned regions across a stopped Safepoint needs a live state, so the walk takes its own and restores the
++        // caller's after; without it the abandoned regions are not reached and their releases are lost (#1735, and
++        // #1928's drain never ends). The untagged walk (releasing a refused cont) runs where nothing is stopped, so
++        // it uses the caller's state.
+         if effectTag.isDefined then
+             val slot  = Safepoint.get()
+             val saved = Safepoint.save(slot)
 diff --git a/kyo-kernel/shared/src/test/scala/kyo/kernel/BracketTest.scala b/kyo-kernel/shared/src/test/scala/kyo/kernel/BracketTest.scala
 index 0544468056..48ff40f99c 100644
 --- a/kyo-kernel/shared/src/test/scala/kyo/kernel/BracketTest.scala
