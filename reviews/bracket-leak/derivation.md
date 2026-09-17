@@ -55,12 +55,15 @@ returns. `ensureMap` is the poll-free registration for exactly that: own it in t
   (recovery removed, save/restore present) passes #1928 while HEAD without it hangs. See `1928-regression.md`.
 - **`BracketTest`**: the two recovery tests become one, "a bracket whose acquire is interrupted before it finishes
   owns nothing" (the outer release does not run; the inner region's finalizer does).
-- **`ScopeInterruptTest`**: the `rel == acq` case becomes platform-aware. At the base tip the recovery masked the
-  platform difference by over-releasing on the JVM too (`rel == acq` everywhere); removing it exposes the real
-  behavior. Under JVM preemption the stop lands before the value reaches the bracket, which owns nothing
-  (`rel == 0`); on JS and Native, with no mid-step preemption, the acquire reaches the bracket, which releases what
-  it took (`rel == acq`). The assertion is `rel == (if Platform.isJVM then 0 else acq)`. The platform-independent
-  owns-nothing invariant is guarded deterministically in the kernel `BracketTest`.
+- **`ScopeInterruptTest`**: the `rel == acq` case becomes race-robust. At the base tip the recovery masked the
+  stopped-acquire case by over-releasing on the JVM too (`rel == acq` everywhere); removing it exposes the real
+  behavior, and CI on all four JS/Native targets shows the outer-bracket release count is not deterministic per
+  platform: JVM and Native preempt finely so the acquire usually stops short (`rel` near 0), x64 JS lets it
+  complete (`rel == acq`), arm64 JS is a race (`rel == acq - 1` in one run), and a run may land anywhere between.
+  Both a `rel == 0` and a `rel == (if Platform.isJVM then 0 else acq)` assertion are the same mistake: a fixed value
+  for a racy, platform-skewed outcome. The assertion becomes `fin == acq && rel <= acq && acq > 0`: the inner
+  `Sync.ensure` (region from the start) always runs its finalizer, and the bracket never over-releases. The
+  deterministic owns-nothing invariant is guarded in the kernel `BracketTest`.
 - **`Topic`**: the add's token-guard also owns the produced resource. On Done the driver takes the token and
   hands back the resource; the guard owns it until the use's finalizer takes over on a clean hand-off, and closes
   it on an abnormal exit after Done. The outer registration uses `ensureMap` so the clean hand-off is atomic too.

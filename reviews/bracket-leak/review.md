@@ -36,19 +36,18 @@ Order is dependency-first: the kernel change and its tests, then the aeron consu
     *"The contract for the generic bracket: interrupted-before-finish owns nothing; the inner region still runs
     its finalizer."*
 
-## 3. `kyo-core/.../ScopeInterruptTest.scala` — the Sync.ensure acquire releases only what the bracket took
+## 3. `kyo-core/.../ScopeInterruptTest.scala` — the Sync.ensure acquire, race-robust
 
-3a. Add `import kyo.internal.Platform` at the top of the file.
-    *"The case's expected release count is platform-dependent, so it needs the platform flag the rest of the
-    suite already uses."*
-
-3b. Rename the case to "…runs that finalizer, and the bracket releases only what it took", assert
-    `rel == (if Platform.isJVM then 0 else acq)` (was `rel == acq`), and rewrite the comment.
-    *"`Sync.ensure`'s own transform is inside the acquire, so an interrupt there stops it mid-step. At the base
-    tip the recovery over-released on the JVM too, so `rel == acq` held everywhere; removing it exposes the real
-    behavior. Under JVM preemption the stop lands before the value reaches the bracket, which owns nothing
-    (`rel == 0`); on JS and Native the acquire reaches the bracket, which releases what it took (`rel == acq`).
-    Either way no release runs for an acquire the bracket did not take."*
+3a. Rename the case to "…runs that finalizer, and the bracket never over-releases", assert
+    `acq == fin && rel <= acq && acq > 0` (was `rel == acq`), and rewrite the comment.
+    *"`Sync.ensure`'s own transform is inside the acquire, so an interrupt there stops it mid-step, and whether the
+    value reaches the outer bracket before the stop is a race whose outcome differs by platform and run: the JVM and
+    Native preempt finely so the acquire usually stops short (`rel` near 0), JS usually lets it complete
+    (`rel == acq`), and arm64 JS lands in between. The base tip's recovery masked this by over-releasing on the JVM
+    too. The only cross-platform invariant is that the inner region-from-start always releases (`fin == acq`) and the
+    bracket never over-releases (`rel <= acq`); the deterministic owns-nothing case is in the kernel `BracketTest`.
+    (An earlier `rel == 0` and a `rel == (if Platform.isJVM then 0 else acq)` both guessed a fixed value for a racy
+    outcome; CI on all four JS/Native targets settled it.)"*
 
 ## 4. `kyo-aeron/.../Topic.scala` — own the produced resource at the Done poll
 
