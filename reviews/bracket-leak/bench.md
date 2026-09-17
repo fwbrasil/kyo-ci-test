@@ -68,22 +68,27 @@ exactly 2x. The `.map` over the suspension adds one `DeferWith` node per step (t
 suspension node). Time on the same run: ~143 vs ~42 µs/op. So the fused API `askWith`/`suspendWith` is the measured
 **ceiling** for this shape, and it is already competitive with Turbolift.
 
-**Optimization experiment (attempted, reverted).** In `map`'s defer path I tried fusing a bare `SuspendArrow`
-(cont = `Arrow.id`) into a `SuspendArrowWith` instead of wrapping it in a `DeferWith` — i.e. making
-`suspend(tag,in).map(f)` build what `suspendWith(tag,in)(f)` builds. The extra check sits only on the already-slow
-defer branch, so the hot fused-map path (v not `Pending`) is untouched. It hit a real type wall: reconstructing the
-`SuspendArrowWith[i,o,e,st,…]` from a `case s: SuspendArrow[i,o,e,st,?,?]` pattern does not carry the
-`e <: ArrowEffect[i,o]` bound (a GADT-existential limitation), and satisfying it needs casts the kernel rulings
-forbid without sign-off ("a cast that compiles and is wrong"). Reverted.
+**Optimization experiments (two, both reverted, conclusive).**
 
-**Clean fix direction (candidate, separate change).** Give `Suspend` a type-preserving rebuild — a `private[kyo]`
-method on the node that chains an `Arrow[B,C,S2]` into its own `cont` and returns the suspension of type `C`
-(the node has its own `I,O,E,A` in scope, so no existential recovery, no cast). `map`/`flatMap` over a suspension
-then call it instead of allocating a `DeferWith`. Expected effect: `suspensionBaseline` -> the 240096 B/op / ~42 µs
-ceiling, carrying `trailingMaps`, `effectfulIteration`, `contextReads`, `partialSuspension`, and part of the
-crossings with it. This is a kernel hot-path + representation change, so it is its own derivation + live review, not
-folded into the bracket-leak fix. In the meantime, hot suspension loops that want the ceiling today use
-`askWith`/`suspendWith` (as `suspensionFusesContinuation` does).
+1. *Fuse inside `map`'s defer path, reconstructing a `SuspendArrowWith` from a `case s: SuspendArrow[i,o,e,st,?,?]`
+   pattern.* Type wall: the pattern does not carry the `e <: ArrowEffect[i,o]` bound (a GADT-existential
+   limitation), so the `SuspendArrowWith[i,o,e,…]` construction is rejected.
+2. *Move the fuse onto the node* — a `private[kyo] fuseMap` on `SuspendArrow`, where `E <: ArrowEffect[I,O]` is in
+   scope (no existential recovery), called from `map` via an erasure-forced cast that keeps the effect in the row
+   and leaves `E` phantom. It compiled past the bound, then **failed to compile with `Class too large: kyo/Kyo$`**:
+   the fuse code, inlined at every `map`/`flatMap` call site, bloats the caller class past the JVM's 64 KB limit.
+
+That second result is the point, and it confirms the reviewer's prediction ("that'll break JIT fusion"): the inline
+`map` body has to stay tiny, and any fuse added to it is inlined everywhere and is fatal (here at compile time; at
+runtime it would blow the JIT inline budget and regress the 28 fused rows kyo wins). And the evaluator cannot help
+either — the `DeferWith` is already allocated by `map` before the evaluator sees it, so an Eval-side collapse
+removes no allocation. The `DeferWith` per `suspend.map` is therefore **structural** to the inline-map design.
+
+**Verdict.** The fix already exists as the fused-construction API: `askWith` / `suspendWith` build the one-node
+`SuspendArrowWith` directly (that is `suspensionFusesContinuation`, at the 240096 B/op / ~42 µs ceiling and
+competitive with Turbolift). Reach for it in hot suspension loops; `ask.map(f)` keeps the ergonomic form at a
+one-node-per-step premium that cannot be removed in `map` itself. No kernel change is warranted here, which is
+also why none is folded into the bracket-leak fix.
 
 ### Case 2 — foreign crossings (`foreignCrossingsPayRotation` 6.7x, `AnsweredInPlace` 7.5x)
 
@@ -149,9 +154,15 @@ does not move them. Raw JSON: `scratchpad/cbench.json`.
 ## Summary of the investigation
 
 kyo is fast where it fuses (28 rows at/ahead of Turbolift) and pays where it cannot: a `.map` over a suspension
-allocates a `DeferWith` (case 1, the widest cause, ceiling = `askWith`), and crossing a foreign handler
-snapshots+parks per crossing (case 2, the deepest gap). The one clean, high-leverage kernel optimization surfaced is
-the **case-1 suspend-map fuse** (a type-preserving `Suspend` rebuild), which would move `suspensionBaseline`,
-`trailingMaps`, `effectfulIteration`, `contextReads`, `partialSuspension`, and the `ask.map` share of the crossings
-toward the fused ceiling. It is a hot-path + representation change, so it is its own derivation + live review, kept
-entirely out of the bracket-leak fix.
+allocates a `DeferWith` (case 1, the widest cause), and crossing a foreign handler snapshots+parks per crossing
+(case 2, the deepest gap).
+
+The headline optimization result is a **negative** one, and a useful one: the natural fix for case 1 (fuse the map
+into the suspension) **cannot** live in the inline `map` — two experiments proved it (a GADT-existential bound, then
+`Class too large: kyo/Kyo$` from inline bloat), and the evaluator can't remove an allocation `map` already made. The
+fused construction already exists as `askWith`/`suspendWith`; the `ask.map` premium is structural and is paid for
+ergonomics. So no kernel optimization is warranted from this pass. The remaining gaps are either that same
+structural `ask.map` premium or handler-machinery costs (crossing rotation, emitting region-rebuild, whose answer
+method is over the JIT hot-inline budget) that are their own targeted, dedicated investigations if pursued.
+
+None of this touches the bracket-leak fix, which is a cold-path change and unaffected by all of the above.

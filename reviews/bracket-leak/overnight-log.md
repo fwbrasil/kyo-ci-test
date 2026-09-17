@@ -42,8 +42,11 @@ Validated locally: kernel 1747 pass, core 0 failed, aeron 34 pass.
    competitor almost always Turbolift; 28 rows at/ahead), four deep-dive cases with code + `-prof gc` + async-profiler
    cpu + `-XX:+PrintInlining` + an optimization experiment, and CompileBench compile times. Headline: the widest loss
    is `suspend.map(f)` allocating a `DeferWith` (case 1; ceiling = `askWith`, 2x); the deepest is foreign-handler
-   crossings (case 2, snapshot+park per crossing). One clean high-leverage optimization surfaced (a type-preserving
-   `Suspend` fuse for `map`); it is a separate kernel change with its own live review, kept out of the bracket-leak fix.
+   crossings (case 2, snapshot+park per crossing). Two optimization experiments on case 1 both failed conclusively
+   (a GADT-existential bound; then `Class too large: kyo/Kyo$` from inlining the fuse at every call site — the
+   reviewer's "breaks JIT fusion" prediction, at compile time). Conclusion: the `DeferWith` premium is structural to
+   the inline `map`; the fused construction already exists as `askWith`/`suspendWith`. No kernel optimization is
+   warranted from this pass, and none is folded into the bracket-leak fix.
 
 The bracket-leak fix HEAD stays `bfba740693` (fix + prose). The perf experiment was reverted; no perf change is folded
 into the fix.
