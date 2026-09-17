@@ -126,3 +126,21 @@ verdict).
   compile times. The fix is a cold-path change (Eval.release/abandonment), off every KernelBench hot path, so no
   throughput regression is expected; spot-check to confirm. Results + investigation → `bench.md`.
 
+
+## CI verification (post-overnight) — two findings
+
+CI run 35168861512 (HEAD, full matrix) came back RED on JS and Native (both x64 and arm64); JVM green. Two
+distinct causes, both owned:
+
+1. **ScopeInterruptTest "owns nothing" was JVM-specific** (my change). The `rel == 0` assertion holds only under
+   JVM preemption; on JS/Native the acquire reaches the bracket and releases what it took (`rel == acq`). Fixed by
+   asserting `rel == (if Platform.isJVM then 0 else acq)`, validated green on JVM and JS locally (14/14 each).
+   Commit 6f7512a048. See `derivation.md` / `review.md` section 3.
+
+2. **ScopeTest #1928 drain hangs on JS (x64 and arm64)** — a real regression in the bracket-leak fix, not
+   pre-existing. Base `4ed38c8ac9` passed the same leaf on linux-x64 JS in 209ms; HEAD times out (2m). Only the
+   `Eval.release` change is in scope. Not reproducible locally (darwin/arm containers pass, qemu-x86 crashes), so
+   two focused JS/linux-x64 CI bisect runs are in flight (`6d87653b91`, `778f630155`) to localize recovery-removal
+   vs the JVM-only-validated Safepoint save/restore removal (`bfba740693`). Full diagnosis + evidence:
+   `reviews/bracket-leak/1928-regression.md`. Commit 758f4127c6. Fix pending the bisect; #1928 is the work, not a
+   known issue.
