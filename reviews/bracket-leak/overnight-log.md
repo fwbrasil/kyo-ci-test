@@ -177,3 +177,25 @@ JS-env crash (`RunTerminatedException` / `NonZeroExitException: exited with code
 run 34987201283 the same way. kyo-data is a foundation module untouched by the bracket-leak fix; this is a
 pre-existing flaky JS-env crash to triage separately, not part of this change. It keeps the JS job conclusions at
 "failure" even though the bracket-leak target tests pass, so read the per-test results, not the job conclusion.
+
+## FINAL VERDICT — re-validation run 35197655701 (JS+Native x64+arm64)
+
+All three bracket-leak target tests PASS on every target:
+
+| target | #1928 | ScopeTest | ScopeInterruptTest |
+|--------|-------|-----------|--------------------|
+| x64 JS | PASS 120ms | 73/0 | 14/0 |
+| arm64 JS | PASS 166ms | 73/0 | 14/0 |
+| x64 Native | PASS 13ms | 73/0 | 14/0 |
+| arm64 Native | PASS 17ms | 73/0 | 14/0 |
+
+(JVM was green in the earlier full HEAD run.) The bracket-leak fix is validated.
+
+The only remaining job-level failures are two PRE-EXISTING issues in untouched modules, both confirmed failing
+identically at the base run 34987201283:
+- `kyo-dataJS / Test / executeTests` — a flaky JS-env crash (RunTerminatedException), on both JS arches.
+- `kyo.ffi.it.ItStructPtrTest › struct with opaque field` — a native C-FFI test, on both Native arches.
+
+Neither is caused by or related to the bracket-leak fix (kyo-data and kyo-ffi are untouched; a kernel Eval.release
+change cannot affect a C struct read). Routed to you to triage separately; they are not part of this change and
+do not block the live review.
