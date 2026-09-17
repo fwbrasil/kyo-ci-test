@@ -11,8 +11,10 @@ Contract: a bracket owes a release only if its acquire **completes**; an acquire
 - **kernel** `Eval.release`: removed the stranded-`Ensure` recovery (`settledResource`/`firstStep`/`ensuringInCont`/
   `ensuring`/`leftmost` + the Park-case block). It manufactured a release for a stopped acquire (contract violation)
   and corrupted #1735. Completed acquires still release via region teardown; the walk still runs nothing.
-- **kernel test** `BracketTest`, **core test** `ScopeInterruptTest`: assert owns-nothing for an acquire interrupted
-  before it finishes.
+- **kernel test** `BracketTest`: asserts owns-nothing deterministically for an acquire interrupted before it
+  finishes (platform-independent, drives `Eval.release` directly). **core test** `ScopeInterruptTest`: asserts the
+  real-runtime bracket releases only what it took (`rel == 0` on the JVM where the stop lands before the bracket
+  takes the value; `rel == acq` on JS and Native where the acquire reaches it).
 - **aeron** `Topic`: the add's token-guard also owns the produced publication/subscription — on Done the token
   becomes the resource, and an abnormal exit after Done closes it (spanning to the clean hand-off); outer
   registration via `ensureMap`. `AeronTransportTest`'s two leak-on-interrupt tests pass.

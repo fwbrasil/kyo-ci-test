@@ -51,7 +51,12 @@ returns. `ensureMap` is the poll-free registration for exactly that: own it in t
   that needed a live Safepoint on a stopped fiber), so it needs no Safepoint of its own. Net −52 lines here.
 - **`BracketTest`**: the two recovery tests become one, "a bracket whose acquire is interrupted before it finishes
   owns nothing" (the outer release does not run; the inner region's finalizer does).
-- **`ScopeInterruptTest`**: the `rel == acq` case reverts to owns-nothing (`rel == 0`).
+- **`ScopeInterruptTest`**: the `rel == acq` case becomes platform-aware. At the base tip the recovery masked the
+  platform difference by over-releasing on the JVM too (`rel == acq` everywhere); removing it exposes the real
+  behavior. Under JVM preemption the stop lands before the value reaches the bracket, which owns nothing
+  (`rel == 0`); on JS and Native, with no mid-step preemption, the acquire reaches the bracket, which releases what
+  it took (`rel == acq`). The assertion is `rel == (if Platform.isJVM then 0 else acq)`. The platform-independent
+  owns-nothing invariant is guarded deterministically in the kernel `BracketTest`.
 - **`Topic`**: the add's token-guard also owns the produced resource. On Done the driver takes the token and
   hands back the resource; the guard owns it until the use's finalizer takes over on a clean hand-off, and closes
   it on an abnormal exit after Done. The outer registration uses `ensureMap` so the clean hand-off is atomic too.

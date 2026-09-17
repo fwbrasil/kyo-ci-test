@@ -2,7 +2,7 @@
 
 Applies the fix delta to `effervescent-painting-backus` (currently at `778f630155`, the tip of the first live
 review). Each hunk is applied with the Edit tool, one at a time, with the one sentence below. Full delta:
-`reviews/bracket-leak/fix.diff` (net +80 / −132, 5 files). Derivation: `reviews/bracket-leak/derivation.md`.
+`reviews/bracket-leak/fix.diff` (net +85 / −132, 5 files). Derivation: `reviews/bracket-leak/derivation.md`.
 
 Order is dependency-first: the kernel change and its tests, then the aeron consumer and its test.
 
@@ -33,11 +33,19 @@ Order is dependency-first: the kernel change and its tests, then the aeron consu
     *"The contract for the generic bracket: interrupted-before-finish owns nothing; the inner region still runs
     its finalizer."*
 
-## 3. `kyo-core/.../ScopeInterruptTest.scala` — the Sync.ensure acquire owns nothing
+## 3. `kyo-core/.../ScopeInterruptTest.scala` — the Sync.ensure acquire releases only what the bracket took
 
-3a. Rename the case to "…owns nothing" and assert `rel == 0` (was `rel == acq`), with the reverted comment.
-    *"`Sync.ensure`'s own `Abort.get` transform is inside the acquire, so an interrupt there stops the acquire
-    before it finishes; the outer bracket owns nothing."*
+3a. Add `import kyo.internal.Platform` at the top of the file.
+    *"The case's expected release count is platform-dependent, so it needs the platform flag the rest of the
+    suite already uses."*
+
+3b. Rename the case to "…runs that finalizer, and the bracket releases only what it took", assert
+    `rel == (if Platform.isJVM then 0 else acq)` (was `rel == acq`), and rewrite the comment.
+    *"`Sync.ensure`'s own transform is inside the acquire, so an interrupt there stops it mid-step. At the base
+    tip the recovery over-released on the JVM too, so `rel == acq` held everywhere; removing it exposes the real
+    behavior. Under JVM preemption the stop lands before the value reaches the bracket, which owns nothing
+    (`rel == 0`); on JS and Native the acquire reaches the bracket, which releases what it took (`rel == acq`).
+    Either way no release runs for an acquire the bracket did not take."*
 
 ## 4. `kyo-aeron/.../Topic.scala` — own the produced resource at the Done poll
 

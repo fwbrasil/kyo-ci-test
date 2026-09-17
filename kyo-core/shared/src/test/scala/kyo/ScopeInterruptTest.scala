@@ -1,6 +1,7 @@
 package kyo
 
 import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
+import kyo.internal.Platform
 import kyo.kernel.Bracket
 
 /** Interrupts landing inside an acquire, and scope exit over a child still holding a resource.
@@ -67,10 +68,14 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // The acquire runs under a Sync.ensure of its own and is interrupted as its inner value arrives, before the
-        // acquire finishes: the value has not reached the outer bracket, so the bracket acquired nothing and owns
-        // nothing (rel == 0). The inner Sync.ensure, a region from the start, still runs its own finalizer (fin == acq).
-        "an acquire stopped under its own Sync.ensure runs that finalizer and owns nothing" in {
+        // The acquire runs under a Sync.ensure of its own and interrupts itself as its inner value arrives. The
+        // bracket owns only what it takes, and where the interrupt is honored decides whether it takes it. Under JVM
+        // preemption the stop lands before the value reaches the bracket, so it acquires nothing and releases
+        // nothing (rel == 0); on JS and Native, with no mid-step preemption, the acquire reaches the bracket, which
+        // takes it and releases it even though the interrupt cancels the use before it runs (rel == acq). Either way
+        // the inner Sync.ensure, a region from the start, runs its own finalizer (fin == acq), and no release ever
+        // runs for an acquire the bracket did not take.
+        "an acquire under its own Sync.ensure runs that finalizer, and the bracket releases only what it took" in {
             val rounds = 200
             for
                 acquired <- AtomicInt.init(0)
@@ -94,7 +99,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                 rel <- released.get
                 fin <- ended.get
             yield assert(
-                acq == fin && rel == 0 && acq > 0,
+                acq == fin && rel == (if Platform.isJVM then 0 else acq) && acq > 0,
                 s"$acq acquires ran to their end, $fin of their own regions released and $rel bracket releases ran"
             )
             end for
