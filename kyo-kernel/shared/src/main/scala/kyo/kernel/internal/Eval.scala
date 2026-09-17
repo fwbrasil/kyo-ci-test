@@ -679,10 +679,10 @@ import scala.annotation.tailrec
                 case p: Pending[?, ?] =>
                     p match
                         // A deferral is walked, not run. When its value is still a computation the walk descends into it;
-                        // when its value is settled the body under the deferral is not reached, since running it here would
-                        // be the caller's code, which after an interrupt would acquire what nothing then releases, and an
-                        // operation under a deferral that never ran is not waited on yet. Only an `Ensure` already waiting
-                        // on this settled value runs.
+                        // when its value is settled the body under the deferral is not reached: running it here would be
+                        // the caller's code, which after an interrupt would acquire what nothing then releases, and an
+                        // operation under a deferral that never ran is not waited on yet. A settled value owns no region,
+                        // so the walk stops there.
                         case kyo: Pending.Defer[a, b, c, s] @unchecked =>
                             // Erasure-forced: the types joining a chain's links are existential from out here.
                             val after = kyo.contB.chain(cont).asInstanceOf[Arrow[Any, Any, Any]]
@@ -729,18 +729,10 @@ import scala.annotation.tailrec
                         case _: Pending.Suspend[?, ?, ?, ?] => ()
                         case _: Pending.Snapshot[?, ?]      => ()
                 case _ => ()
-        // The tagged walk (a fiber abandonment) runs on the just-interrupted fiber's stopped Safepoint. Applying a
-        // region's `Ensure` here rebuilds the region and hands it the settled value, and reaching the value across
-        // a stopped Safepoint needs a live state, so the walk takes its own and restores the caller's after. Without
-        // it the abandoned regions are not reached and their releases are lost (#1735, and #1928's drain never ends).
-        // The untagged walk (releasing a refused cont) runs where nothing is stopped, so it uses the caller's state.
-        if effectTag.isDefined then
-            val slot  = Safepoint.get()
-            val saved = Safepoint.save(slot)
-            try collect(v, Arrow.id)
-            finally Safepoint.restore(slot, saved)
-        else collect(v, Arrow.id)
-        end if
+        // The walk runs none of the computation: it reads each node's regions and releases into `collected`, and for
+        // the tagged form hands `f` the input of a suspended operation. Nothing here polls or steps a deferral, so it
+        // needs no Safepoint of its own, even on the stopped Safepoint of a just-interrupted fiber.
+        collect(v, Arrow.id)
         collected.run(Maybe(ex))(t => if t ne ex then ex.addSuppressed(t))
     end release
 

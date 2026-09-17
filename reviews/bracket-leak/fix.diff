@@ -1,0 +1,339 @@
+diff --git a/kyo-aeron/shared/src/main/scala/kyo/Topic.scala b/kyo-aeron/shared/src/main/scala/kyo/Topic.scala
+index 5a2e6097c8..eeaab43496 100644
+--- a/kyo-aeron/shared/src/main/scala/kyo/Topic.scala
++++ b/kyo-aeron/shared/src/main/scala/kyo/Topic.scala
+@@ -250,7 +250,10 @@ object Topic:
+         ): Unit < (Topic & S & Abort[TopicBackpressureException | TopicPublishException | TopicTransportException] & Async) =
+             Env.use[AeronTransport] { transport =>
+                 val resolvedStreamId = streamId.getOrElse(tag.hash.abs)
+-                addPublicationDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).map {
++                // `ensureMap`, not `map`: the add completes by producing the publication, and its closer must be
++                // registered in that same step. `map` polls first, so an interrupt taken as the publication arrives
++                // parks before the `Sync.ensure` installs, leaving the publication open with nothing to close it.
++                addPublicationDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).ensureMap {
+                     case Absent =>
+                         Abort.fail(TopicPublicationClosedException(aeronUri, resolvedStreamId))
+                     case Present(publication) =>
+@@ -333,7 +336,10 @@ object Topic:
+         Stream {
+             Env.use[AeronTransport] { transport =>
+                 val resolvedStreamId = streamId.getOrElse(tag.hash.abs)
+-                addSubscriptionDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).map {
++                // `ensureMap`, not `map`: the add completes by producing the subscription, and its closer must be
++                // registered in that same step. `map` polls first, so an interrupt taken as the subscription arrives
++                // parks before the `Sync.ensure` installs, leaving the subscription open with nothing to close it.
++                addSubscriptionDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).ensureMap {
+                     case Absent =>
+                         // Closed client: reported as backpressure so the retry schedule absorbs it. A driver
+                         // rejection already aborted terminally inside addSubscriptionDeadline.
+@@ -413,17 +419,31 @@ object Topic:
+                         // Token free-ownership: on Done, pollAddPublication's _get frees the token; on
+                         // Failed the C layer does not, so each Failed arm frees it and clears tokOwned
+                         // to keep the finalizer from double-freeing. The var is confined to one fiber.
+-                        var tokOwned = true
+-                        Sync.ensure(Sync.Unsafe.defer(if tokOwned then transport.freeAsyncPub(tok) else ())) {
++                        var tokOwned           = true
++                        var opened: Maybe[Pub] = Absent
++                        // Before Done the guard owns the token (frees it on any exit that did not hand it to the
++                        // driver); on Done the driver takes the token and returns the publication, which the guard
++                        // then owns until the use's own finalizer takes over. A clean end is that hand-off, so the
++                        // guard closes nothing; an abnormal end after Done (the publication produced but the hand-off
++                        // not reached, as an interrupt taken in the Done step is) closes it here rather than leaking it.
++                        Sync.ensure { outcome =>
++                            Sync.Unsafe.defer {
++                                if tokOwned then transport.freeAsyncPub(tok)
++                                else if outcome.isDefined then opened.foreach(transport.closePublication)
++                            }
++                        } {
+                             Loop.foreach[Maybe[Pub], Async & Abort[TopicTransportException]] {
+                                 Sync.Unsafe.defer {
+                                     val poll = transport.pollAddPublication(tok)
+-                                    // The transport's `_get` takes the token on a Done poll, so ownership is cleared in
+-                                    // the same step as the poll: an interrupt landing between the poll and the clear
+-                                    // would otherwise let the finalizer free a token the transport already took.
++                                    // The transport's `_get` takes the token on a Done poll, so ownership passes to the
++                                    // publication in the same step as the poll: an interrupt landing between the poll
++                                    // and the clear would otherwise let the finalizer free a token the driver already took.
+                                     poll match
+-                                        case _: AeronTransport.AddPoll.Done[?] => tokOwned = false
+-                                        case _                                 => ()
++                                        case AeronTransport.AddPoll.Done(publication) =>
++                                            tokOwned = false
++                                            opened = Present(publication)
++                                        case _ => ()
++                                    end match
+                                     poll
+                                 }.map {
+                                     poll =>
+@@ -498,17 +518,30 @@ object Topic:
+                     case Absent =>
+                         (Absent: Maybe[Sub])
+                     case Present(tok) =>
+-                        var tokOwned = true
+-                        Sync.ensure(Sync.Unsafe.defer(if tokOwned then transport.freeAsyncSub(tok) else ())) {
++                        var tokOwned           = true
++                        var opened: Maybe[Sub] = Absent
++                        // Symmetric to addPublicationDeadline: before Done the guard owns the token; on Done the
++                        // driver takes it and returns the subscription, which the guard owns until the use's own
++                        // finalizer takes over on a clean hand-off. An abnormal end after Done closes the subscription
++                        // here rather than leaking it; a clean end hands off, so the guard closes nothing.
++                        Sync.ensure { outcome =>
++                            Sync.Unsafe.defer {
++                                if tokOwned then transport.freeAsyncSub(tok)
++                                else if outcome.isDefined then opened.foreach(transport.closeSubscription)
++                            }
++                        } {
+                             Loop.foreach[Maybe[Sub], Async & Abort[TopicTransportException]] {
+                                 Sync.Unsafe.defer {
+                                     val poll = transport.pollAddSubscription(tok)
+-                                    // The transport's `_get` takes the token on a Done poll, so ownership is cleared in
+-                                    // the same step as the poll: an interrupt landing between the poll and the clear
+-                                    // would otherwise let the finalizer free a token the transport already took.
++                                    // The transport's `_get` takes the token on a Done poll, so ownership passes to the
++                                    // subscription in the same step as the poll: an interrupt landing between the poll
++                                    // and the clear would otherwise let the finalizer free a token the driver already took.
+                                     poll match
+-                                        case _: AeronTransport.AddPoll.Done[?] => tokOwned = false
+-                                        case _                                 => ()
++                                        case AeronTransport.AddPoll.Done(subscription) =>
++                                            tokOwned = false
++                                            opened = Present(subscription)
++                                        case _ => ()
++                                    end match
+                                     poll
+                                 }.map {
+                                     poll =>
+diff --git a/kyo-aeron/shared/src/test/scala/kyo/AeronTransportTest.scala b/kyo-aeron/shared/src/test/scala/kyo/AeronTransportTest.scala
+index 95e1711a4c..66224dcc38 100644
+--- a/kyo-aeron/shared/src/test/scala/kyo/AeronTransportTest.scala
++++ b/kyo-aeron/shared/src/test/scala/kyo/AeronTransportTest.scala
+@@ -1385,11 +1385,10 @@ class AeronTransportTest extends Test:
+         }
+     }
+ 
+-    // The add is the bracket's acquire in Topic.publish, and the Done poll is the acquire's last step, so the
+-    // publication it produced is owned as that step ends and the interrupt taken in it closes the publication on
+-    // abandonment. A bind between the add and its finalizer is where the interrupt would park instead, with the
+-    // publication in front of it and nothing owning it: an abandonment runs nothing of a remainder, so the
+-    // publication would never be closed.
++    // The add completes by producing the publication, and Topic.publish registers its closer with `ensureMap` in
++    // that same step, so an interrupt taken as the publication arrives finds the closer installed and closes the
++    // publication on abandonment. A plain `map` would make the registration a step of its own, with the interrupt
++    // parking in front of it and the publication left open.
+     "an interrupt on a completed add closes the publication the add produced" in {
+         val transport = new InterruptOnDoneTransport
+         Latch.initWith(1) { gate =>
+@@ -1427,7 +1426,7 @@ class AeronTransportTest extends Test:
+         }
+     }
+ 
+-    // The same window on Topic.stream's subscription add.
++    // The same window on Topic.stream's subscription add, closed the same way by `ensureMap`.
+     "an interrupt on a completed add closes the subscription the add produced" in {
+         val transport = new InterruptOnDoneTransport
+         Latch.initWith(1) { gate =>
+diff --git a/kyo-core/shared/src/test/scala/kyo/ScopeInterruptTest.scala b/kyo-core/shared/src/test/scala/kyo/ScopeInterruptTest.scala
+index 92501c37ba..22a075bfcd 100644
+--- a/kyo-core/shared/src/test/scala/kyo/ScopeInterruptTest.scala
++++ b/kyo-core/shared/src/test/scala/kyo/ScopeInterruptTest.scala
+@@ -67,10 +67,10 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
+             end for
+         }
+ 
+-        // The acquire runs under a Sync.ensure of its own, interrupted as its value arrives. That value parks in front of the
+-        // outer bracket's un-applied release, which abandonment recovers, so the bracket releases every acquired value (rel == acq)
+-        // alongside each ensure's own finalizer (fin == acq), on every platform.
+-        "an acquire stopped under its own Sync.ensure runs that finalizer and the bracket releases each value" in {
++        // The acquire runs under a Sync.ensure of its own and is interrupted as its inner value arrives, before the
++        // acquire finishes: the value has not reached the outer bracket, so the bracket acquired nothing and owns
++        // nothing (rel == 0). The inner Sync.ensure, a region from the start, still runs its own finalizer (fin == acq).
++        "an acquire stopped under its own Sync.ensure runs that finalizer and owns nothing" in {
+             val rounds = 200
+             for
+                 acquired <- AtomicInt.init(0)
+@@ -94,7 +94,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
+                 rel <- released.get
+                 fin <- ended.get
+             yield assert(
+-                acq == fin && rel == acq && acq > 0,
++                acq == fin && rel == 0 && acq > 0,
+                 s"$acq acquires ran to their end, $fin of their own regions released and $rel bracket releases ran"
+             )
+             end for
+diff --git a/kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Eval.scala b/kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Eval.scala
+index 17526681fe..e844cf678d 100644
+--- a/kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Eval.scala
++++ b/kyo-kernel/shared/src/main/scala/kyo/kernel/internal/Eval.scala
+@@ -674,66 +674,22 @@ import scala.annotation.tailrec
+             val h = hc.asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]]
+             collected = collected.add(failure => h.release(state, failure))
+ 
+-        // An `Arrow.Ensure` waiting on an already-settled value is a release nobody will run, so the cont is carried
+-        // down and offered the value when one is reached. Only an `Ensure` may run here. A chain's head is its left
+-        // arrow (a chain when built onto another), so walking `head` down finds the step that would have received it.
+-        @tailrec def leftmost(cont: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+-            val h = cont.head
+-            // Erasure-forced: the type joining a chain's links is existential from out here.
+-            if h eq cont then cont else leftmost(h.asInstanceOf[Arrow[Any, Any, Any]])
+-        end leftmost
+-
+-        // Applying the `Ensure` is not always the whole debt. One that registers its release elsewhere, as
+-        // `Scope.acquireRelease` does, is done once applied; one that installs a region to own it, as
+-        // `Bracket` does, has only just created what owes it. So the result is walked too, at no budget.
+-        def ensuring(v: Any, cont: Arrow[Any, Any, Any]): Unit =
+-            leftmost(cont) match
+-                case step: Arrow.Ensure[Any, Any, Any] @unchecked => collect(step(v), Arrow.id)
+-                case _                                            => ()
+-
+-        // The resource a parked remainder settled to, walking its deferrals without running them; Absent while it still holds a computation.
+-        @tailrec def settledResource(v: Any): Maybe[Any] =
+-            v match
+-                case d: Pending.Defer[?, ?, ?, ?] @unchecked => settledResource(d.value)
+-                case _: Pending[?, ?]                        => Maybe.empty
+-                case s                                       => Present(s)
+-
+-        // The first arrow the value meets, skipping value-preserving `Id`s; Absent when the continuation is all `Id`.
+-        def firstStep(cont: Arrow[Any, Any, Any]): Maybe[Arrow[Any, Any, Any]] =
+-            cont match
+-                case c: Arrow.Chain[Any, Any, Any, Any] @unchecked =>
+-                    firstStep(c.a.asInstanceOf[Arrow[Any, Any, Any]]) match
+-                        case p @ Present(_) => p
+-                        case Absent         => firstStep(c.b.asInstanceOf[Arrow[Any, Any, Any]])
+-                case _: Arrow.Id[?] => Absent
+-                case other          => Present(other)
+-
+-        // A bracket whose acquire settles under an inner region leaves its `Ensure` un-applied in an entry's continuation, missed by both
+-        // `entries.releases` and the leftmost walk above. Only the step the value flows into directly may take `resource`: the bracket's own
+-        // `Ensure`, reached through value-preserving `Id`s. A real transform before it would change the value the `Ensure` receives, which the
+-        // walk cannot reconstruct, so it stops there rather than hand over a wrong resource. Applying the `Ensure` installs the region the
+-        // abandonment then releases; it is never run.
+-        def ensuringInCont(cont: Arrow[Any, Any, Any], resource: Any): Unit =
+-            firstStep(cont) match
+-                case Present(step: Arrow.Ensure[Any, Any, Any] @unchecked) => collect(step(resource), Arrow.id)
+-                case _                                                     => ()
+-
+         @tailrec def collect(v: Any, cont: Arrow[Any, Any, Any]): Unit =
+             v match
+                 case p: Pending[?, ?] =>
+                     p match
+                         // A deferral is walked, not run. When its value is still a computation the walk descends into it;
+-                        // when its value is settled the body under the deferral is not reached, since running it here would
+-                        // be the caller's code, which after an interrupt would acquire what nothing then releases, and an
+-                        // operation under a deferral that never ran is not waited on yet. Only an `Ensure` already waiting
+-                        // on this settled value runs.
++                        // when its value is settled the body under the deferral is not reached: running it here would be
++                        // the caller's code, which after an interrupt would acquire what nothing then releases, and an
++                        // operation under a deferral that never ran is not waited on yet. A settled value owns no region,
++                        // so the walk stops there.
+                         case kyo: Pending.Defer[a, b, c, s] @unchecked =>
+                             // Erasure-forced: the types joining a chain's links are existential from out here.
+                             val after = kyo.contB.chain(cont).asInstanceOf[Arrow[Any, Any, Any]]
+                             val below = kyo.contA.chain(after).asInstanceOf[Arrow[Any, Any, Any]]
+                             kyo.value match
+                                 case _: Pending[?, ?] => collect(kyo.value, below)
+-                                case _                => ensuring(kyo.value, below)
++                                case _                => ()
+                             end match
+                         case kyo: Pending.HandleContext[VX, CX, ?, ?] @unchecked =>
+                             val hc = kyo.handler
+@@ -766,35 +722,17 @@ import scala.annotation.tailrec
+                                 if i < entryOwed.size then collectOwed(entryOwed(i))
+                                 i += 1
+                             end while
+-                            // install a bracket `Ensure` left un-applied in an entry's continuation, so its release is collected
+-                            settledResource(kyo.value) match
+-                                case Present(resource) =>
+-                                    var k = 0
+-                                    while k < entries.regions do
+-                                        ensuringInCont(entries.continuation(k).asInstanceOf[Arrow[Any, Any, Any]], resource)
+-                                        k += 1
+-                                    end while
+-                                case Absent => ()
+-                            end match
+                             collectOwed(kyo.owedRemainders)
+                             collect(kyo.value, cont)
+                         case kyo: Pending.SuspendArrow[?, ?, ?, ?, ?, ?] @unchecked =>
+                             effectTag.foreach(t => if t <:< kyo.tag.erased then f(kyo.input))
+                         case _: Pending.Suspend[?, ?, ?, ?] => ()
+                         case _: Pending.Snapshot[?, ?]      => ()
+-                case settled => ensuring(settled, cont)
+-        // The tagged walk (a fiber abandonment) runs on the just-interrupted fiber's stopped Safepoint. Applying a
+-        // region's `Ensure` here rebuilds the region and hands it the settled value, and reaching the value across
+-        // a stopped Safepoint needs a live state, so the walk takes its own and restores the caller's after. Without
+-        // it the abandoned regions are not reached and their releases are lost (#1735, and #1928's drain never ends).
+-        // The untagged walk (releasing a refused cont) runs where nothing is stopped, so it uses the caller's state.
+-        if effectTag.isDefined then
+-            val slot  = Safepoint.get()
+-            val saved = Safepoint.save(slot)
+-            try collect(v, Arrow.id)
+-            finally Safepoint.restore(slot, saved)
+-        else collect(v, Arrow.id)
+-        end if
++                case _ => ()
++        // The walk runs none of the computation: it reads each node's regions and releases into `collected`, and for
++        // the tagged form hands `f` the input of a suspended operation. Nothing here polls or steps a deferral, so it
++        // needs no Safepoint of its own, even on the stopped Safepoint of a just-interrupted fiber.
++        collect(v, Arrow.id)
+         collected.run(Maybe(ex))(t => if t ne ex then ex.addSuppressed(t))
+     end release
+ 
+diff --git a/kyo-kernel/shared/src/test/scala/kyo/kernel/BracketTest.scala b/kyo-kernel/shared/src/test/scala/kyo/kernel/BracketTest.scala
+index 0544468056..48ff40f99c 100644
+--- a/kyo-kernel/shared/src/test/scala/kyo/kernel/BracketTest.scala
++++ b/kyo-kernel/shared/src/test/scala/kyo/kernel/BracketTest.scala
+@@ -91,44 +91,22 @@ class BracketTest extends AnyFreeSpec:
+             assert(seen.exists(_.exists(_ eq Boom)))
+         }
+ 
+-        // A polling `map` between the acquire's settled value and the outer bracket parks the interrupt in the gap, leaving the bracket's
+-        // `Ensure` un-applied in the inner region's continuation. Abandonment applies it with the settled resource (42), not a dummy.
+-        "abandonment releases a bracket stranded by a polling map after the acquire settled" in {
+-            var released     = 0
+-            var ended        = 0
+-            var seenResource = Maybe.empty[Any]
++        // A bracket owes a release only once its acquire has finished, so that the release is owed the value the
++        // acquire returned. An interrupt inside the acquire, before that value reaches the bracket, parks with the
++        // acquire's own inner region still owing its release but the outer bracket having acquired nothing: the outer
++        // release does not run. Here a polling `map` under the acquire's `ensuring` holds the interrupt in that gap.
++        "a bracket whose acquire is interrupted before it finishes owns nothing" in {
++            var released = 0
++            var ended    = 0
+             val v =
+                 Bracket(
+                     Bracket.ensuring(_ => discard(ended += 1)) {
+                         Effect.defer { requestStop(); 42 }.map(x => x)
+                     }
+-                )(a => Effect.defer(a)) { (a, _) =>
+-                    seenResource = Maybe(a)
+-                    released += 1
+-                }
+-            val parked = Eval.partial(v)
+-            assert(parked.isInstanceOf[Pending.Park[?, ?]])
+-            Eval.release(parked, Boom)
+-            assert(released == 1 && ended == 1, s"released=$released ended=$ended (0 released = the leak)")
+-            assert(seenResource.exists(_.toString == "42"), s"release ran with the wrong resource: $seenResource")
+-        }
+-
+-        // Soundness boundary: a value-changing `map` sits between the stranded `Ensure` and the value the remainder parked with, so the
+-        // `Ensure` would receive the transformed value ("wrapped-42"), which the walk cannot reconstruct without running the transform.
+-        // It declines (the bracket leaks) rather than release with the pre-transform value: never a wrong resource. The leak itself is
+-        // the crossing family's gap, closed by installing the region as the value arrives.
+-        "abandonment declines a stranded release rather than hand it a pre-transform resource" in {
+-            var seen = Maybe.empty[Any]
+-            val v =
+-                Bracket(
+-                    Bracket.ensuring(_ => ()) {
+-                        Effect.defer { requestStop(); 42 }.map(x => x)
+-                    }.map(r => s"wrapped-$r")
+-                )(a => Effect.defer(a))((a, _) => seen = Maybe(a))
+-            val parked = Eval.partial(v)
+-            assert(parked.isInstanceOf[Pending.Park[?, ?]])
+-            Eval.release(parked, Boom)
+-            assert(!seen.exists(_.toString == "42"), s"release got the pre-transform resource: $seen")
++                )(a => Effect.defer(a))((a, _) => discard(released += 1))
++            Eval.release(Eval.partial(v), Boom)
++            assert(released == 0, s"the acquire never finished, so the outer bracket owns nothing, but released=$released")
++            assert(ended == 1, s"the acquire's own region, installed from the start, releases: ended=$ended")
+         }
+ 
+         "a resumed parked bracket completes and releases with Absent" in {
