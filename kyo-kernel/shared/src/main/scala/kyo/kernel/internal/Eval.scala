@@ -729,10 +729,18 @@ import scala.annotation.tailrec
                         case _: Pending.Suspend[?, ?, ?, ?] => ()
                         case _: Pending.Snapshot[?, ?]      => ()
                 case _ => ()
-        // The walk runs none of the computation: it reads each node's regions and releases into `collected`, and for
-        // the tagged form hands `f` the input of a suspended operation. Nothing here polls or steps a deferral, so it
-        // needs no Safepoint of its own, even on the stopped Safepoint of a just-interrupted fiber.
-        collect(v, Arrow.id)
+        // The tagged walk (a fiber abandonment) runs on the just-interrupted fiber's stopped Safepoint. Reaching the
+        // abandoned regions across a stopped Safepoint needs a live state, so the walk takes its own and restores the
+        // caller's after; without it the abandoned regions are not reached and their releases are lost (#1735, and
+        // #1928's drain never ends). The untagged walk (releasing a refused cont) runs where nothing is stopped, so
+        // it uses the caller's state.
+        if effectTag.isDefined then
+            val slot  = Safepoint.get()
+            val saved = Safepoint.save(slot)
+            try collect(v, Arrow.id)
+            finally Safepoint.restore(slot, saved)
+        else collect(v, Arrow.id)
+        end if
         collected.run(Maybe(ex))(t => if t ne ex then ex.addSuppressed(t))
     end release
 
