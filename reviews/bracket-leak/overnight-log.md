@@ -158,3 +158,22 @@ a live state on a stopped Safepoint or #1735/#1928 break). Byte-identical to `6d
 passes #1928. JVM green (BracketTest, ScopeTest, ScopeInterruptTest). JS+Native CI validation: run 35188597180
 (linux-x64 + linux-arm64). Review package updated: the fix now KEEPS the save/restore; only the recovery is removed
 (commit `6a9c0def3e`). Full arc in `1928-regression.md`.
+
+## CI validation of the fix (run 35188597180, JS+Native x64+arm64)
+
+**#1928 PASSES on all four targets** — the save/restore fix is fully validated:
+- x64 JS 97ms, arm64 JS 146ms, x64 Native 18ms, arm64 Native 17ms. ScopeTest 73/0 everywhere.
+
+**ScopeInterruptTest leaf 2 surfaced a second, separate test-only mistake** (not the fix, the assertion): the
+stopped-under-`Sync.ensure` acquire's outer-bracket release count is a race, not a per-platform constant:
+- JVM: `rel` near 0 · x64 JS: `rel == acq (200)` · arm64 JS: `rel == 199` · x64/arm64 Native: `rel == 0`.
+So Native preempts finely like the JVM (`rel == 0`), NOT like JS. Both my `rel == 0` and the follow-up
+`rel == (if Platform.isJVM then 0 else acq)` were the same error: a fixed value for a racy, platform-skewed
+outcome. Fixed to the race-robust invariant `fin == acq && rel <= acq && acq > 0` (commit c8181edc2c); the
+deterministic owns-nothing is guarded in the kernel BracketTest. Re-validation: run 35197655701.
+
+**Pre-existing, unrelated (routed to you)**: the JS jobs also carry a flaky `kyo-dataJS / Test / executeTests`
+JS-env crash (`RunTerminatedException` / `NonZeroExitException: exited with code 1`), which also failed the base
+run 34987201283 the same way. kyo-data is a foundation module untouched by the bracket-leak fix; this is a
+pre-existing flaky JS-env crash to triage separately, not part of this change. It keeps the JS job conclusions at
+"failure" even though the bracket-leak target tests pass, so read the per-test results, not the job conclusion.
