@@ -1450,7 +1450,11 @@ class ScopeTest extends kyo.test.Test[Any]:
         // racers get an item is exactly what the race decides. The counts are awaited before the drain: draining
         // as soon as `race` returns reads the channel while the losers are still unwinding.
         "every racer that took an item from the channel puts it back" in {
-            Scope.run {
+            // The loss this pins (a put delivered into a parked taker's promise as the taker's interrupt lands, then the taker abandoned
+            // without consuming it) is a scheduling race, so one round loses an item only some of the time. Repeated until a
+            // regression is a reliable failure.
+            val rounds = 25
+            val round = Scope.run {
                 for
                     chan     <- Channel.init[String](16, Access.MultiProducerMultiConsumer)
                     taken    <- AtomicInt.init(0)
@@ -1481,6 +1485,7 @@ class ScopeTest extends kyo.test.Test[Any]:
                     assert(drained.toSet == Set("1", "2", "3", "4"), s"items lost: $drained")
                 end for
             }
+            Loop.repeat(rounds)(round).andThen(succeed)
         }
     }
 end ScopeTest
