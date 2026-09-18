@@ -1466,14 +1466,16 @@ class ScopeTest extends kyo.test.Test[Any]:
                     // hold trivially at nothing taken and nothing returned.
                     allTaken <- Latch.init(4)
                     _        <- Kyo.foreachDiscard(Seq("1", "2", "3", "4"))(chan.put)
+                    // The acquire is the bare take, as the reporter's program has it: `acquireRelease` registers the release in
+                    // the step the value arrives in, and a step composed after the take inside the acquire would be a point where
+                    // an interrupt lands with the item taken and nothing registered to put it back. The counting follows the
+                    // registration, so an interrupt landing before it leaves a registered release and an uncounted take.
                     racers <- Kyo.foreach(1 to 8) { _ =>
                         Fiber.initUnscoped {
                             Scope.run {
-                                Scope.acquireRelease(
-                                    chan.take.map(v => taken.incrementAndGet.andThen(allTaken.release).andThen(v))
-                                ) { v =>
+                                Scope.acquireRelease(chan.take) { v =>
                                     chan.put(v).andThen(returned.incrementAndGet.unit)
-                                }.andThen(Async.never)
+                                }.andThen(taken.incrementAndGet).andThen(allTaken.release).andThen(Async.never)
                             }
                         }
                     }
@@ -1481,14 +1483,14 @@ class ScopeTest extends kyo.test.Test[Any]:
                     _ <- Kyo.foreachDiscard(racers)(_.interrupt.unit)
                     _ <- Kyo.foreachDiscard(racers)(_.getResult.unit)
                     // every racer has finished, so nothing takes any more; a release with an effectful put may still be
-                    // landing, so the returns are polled up to the takes
-                    _       <- assertEventually(Kyo.zip(taken.get, returned.get).map((t, r) => t == r))
+                    // landing, so the returns are polled up to the takes, which count at most what was registered
+                    _       <- assertEventually(Kyo.zip(taken.get, returned.get).map((t, r) => t <= r))
                     t       <- taken.get
                     r       <- returned.get
                     size    <- chan.size
                     drained <- chan.drain
                 yield
-                    assert(t == r, s"racers took $t items and $r came back")
+                    assert(t <= r && r >= 4, s"racers counted $t takes and $r releases came back")
                     assert(size == 4 && drained.toSet == Set("1", "2", "3", "4"), s"items lost: $drained")
                 end for
             }
