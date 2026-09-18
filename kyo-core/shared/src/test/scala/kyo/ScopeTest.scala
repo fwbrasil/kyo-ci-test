@@ -1447,42 +1447,49 @@ class ScopeTest extends kyo.test.Test[Any]:
 
         // Whatever a racer took, its release puts back. More racers than items on purpose, so some are interrupted
         // while parked on `take` and the rest after taking. Counted rather than latched per racer, because which
-        // racers get an item is exactly what the race decides. The counts are awaited before the drain: draining
-        // as soon as `race` returns reads the channel while the losers are still unwinding.
+        // racers get an item is exactly what the interleaving decides, and the counts are compared to each other
+        // rather than to four: between the latch opening and a racer's interrupt landing, a racer still parked can
+        // take an item a release has just put back. The racers are awaited to their results, which arrive once
+        // their finalizers ran, so nothing is still unwinding when the channel is read.
         "every racer that took an item from the channel puts it back" in {
-            // The loss this pins (a put delivered into a parked taker's promise as the taker's interrupt lands, then the taker abandoned
-            // without consuming it) is a scheduling race, so one round loses an item only some of the time. Repeated until a
-            // regression is a reliable failure.
+            // The loss this pins (a put delivered into a parked racer's promise as the racer's interrupt lands, then the racer
+            // abandoned without consuming it) is a scheduling race, so one round loses an item only some of the time. Repeated
+            // until a regression is a reliable failure.
             val rounds = 25
             val round = Scope.run {
                 for
                     chan     <- Channel.init[String](16, Access.MultiProducerMultiConsumer)
                     taken    <- AtomicInt.init(0)
                     returned <- AtomicInt.init(0)
-                    // Opened by the fourth taker, so the race can only be won once every item is held by a
-                    // taker: four losers-holding-an-item is then the scenario every run exercises. Without it
-                    // the counts hold trivially at nothing taken and nothing returned.
+                    // Opened by the fourth take, so the racers are interrupted only once every item is held by one:
+                    // four racers holding an item is then the scenario every round exercises. Without it the counts
+                    // hold trivially at nothing taken and nothing returned.
                     allTaken <- Latch.init(4)
-                    takers = Seq.fill(8) {
-                        Scope.run {
-                            Scope.acquireRelease(
-                                chan.take.map(v => taken.incrementAndGet.andThen(allTaken.release).andThen(v))
-                            ) { v =>
-                                chan.put(v).andThen(returned.incrementAndGet.unit)
-                            }.andThen(Async.never)
+                    _        <- Kyo.foreachDiscard(Seq("1", "2", "3", "4"))(chan.put)
+                    racers <- Kyo.foreach(1 to 8) { _ =>
+                        Fiber.initUnscoped {
+                            Scope.run {
+                                Scope.acquireRelease(
+                                    chan.take.map(v => taken.incrementAndGet.andThen(allTaken.release).andThen(v))
+                                ) { v =>
+                                    chan.put(v).andThen(returned.incrementAndGet.unit)
+                                }.andThen(Async.never)
+                            }
                         }
                     }
-                    _ <- Kyo.foreachDiscard(Seq("1", "2", "3", "4"))(chan.put)
-                    _ <- Async.race(allTaken.await +: takers)
-                    // the losers unwind on their own fibers, so the returns land after race returns
-                    _       <- assertEventually(returned.get.map(_ == 4))
-                    drained <- chan.drain
+                    _ <- allTaken.await
+                    _ <- Kyo.foreachDiscard(racers)(_.interrupt.unit)
+                    _ <- Kyo.foreachDiscard(racers)(_.getResult.unit)
+                    // every racer has finished, so nothing takes any more; a release with an effectful put may still be
+                    // landing, so the returns are polled up to the takes
+                    _       <- assertEventually(Kyo.zip(taken.get, returned.get).map((t, r) => t == r))
                     t       <- taken.get
                     r       <- returned.get
+                    size    <- chan.size
+                    drained <- chan.drain
                 yield
-                    assert(t == 4, s"the four items were not all taken before the race ended: took $t")
-                    assert(r == 4, s"racers took $t items and only $r came back")
-                    assert(drained.toSet == Set("1", "2", "3", "4"), s"items lost: $drained")
+                    assert(t == r, s"racers took $t items and $r came back")
+                    assert(size == 4 && drained.toSet == Set("1", "2", "3", "4"), s"items lost: $drained")
                 end for
             }
             Loop.repeat(rounds)(round).andThen(succeed)
