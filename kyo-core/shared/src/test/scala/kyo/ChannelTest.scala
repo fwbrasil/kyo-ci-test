@@ -186,7 +186,9 @@ class ChannelTest extends kyo.test.Test[Any]:
                             else
                                 Latch.init(1).map { gate =>
                                     val takers: Seq[Unit < (Async & Abort[Closed])] =
-                                        Seq.fill(8)(c.takeWith { v => discard(received.add(v)); v }.andThen(gate.release).andThen(Async.never))
+                                        Seq.fill(8)(c.takeWith { v =>
+                                            discard(received.add(v)); v
+                                        }.andThen(gate.release).andThen(Async.never))
                                     Async.race(gate.await +: takers).andThen(Loop.continue)
                                 }
                         }
@@ -204,6 +206,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                 yield
                     val found = (received.asScala.toSeq ++ drained).sorted
                     assert(found == (1 to items), s"lost: ${(1 to items).diff(found)}, extra: ${found.diff(1 to items)}")
+                end for
             }
         }
     }
