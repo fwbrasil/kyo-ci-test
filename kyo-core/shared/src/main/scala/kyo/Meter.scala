@@ -240,20 +240,31 @@ object Meter:
       */
     def initRateLimiterUnscoped(rate: Int, period: Duration, reentrant: Boolean = true)(using initFrame: Frame): Meter < Sync =
         Sync.Unsafe.defer {
-            new Base(rate, reentrant):
-                val timerTask =
-                    // Schedule periodic task to replenish permits
-                    Sync.Unsafe.evalOrThrow(Clock.repeatAtInterval(period, period)(replenish()))
-
-                // A consumed permit is not returned on completion; the timer task replenishes it.
-                def settleAcquired(): Unit = ()
-
-                @tailrec def replenish(i: Int = 0): Unit =
-                    if i < rate && release() then
-                        replenish(i + 1)
-
-                def onClose() = discard(timerTask.unsafe.interrupt())
+            val meter = new RateLimiter(rate, reentrant)
+            // The replenish timer is a step of the meter's construction rather than a nested evaluation, so it runs under the
+            // caller's clock: a meter initialized under a controlled or shifted clock replenishes on that clock.
+            Clock.repeatAtInterval(period, period)(meter.replenish()).map { timer =>
+                meter.attach(timer)
+                meter
+            }
         }
+
+    final private class RateLimiter(rate: Int, reentrant: Boolean)(using Frame, AllowUnsafe) extends Base(rate, reentrant):
+        // Assigned once, before the meter is handed out: the timer is started after the meter exists because it replenishes it,
+        // and close needs the timer.
+        private var timer: Maybe[Fiber[Unit, Any]] = Absent
+
+        private[Meter] def attach(fiber: Fiber[Unit, Any]): Unit = timer = Present(fiber)
+
+        // A consumed permit is not returned on completion; the timer replenishes it.
+        def settleAcquired(): Unit = ()
+
+        @tailrec private[Meter] def replenish(i: Int = 0): Unit =
+            if i < rate && release() then
+                replenish(i + 1)
+
+        def onClose() = timer.foreach(fiber => discard(fiber.unsafe.interrupt()))
+    end RateLimiter
 
     /** Combines two Meters into a pipeline.
       *
