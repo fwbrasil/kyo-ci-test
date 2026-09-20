@@ -233,23 +233,26 @@ class JsonRpcHandlerTest extends JsonRpcTest:
     end drainOnClosePending
 
     "callerRegistry drain on close fails pending calls" in {
-        // A call already registered when the endpoint closes must drain as a JsonRpcError (internalError
-        // -32603), never the raw Closed the Exchange surfaces on its clean-stream-end path. Two completions
-        // race on close (the finalizer drain vs the Exchange reader reacting to transport close); the
-        // finalizer must win. The leak only surfaces under scheduler contention, so the scenario runs
-        // concurrently many times rather than once: a single run passes ~99% of the time and flakes in CI.
+        // A call already registered when the endpoint closes must drain as JsonRpcLifecycleError(Close), never the raw
+        // Closed the Exchange surfaces on its clean-stream-end path, and never a JsonRpcTransportError from a send that
+        // lost to writerChannel.close. The type is asserted, not the code: JsonRpcTransportError shares -32603 with the
+        // lifecycle error, so a code check would let the misclassified drain pass. Completions race on close (the
+        // finalizer drain vs the send/stream-end reactions); the drain must win. The leak only surfaces under scheduler
+        // contention, so the scenario runs concurrently many times rather than once.
         val iterations  = 2000
         val concurrency = 64
         Async.foreach(1 to iterations, concurrency)(_ => Scope.run(drainOnClosePending)).map { captured =>
-            val drainedAsError =
-                captured.count { case Present(Result.Failure(e: JsonRpcError)) => e.code == -32603; case _ => false }
-            val leakedClosed = captured.count { case Present(Result.Failure(_: Closed)) => true; case _ => false }
-            val succeeded    = captured.count { case Present(Result.Success(_)) => true; case _ => false }
+            val drainedAsLifecycle =
+                captured.count { case Present(Result.Failure(_: JsonRpcLifecycleError)) => true; case _ => false }
+            val leakedClosed         = captured.count { case Present(Result.Failure(_: Closed)) => true; case _ => false }
+            val leakedTransportError = captured.count { case Present(Result.Failure(_: JsonRpcTransportError)) => true; case _ => false }
+            val succeeded            = captured.count { case Present(Result.Success(_)) => true; case _ => false }
             Sync.defer {
                 assert(
-                    drainedAsError == iterations,
-                    s"drain-on-close over $iterations iterations: drainedAsError=$drainedAsError " +
-                        s"leakedClosed=$leakedClosed succeeded=$succeeded (every call must drain as JsonRpcError -32603)"
+                    drainedAsLifecycle == iterations,
+                    s"drain-on-close over $iterations iterations: drainedAsLifecycle=$drainedAsLifecycle " +
+                        s"leakedClosed=$leakedClosed leakedTransportError=$leakedTransportError succeeded=$succeeded " +
+                        s"(every registered call must drain as JsonRpcLifecycleError(Close))"
                 )
             }
         }
@@ -760,12 +763,16 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             val slow = JsonRpcRoute.request[Unit, Unit]("slow") { (_, _) => gate.get }
             JsonRpcTransport.inMemory.map { (ta, tb) =>
                 JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                    val impl = a.unsafe.asInstanceOf[JsonRpcEndpointImpl]
                     JsonRpcHandler.init(tb, Seq(slow)).map { _ =>
                         Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("slow", ()))).map { _ =>
-                            a.close(Duration.Zero).andThen {
-                                Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("slow", ())).map {
-                                    case Result.Failure(_: Closed) => succeed
-                                    case other                     => fail(s"expected Closed, got $other")
+                            // Establish the stated premise: the first call has registered (is in flight) before the close.
+                            assertEventually(Sync.defer(!impl.callerRegistry.isEmpty)).andThen {
+                                a.close(Duration.Zero).andThen {
+                                    Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("slow", ())).map {
+                                        case Result.Failure(_: Closed) => succeed
+                                        case other                     => fail(s"expected Closed, got $other")
+                                    }
                                 }
                             }
                         }
@@ -1035,6 +1042,50 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         yield (during, after) match
             case (Result.Failure(_: Closed), Result.Failure(_: Closed)) => succeed
             case other => fail(s"expected (Closed, Closed) during and after close, got $other")
+    }
+
+    // An in-flight call registered before the close drains as JsonRpcLifecycleError(Close): the finalizer completes both
+    // its pending promise and its abort signal with that error, so neither race arm can report a transport error a
+    // losing send would have raised. This is the registered-call half of the close contract, asserted by type.
+    "an in-flight call registered before close(0) drains as JsonRpcLifecycleError(Close)".notJs.notWasm in {
+        Fiber.Promise.init[Unit, Any].map { gate =>
+            val slow = JsonRpcRoute.request[Unit, Unit]("slow") { (_, _) => gate.get }
+            JsonRpcTransport.inMemory.map { (ta, tb) =>
+                JsonRpcHandler.init(tb, Seq(slow)).map { _ =>
+                    JsonRpcHandler.initUnscoped(ta, Seq.empty).map { a =>
+                        val impl = a.unsafe.asInstanceOf[JsonRpcEndpointImpl]
+                        Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("slow", ()))).map { first =>
+                            assertEventually(Sync.defer(!impl.callerRegistry.isEmpty)).andThen {
+                                a.close(Duration.Zero).andThen(first.get).map {
+                                    case Result.Failure(e: JsonRpcLifecycleError) =>
+                                        assert(e.stage == JsonRpcLifecycleError.Stage.Close)
+                                    case other => fail(s"expected JsonRpcLifecycleError(Close), got $other")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The receive side of the same rule, reachable only through a custom transport whose incoming aborts Closed (the
+    // shipped transports end cleanly). The Exchange reader takes that Closed as a transport error and completes the
+    // done promise with it unless the receive stream treats it as an orderly end. A call then reads that promise back.
+    "a custom transport whose incoming aborts Closed leaves the handler Closed, not a transport error".notJs.notWasm in {
+        JsonRpcTransport.inMemory.map { (ta, _) =>
+            val custom = new JsonRpcTransport:
+                def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) = ta.send(env)
+                def incoming(using frame: Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]]           =
+                    Stream(Abort.fail[Closed](Closed("custom transport", frame)))
+                def close(using Frame): Unit < Async = ta.close
+            JsonRpcHandler.initUnscoped(custom, Seq.empty).map { a =>
+                Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("probe", ())).map {
+                    case Result.Failure(_: Closed) => succeed
+                    case other                     => fail(s"a call on a Closed-ended transport must fail with Closed, got $other")
+                }
+            }
+        }
     }
 
     // A one-shot hook fired on the spawning thread from inside the next fiber spawn that crosses the SpawnProbe region:
