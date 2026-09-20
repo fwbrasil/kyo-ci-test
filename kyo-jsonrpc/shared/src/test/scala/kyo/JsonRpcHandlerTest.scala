@@ -6,6 +6,7 @@ import kyo.internal.engine.InboundEntry
 import kyo.internal.engine.JsonRpcEndpointImpl
 import kyo.kernel.ContextEffect
 import kyo.scheduler.IOTask
+import scala.jdk.CollectionConverters.*
 
 class JsonRpcHandlerTest extends JsonRpcTest:
 
@@ -1002,6 +1003,38 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             done   <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(transportClosed.get))).map(_.isSuccess)
             _      <- ta.close
         yield assert(done, "the caller's interrupt abandoned the finalizer, leaving the transport unclosed")
+    }
+
+    // A send that loses to the finalizer's writerChannel.close fails on the closed channel. Reporting that as a
+    // transport error would, through the Exchange, complete the exchange's done promise with it first-writer-wins, so
+    // the finalizer's own Closed becomes a no-op and every later call reads the stale transport error back. The probe
+    // is issued while the finalizer is held at transport.close (writerChannel already closed, done promise not yet),
+    // so its send loses deterministically. requestEnqueued completing, or the probe finishing pre-fix, is the barrier
+    // that the put has been decided before the gate is released.
+    "a call whose send loses to close(0) sees Closed and leaves the handler Closed".notJs.notWasm in {
+        for
+            closeEntered    <- Latch.init(1)
+            blockGate       <- Latch.init(1)
+            transportClosed <- AtomicBoolean.init(false)
+            transports      <- JsonRpcTransport.inMemory
+            (peer, main) = transports
+            blocking     = new BlockingCloseTransport(main, closeEntered, blockGate, transportClosed)
+            h <- JsonRpcHandler.initUnscoped(blocking)
+            impl = h.unsafe.asInstanceOf[JsonRpcEndpointImpl]
+            closeFiber <- Fiber.initUnscoped(h.close)
+            _          <- closeEntered.await
+            probe      <- Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](h.call[Unit, Unit]("probe", ())))
+            _          <- assertEventually(Sync.Unsafe.defer {
+                probe.unsafe.done() || impl.callerRegistry.values.asScala.exists(_.requestEnqueued.unsafe.done())
+            })
+            _      <- blockGate.release
+            _      <- closeFiber.getResult
+            during <- probe.get
+            after  <- Abort.run[JsonRpcError | Closed](h.call[Unit, Unit]("probe", ()))
+            _      <- peer.close
+        yield (during, after) match
+            case (Result.Failure(_: Closed), Result.Failure(_: Closed)) => succeed
+            case other => fail(s"expected (Closed, Closed) during and after close, got $other")
     }
 
     // A one-shot hook fired on the spawning thread from inside the next fiber spawn that crosses the SpawnProbe region:

@@ -321,8 +321,14 @@ object JsonRpcEndpointImpl:
                                         ).andThen {
                                             putResult match
                                                 case Result.Success(_) => ()
-                                                case Result.Failure(c) =>
-                                                    Abort.fail(JsonRpcTransportError(s"transport closed: ${c.getMessage}", c))
+                                                case Result.Failure(_) =>
+                                                    // The writer channel only closes when the handler's finalizer shuts down, and its
+                                                    // writer fiber is already interrupted, so a failed put is a message dropped by an
+                                                    // in-progress close, not a transport fault. Reporting it as a JsonRpcTransportError
+                                                    // would, via Exchange.apply's shutdownWithError, complete the exchange's done promise
+                                                    // with that error before the finalizer completes it with Closed, so later calls read
+                                                    // the stale error back instead of Closed. Drop it; the finalizer fails the call.
+                                                    ()
                                                 case Result.Panic(t) => Abort.panic(t)
                                         }
                                     }
@@ -347,9 +353,14 @@ object JsonRpcEndpointImpl:
                             .handle(
                                 Abort.run[Closed](_).map {
                                     case Result.Success(_) => ()
-                                    case Result.Failure(c) =>
-                                        Abort.fail(JsonRpcTransportError(s"transport closed: ${c.getMessage}", c))
-                                    case Result.Panic(t) => Abort.panic(t)
+                                    // A Closed from the transport's incoming stream is the transport going away: an orderly
+                                    // end of the receive stream, on which the Exchange reader completes its done promise with
+                                    // Closed. Reporting it as a JsonRpcTransportError would instead poison that promise with a
+                                    // transport error, so later calls read the stale error back rather than Closed. The shipped
+                                    // transports already end their incoming cleanly here; this only matters for a custom
+                                    // transport whose incoming aborts Closed.
+                                    case Result.Failure(_) => ()
+                                    case Result.Panic(t)   => Abort.panic(t)
                                 }
                             )
 
