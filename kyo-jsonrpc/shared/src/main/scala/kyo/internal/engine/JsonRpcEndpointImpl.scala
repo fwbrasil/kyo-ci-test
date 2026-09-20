@@ -571,76 +571,87 @@ object JsonRpcEndpointImpl:
                                                                 pendingInbound.put(id, entry)
                                                                 val handlerEffect =
                                                                     m.handle(params.getOrElse(Structure.Value.Null), ctx)(using frame)
-                                                                Fiber.initUnscoped(handlerEffect).map { fiber =>
-                                                                    // Link the proxy to the real fiber so completions mirror and
-                                                                    // interrupts propagate.
-                                                                    Sync.Unsafe.defer {
-                                                                        handlerProxy.becomeDiscard(fiber)(using AllowUnsafe.embrace.danger)
-                                                                        // Attach completion hook AFTER putting in pendingInbound
-                                                                        // fiber onComplete attaches cleanup hook from outside the fiber; no safe equivalent in Fiber public API
-                                                                        fiber.unsafe.onComplete { result =>
-                                                                            val responseEnvelope = result match
-                                                                                case Result.Success(sv) =>
-                                                                                    JsonRpcResponse(
-                                                                                        id,
-                                                                                        Present(sv.eval(using frame)),
-                                                                                        Absent,
-                                                                                        extras
+                                                                Fiber.initUnscoped(handlerEffect).ensureMap { fiber =>
+                                                                    // The link must attach in the same step that delivers the fiber. A safepoint between the spawn and the
+                                                                    // link would let a stop land with the handler spawned but unlinked, and the endpoint close, which
+                                                                    // interrupts the recorded proxy, would then never reach the real fiber. ensureMap applies its function
+                                                                    // as the fiber arrives, with no safepoint before it.
+                                                                    // The close runs concurrently and can interrupt the recorded proxy before this link. become refuses a
+                                                                    // settled proxy and links nothing, so the proxy's own interrupt is forwarded to the fiber directly.
+                                                                    if !handlerProxy.become(fiber)(using AllowUnsafe.embrace.danger) then
+                                                                        handlerProxy.poll()(using AllowUnsafe.embrace.danger).foreach {
+                                                                            case e: Result.Error[?] =>
+                                                                                fiber.unsafe.interruptDiscard(e)(using
+                                                                                    AllowUnsafe.embrace.danger
+                                                                                )
+                                                                            case _ => ()
+                                                                        }
+                                                                    end if
+                                                                    // Attach the completion hook after the link. fiber onComplete attaches a cleanup hook from outside the
+                                                                    // fiber; no safe equivalent in Fiber's public API.
+                                                                    fiber.unsafe.onComplete { result =>
+                                                                        val responseEnvelope = result match
+                                                                            case Result.Success(sv) =>
+                                                                                JsonRpcResponse(
+                                                                                    id,
+                                                                                    Present(sv.eval(using frame)),
+                                                                                    Absent,
+                                                                                    extras
+                                                                                )
+                                                                            case Result.Failure(halt: JsonRpcResponse.Halt) =>
+                                                                                // Handler short-circuited with Halt; emit the wrapped response directly.
+                                                                                halt.response
+                                                                            case Result.Failure(e: JsonRpcError) =>
+                                                                                JsonRpcResponse(id, Absent, Present(e), extras)
+                                                                            case Result.Panic(t) =>
+                                                                                JsonRpcResponse(
+                                                                                    id,
+                                                                                    Absent,
+                                                                                    Present(
+                                                                                        JsonRpcHandlerPanicError(method, t)(using frame)
+                                                                                    ),
+                                                                                    extras
+                                                                                )
+                                                                        // CAS: Running -> Replying (fails if cancel moved it to Cancelled)
+                                                                        pendingInbound.get(id) match
+                                                                            case running: InboundEntry.Running =>
+                                                                                // Unsafe: AtomicBoolean.Unsafe.init for suppress flag
+                                                                                val suppressUnsafe =
+                                                                                    AtomicBoolean.Unsafe.init(false)(using
+                                                                                        AllowUnsafe.embrace.danger
                                                                                     )
-                                                                                case Result.Failure(halt: JsonRpcResponse.Halt) =>
-                                                                                    // Handler short-circuited with Halt; emit the wrapped response directly.
-                                                                                    halt.response
-                                                                                case Result.Failure(e: JsonRpcError) =>
-                                                                                    JsonRpcResponse(id, Absent, Present(e), extras)
-                                                                                case Result.Panic(t) =>
-                                                                                    JsonRpcResponse(
-                                                                                        id,
-                                                                                        Absent,
-                                                                                        Present(
-                                                                                            JsonRpcHandlerPanicError(method, t)(using frame)
-                                                                                        ),
-                                                                                        extras
-                                                                                    )
-                                                                            // CAS: Running -> Replying (fails if cancel moved it to Cancelled)
-                                                                            pendingInbound.get(id) match
-                                                                                case running: InboundEntry.Running =>
-                                                                                    // Unsafe: AtomicBoolean.Unsafe.init for suppress flag
-                                                                                    val suppressUnsafe =
-                                                                                        AtomicBoolean.Unsafe.init(false)(using
-                                                                                            AllowUnsafe.embrace.danger
+                                                                                val replying =
+                                                                                    InboundEntry.Replying(method, suppressUnsafe.safe)
+                                                                                if pendingInbound.replace(id, running, replying) then
+                                                                                    // Guaranteed delivery from the Sync-only onComplete callback (see enqueueResponse).
+                                                                                    enqueueResponse(
+                                                                                        writerChannel,
+                                                                                        WriterMsg.SuppressIfCancelled(
+                                                                                            id,
+                                                                                            responseEnvelope
                                                                                         )
-                                                                                    val replying =
-                                                                                        InboundEntry.Replying(method, suppressUnsafe.safe)
-                                                                                    if pendingInbound.replace(id, running, replying) then
-                                                                                        // Guaranteed delivery from the Sync-only onComplete callback (see enqueueResponse).
-                                                                                        enqueueResponse(
-                                                                                            writerChannel,
-                                                                                            WriterMsg.SuppressIfCancelled(
-                                                                                                id,
-                                                                                                responseEnvelope
-                                                                                            )
-                                                                                        )(using frame, AllowUnsafe.embrace.danger)
-                                                                                    end if
-                                                                                case _: InboundEntry.Cancelled =>
-                                                                                    // Cancel won the CAS. If the policy demands a reply for cancelled
-                                                                                    // requests, send the response anyway; otherwise the handler was
-                                                                                    // interrupted and produces no reply.
-                                                                                    val mustReply = config.cancellation match
-                                                                                        case Present(p) => p.expectReplyForCancelledRequest
-                                                                                        case Absent     => false
-                                                                                    if mustReply then
-                                                                                        // SendEnvelope bypasses the suppress check because the policy demands a reply; guaranteed delivery.
-                                                                                        enqueueResponse(
-                                                                                            writerChannel,
-                                                                                            WriterMsg.SendEnvelope(responseEnvelope)
-                                                                                        )(using frame, AllowUnsafe.embrace.danger)
-                                                                                        discard(pendingInbound.remove(id))
-                                                                                    end if
-                                                                                case _ => ()
-                                                                            end match
-                                                                        }(using AllowUnsafe.embrace.danger)
-                                                                    }
-                                                                }.andThen(Exchange.Message.Skip)
+                                                                                    )(using frame, AllowUnsafe.embrace.danger)
+                                                                                end if
+                                                                            case _: InboundEntry.Cancelled =>
+                                                                                // Cancel won the CAS. If the policy demands a reply for cancelled
+                                                                                // requests, send the response anyway; otherwise the handler was
+                                                                                // interrupted and produces no reply.
+                                                                                val mustReply = config.cancellation match
+                                                                                    case Present(p) => p.expectReplyForCancelledRequest
+                                                                                    case Absent     => false
+                                                                                if mustReply then
+                                                                                    // SendEnvelope bypasses the suppress check because the policy demands a reply; guaranteed delivery.
+                                                                                    enqueueResponse(
+                                                                                        writerChannel,
+                                                                                        WriterMsg.SendEnvelope(responseEnvelope)
+                                                                                    )(using frame, AllowUnsafe.embrace.danger)
+                                                                                    discard(pendingInbound.remove(id))
+                                                                                end if
+                                                                            case _ => ()
+                                                                        end match
+                                                                    }(using AllowUnsafe.embrace.danger)
+                                                                    Exchange.Message.Skip
+                                                                }
                                                             }
                                                         case None =>
                                                             // Step 3: unknown-method dispatch for requests

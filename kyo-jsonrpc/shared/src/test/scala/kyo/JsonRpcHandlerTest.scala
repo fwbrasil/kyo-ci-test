@@ -2,6 +2,10 @@ package kyo
 
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
+import kyo.internal.engine.InboundEntry
+import kyo.internal.engine.JsonRpcEndpointImpl
+import kyo.kernel.ContextEffect
+import kyo.scheduler.IOTask
 
 class JsonRpcHandlerTest extends JsonRpcTest:
 
@@ -910,11 +914,12 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    // The engine spawns a request's handler fiber in one step and records it as in flight in the next. A close of the
-    // endpoint landing between the two stops the dispatch loop with the handler fiber unrecorded: the close interrupts
-    // what it recorded, and the orphan runs on, never answering the peer. Each round has the caller send, spins to a
-    // staggered sub-millisecond offset from the send, and ends the serving endpoint's scope there; a handler known to
-    // have started must then be interrupted by that close, and one the close beat to the dispatch owes nothing.
+    // The engine records a request's handler proxy as in flight, then spawns the handler fiber and links the proxy to
+    // it. A close landing between the record and the link finds the proxy recorded but not yet standing for the running
+    // fiber; the handler must still be interrupted by that close rather than left to run on, never answering the peer.
+    // Each round has the caller send, spins to a staggered sub-millisecond offset from the send, and ends the serving
+    // endpoint's scope there; a handler known to have started must then be interrupted by that close, and one the close
+    // beat to the dispatch owes nothing.
     "closing the endpoint while a request is being dispatched interrupts its handler".notJs.notWasm in {
         val rounds = 60
         Loop.indexed { i =>
@@ -961,6 +966,113 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                     Loop.continue
                 end for
         }
+    }
+
+    // A one-shot hook fired on the spawning thread from inside the next fiber spawn that crosses the SpawnProbe region:
+    // after that spawn's last safepoint poll and before the spawned fiber reaches its continuation. Installed around the
+    // serving endpoint's init, the reader fiber inherits the region, so a hook armed after init fires inside the reader's
+    // next spawn, the request handler's, landing precisely in the gap between the handler spawn and its link.
+    final class SpawnHook:
+        private val pending          = new java.util.concurrent.atomic.AtomicReference[Maybe[() => Unit]](Absent)
+        def arm(f: () => Unit): Unit = pending.set(Present(f))
+        def fire(): Unit             = pending.getAndSet(Absent).foreach(_())
+    end SpawnHook
+
+    sealed trait SpawnProbe extends ContextEffect[SpawnHook]
+
+    private def probing[A, S](hook: SpawnHook)(v: A < (SpawnProbe & S))(using Frame): A < S =
+        ContextEffect.handle(
+            Tag[SpawnProbe],
+            (_: Maybe[SpawnHook]) => hook,
+            fork = (h: SpawnHook) =>
+                h.fire();
+                h
+            ,
+            join = (parent: SpawnHook, _: SpawnHook, _: SpawnHook) => parent
+        )(v)
+
+    "a stop landing between the handler spawn and its link still lets the close reach the handler".notJs.notWasm in {
+        // Window 1: the hook interrupts the reader inside the handler spawn, so the reader's next step, the link, starts
+        // with the stop already pending. The handler is scheduled regardless and enters; the close then sweeps the proxy.
+        // With the link parked and abandoned the sweep settles the still-plain proxy and the handler runs on; the link
+        // running before the park is what lets the sweep follow it into the handler.
+        val hook = new SpawnHook
+        for
+            entered  <- Latch.init(1)
+            gate     <- Latch.init(1)
+            released <- Latch.init(1)
+            route = JsonRpcRoute.request[AddReq, AddResp]("park") { (_, _) =>
+                Sync.ensure(released.release)(entered.release.andThen(gate.await)).andThen(AddResp(0))
+            }
+            transports <- JsonRpcTransport.inMemory
+            (ta, tb) = transports
+            started <- Scope.run {
+                probing(hook)(JsonRpcHandler.init(tb, Seq(route))).map { _ =>
+                    Scope.run {
+                        JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                            Sync.defer(hook.arm { () =>
+                                IOTask.currentTask().foreach(_.interruptDiscard(Result.Panic(Interrupted(summon[Frame]))))
+                            }).andThen {
+                                Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("park", AddReq(0, 0))))
+                            }.andThen {
+                                Abort.run[Timeout](Async.timeout(2.seconds)(entered.await)).map(_.isSuccess)
+                            }
+                        }
+                    }
+                }
+            }
+            freed <- Abort.run[Timeout](Async.timeout(2.seconds)(released.await)).map(_.isSuccess)
+            _     <- gate.release
+            _     <- ta.close
+            _     <- tb.close
+        yield
+            assert(started, "the request never reached its handler")
+            assert(freed, "the handler kept running after the endpoint serving it was closed")
+        end for
+    }
+
+    "a close sweeping the recorded proxy before its link still reaches the handler".notJs.notWasm in {
+        // Window 2: the hook performs the close's sweep of pendingInbound inside the handler spawn, settling the proxy
+        // before the link. become then refuses the settled proxy and links nothing; forwarding its interrupt to the
+        // scheduled handler is what stops it. The handler never enters in the passing case, so the wait is on released,
+        // which the abandon walk fires through the route's eagerly-forced Sync.ensure cell.
+        val hook = new SpawnHook
+        for
+            gate     <- Latch.init(1)
+            released <- Latch.init(1)
+            route = JsonRpcRoute.request[AddReq, AddResp]("park") { (_, _) =>
+                Sync.ensure(released.release)(gate.await).andThen(AddResp(0))
+            }
+            transports <- JsonRpcTransport.inMemory
+            (ta, tb) = transports
+            freed <- Scope.run {
+                probing(hook)(JsonRpcHandler.init(tb, Seq(route))).map { b =>
+                    val impl = b.unsafe.asInstanceOf[JsonRpcEndpointImpl]
+                    Scope.run {
+                        JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                            Sync.defer(hook.arm { () =>
+                                impl.pendingInbound.forEach { (_, entry) =>
+                                    entry match
+                                        case InboundEntry.Running(_, handler, _) =>
+                                            handler.unsafe.interruptDiscard(Result.Panic(Interrupted(summon[Frame])))(using
+                                                AllowUnsafe.embrace.danger
+                                            )
+                                        case _ => ()
+                                }
+                            }).andThen {
+                                Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("park", AddReq(0, 0))))
+                            }.andThen {
+                                Abort.run[Timeout](Async.timeout(2.seconds)(released.await)).map(_.isSuccess)
+                            }
+                        }
+                    }
+                }
+            }
+            _ <- gate.release
+            _ <- ta.close
+            _ <- tb.close
+        yield assert(freed, "the interrupt the sweep left on the unlinked proxy never reached the handler")
+        end for
     }
 
 end JsonRpcHandlerTest
