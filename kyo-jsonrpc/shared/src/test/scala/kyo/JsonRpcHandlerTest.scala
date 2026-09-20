@@ -968,6 +968,42 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
+    // A transport whose close blocks at a gate after signalling entry, holding the finalizer at its transport-close step.
+    private class BlockingCloseTransport(
+        inner: JsonRpcTransport,
+        closeEntered: Latch,
+        blockGate: Latch,
+        transportClosed: AtomicBoolean
+    ) extends JsonRpcTransport:
+        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) = inner.send(env)
+        def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]]                  = inner.incoming
+        def close(using Frame): Unit < Async                                                       =
+            closeEntered.release.andThen(blockGate.await).andThen(inner.close).andThen(transportClosed.set(true))
+    end BlockingCloseTransport
+
+    // close spawns the finalizer as a carrier fiber and joins it, and the join registers the carrier in the joiner's
+    // interrupts, so an interrupt of the caller cascades into the carrier and abandons the finalizer partway, leaving
+    // the transport, exchange, progress channels and inbound handlers uncleaned. Blocking the transport-close step
+    // holds the carrier mid-finalizer; interrupting the caller there must not stop the carrier from finishing.
+    "closing the handler finishes its finalizer even when the caller is interrupted mid-close".notJs.notWasm in {
+        for
+            closeEntered    <- Latch.init(1)
+            blockGate       <- Latch.init(1)
+            transportClosed <- AtomicBoolean.init(false)
+            transports      <- JsonRpcTransport.inMemory
+            (ta, tb) = transports
+            blocking = new BlockingCloseTransport(tb, closeEntered, blockGate, transportClosed)
+            h      <- JsonRpcHandler.initUnscoped(blocking)
+            joiner <- Fiber.initUnscoped(h.close)
+            _      <- closeEntered.await
+            _      <- joiner.interrupt
+            _      <- joiner.getResult
+            _      <- blockGate.release
+            done   <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(transportClosed.get))).map(_.isSuccess)
+            _      <- ta.close
+        yield assert(done, "the caller's interrupt abandoned the finalizer, leaving the transport unclosed")
+    }
+
     // A one-shot hook fired on the spawning thread from inside the next fiber spawn that crosses the SpawnProbe region:
     // after that spawn's last safepoint poll and before the spawned fiber reaches its continuation. Installed around the
     // serving endpoint's init, the reader fiber inherits the region, so a hook armed after init fires inside the reader's
