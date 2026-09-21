@@ -32,17 +32,21 @@ private[kyo] object UdsBackend:
                     wire.close.andThen {
                         Sync.Unsafe.defer(listenCell.get()).map {
                             case Present(listenFiber) =>
-                                listenFiber.interrupt.andThen(listenFiber.getResult).map {
-                                    case Result.Success(listener) =>
-                                        // The unlink below has to follow the descriptor's release, not just the close: a platform that
-                                        // refuses to unlink a socket file whose descriptor is open fails otherwise. The wait is bounded
-                                        // because this finalizer runs uninterruptibly, so a release that never arrives must not wedge
-                                        // the scope; the unlink is attempted either way.
-                                        Sync.Unsafe.defer { listener.close(); listener.released.safe }.map { released =>
-                                            Abort.run[Timeout](Async.timeout(releaseTimeout)(released.get)).unit
+                                // The unlink below has to follow the descriptor's release, not just the close: a platform that refuses
+                                // to unlink a socket file whose descriptor is open fails otherwise. A listen still in flight is awaited
+                                // rather than interrupted, since interrupting it hands the listener's close to the transport with no
+                                // release to wait on. The whole wait is bounded because this finalizer runs uninterruptibly, so a
+                                // listen or a release that never arrives must not wedge the scope; on expiry the bound interrupts the
+                                // listen, the transport closes what it bound, and the unlink is attempted either way.
+                                Abort.run[Timeout] {
+                                    Async.timeout(releaseTimeout) {
+                                        listenFiber.getResult.map {
+                                            case Result.Success(listener) =>
+                                                Sync.Unsafe.defer { listener.close(); listener.released.safe }.map(_.get)
+                                            case _ => ()
                                         }
-                                    case _ => ()
-                                }
+                                    }
+                                }.unit
                             case Absent => ()
                         }
                     }.andThen {
@@ -55,14 +59,16 @@ private[kyo] object UdsBackend:
                     }
                 }.andThen {
                     Sync.Unsafe.defer {
-                        val listenFiber =
+                        val listening =
                             NetPlatform.transport.listenUnix(sockPath.toString, backlog = 1) { conn =>
                                 if !first.complete(Result.succeed(conn)) then conn.close()
-                            }.safe
-                        listenCell.set(Maybe(listenFiber))
-                        listenFiber
-                    }.map { listenFiber =>
-                        listenFiber.get.map(_ => JsonRpcTransport.fromWire(wire, framer, codec))
+                            }
+                        listenCell.set(Maybe(listening.safe))
+                        // Awaiting a fiber links the awaiter's interrupt to it. The caller awaits a mirror that refuses interrupts, so a
+                        // stop on the caller cannot settle the listen: its listener stays the finalizer's to close and to wait out.
+                        listening.uninterruptible().safe
+                    }.map { listened =>
+                        listened.get.map(_ => JsonRpcTransport.fromWire(wire, framer, codec))
                     }
                 }
             }
