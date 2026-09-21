@@ -9,10 +9,10 @@ import scala.annotation.tailrec
 /** Zero-copy HTTP/1.1 request parser. Callback-driven state machine that reads from the inbound Channel.Unsafe, accumulates bytes in a
   * reusable flat buffer, and produces ParsedRequest values.
   *
-  * Flow: start() -> needMoreBytes() -> TakePromise.onComplete() -> parse() -> onRequestParsed callback. On keep-alive: reset() then start()
+  * Flow: start() -> needMoreBytes() -> TakePromise.completed() -> parse() -> onRequestParsed callback. On keep-alive: reset() then start()
   * again, optionally with injectLeftover() for pipelined bytes.
   *
-  * TakePromise extends IOPromise and is registered directly as a channel taker via reuseTake. becomeAvailable() resets the promise in-place
+  * TakePromise extends the channel's Waiter and is registered directly as a channel taker via reuseTake. becomeAvailable() resets the promise in-place
   * so it can be reused for the next read without allocation. The reset happens BEFORE the parse() call so that if parse() immediately calls
   * needMoreBytes(), the promise is already in Pending state.
   *
@@ -41,14 +41,13 @@ final private[kyo] class Http1Parser(
     private var hasContentLength     = false
     private var hasTransferEncoding  = false
 
-    /** Reusable take promise that extends IOPromise to be directly registered as a channel taker. The onComplete override fires
+    /** Reusable take promise that extends the channel's waiter to be directly registered as a channel taker. The completed override fires
       * synchronously when the channel delivers data. The resetForReuse method exposes the protected becomeAvailable for the parser to call.
       *
-      * Extends `IOPromise[Closed, Span[Byte]]` so poll() returns `Result[Closed, Span[Byte]]` directly — no `< S` wrapper, no cast needed.
-      * Cast to `Promise.Unsafe[Span[Byte], Abort[Closed]]` crosses the opaque boundary (same as ReadPump).
+      * Extends `Waiter[Closed, Span[Byte]]` so poll() returns `Result[Closed, Span[Byte]]` directly, with no `< S` wrapper and no cast.
       */
-    private class TakePromise extends IOPromise[Closed, Span[Byte]]:
-        override protected def onComplete(): Unit =
+    private class TakePromise extends Channel.Unsafe.Waiter[Closed, Span[Byte]](inbound.liveTakes):
+        override protected def completed(): Unit =
             val result = poll()
             // Reset the promise back to Pending BEFORE calling parse(), so that if
             // parse() -> needMoreBytes() -> reuseTake() is called, the promise is
@@ -71,16 +70,12 @@ final private[kyo] class Http1Parser(
                     onClosed()
                 case Absent => onClosed()
             end match
-        end onComplete
+        end completed
 
         def resetForReuse(): Boolean = becomeAvailable()
     end TakePromise
 
     private val takePromise = new TakePromise
-    // Cross opaque boundary: IOPromise[Closed, Span[Byte]] is the runtime representation of Promise.Unsafe[Span[Byte], Abort[Closed]].
-    // Same pattern as ReadPump.
-    private val takePromiseUnsafe: Fiber.Promise.Unsafe[Span[Byte], Abort[Closed]] =
-        takePromise.asInstanceOf[Fiber.Promise.Unsafe[Span[Byte], Abort[Closed]]]
 
     /** Starts the parser by initiating the first read from the inbound channel. If there are already bytes in the buffer (e.g., from HTTP
       * pipelining), attempts to parse them first.
@@ -156,7 +151,7 @@ final private[kyo] class Http1Parser(
                         // No data available — register take promise directly.
                         // The promise is in Pending state either because it's fresh (first call)
                         // or because onComplete reset it before calling parse().
-                        inbound.reuseTake(takePromiseUnsafe)
+                        inbound.reuseTake(takePromise)
                 end match
             case Result.Failure(_: Closed) =>
                 onClosed()
