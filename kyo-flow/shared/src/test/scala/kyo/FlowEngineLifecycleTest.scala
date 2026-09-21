@@ -179,13 +179,22 @@ class FlowEngineLifecycleTest extends FlowEngineSupport:
         // A close of the engine landing between the two stops the loop with the supervision unrecorded: shutdown interrupts
         // what it recorded, and the orphan keeps renewing the claim of an execution nobody supervises. Each round starts an
         // execution whose step parks, advances the clock so the loop claims it, spins to a staggered offset and ends the
-        // engine's scope there; the claim's expiry must then stop moving once the clock advances past a renewal.
+        // engine's scope there; the claim must then stay exactly as the closed engine left it once the clock advances
+        // past a renewal. That holds for both outcomes of the stagger: a claim taken before the close keeps its expiry,
+        // and an execution the close beat stays unclaimed. A round of the second kind samples no supervision, so the
+        // leaf also requires that some round observed a claim.
         "closing the engine while it spawns a supervision leaves no supervision renewing the claim".notJs.notWasm in {
-            val rounds = 30
+            val rounds        = 30
+            val claimedRounds = new java.util.concurrent.atomic.AtomicInteger(0)
             Clock.withTimeControl { tc =>
                 FlowStore.initMemory.map { store =>
                     Loop.indexed { i =>
-                        if i >= rounds then Loop.done(succeed)
+                        if i >= rounds then
+                            val claimed = claimedRounds.get()
+                            Loop.done(assert(
+                                claimed > 0,
+                                s"no round of $rounds observed a claim before the engine closed, so no supervision was sampled"
+                            ))
                         else
                             val flow = Flow.input[Int]("x")
                             for
@@ -216,14 +225,15 @@ class FlowEngineLifecycleTest extends FlowEngineSupport:
                                     }
                                 }
                                 before <- store.getExecution(eidRef).map(_.flatMap(_.claimExpiry))
+                                _      <- Sync.defer(if before.nonEmpty then discard(claimedRounds.incrementAndGet()))
                                 _      <- tc.advance(6.seconds)
                                 _      <- tc.advance(6.seconds)
                                 after  <- store.getExecution(eidRef).map(_.flatMap(_.claimExpiry))
                                 _      <- gate.release
                             yield
                                 assert(
-                                    before.isEmpty || after == before,
-                                    s"round $i: the claim expiry moved from $before to $after after the engine closed, so a supervision outlived it"
+                                    after == before,
+                                    s"round $i: the claim went from $before to $after after the engine closed, so something of the engine outlived it"
                                 )
                                 Loop.continue
                             end for
