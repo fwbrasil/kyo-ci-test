@@ -186,8 +186,17 @@ object Scope:
       * it is why the scoped entry points exist.
       */
     private[kyo] def runUnowned[A, S](v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
+        // Unsafe: the finalizer and the handover flag are allocated and read outside an effect, as `run` does for
+        // its own finalizer.
+        import AllowUnsafe.embrace.danger
         Sync.Unsafe.defer {
             val finalizer = Finalizer.Unsafe.init(1)
+            // Whether the value reached the step that delivers it. The backstop below runs on every ending and
+            // cannot tell the endings apart on its own: a clean one carries `Absent`, and so does an abandonment,
+            // which reaches it as neither a failure nor a panic. Closing on `Absent` would release the value on its
+            // way out; not closing on it would leave an abandoned acquisition holding everything it had opened.
+            // This flag is the difference, and it is set in the delivering step so no step separates the two.
+            val delivered = AtomicBoolean.Unsafe.init(false)
             ContextEffect.handle(
                 Tag[Scope],
                 derive = (_: Maybe[Finalizer]) => finalizer,
@@ -203,13 +212,12 @@ object Scope:
                                 .andThen(finalizer.await)
                                 .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
                         case Absent =>
+                            delivered.set(true)
                             Abort.get(result.asInstanceOf[Result[Nothing, A]])
                 }
-                // The abandonment edge. Guarded on the error because this backstop runs on EVERY ending, a clean
-                // one included, where it carries `Absent`: handing it `close` unguarded would release the value on
-                // its way out, which is the one thing this must never do.
-                .handle(Sync.ensure(error => if error.isDefined then finalizer.close(error) else Kyo.unit))
+                .handle(Sync.ensure(error => if delivered.get() then Kyo.unit else finalizer.close(error)))
         }
+    end runUnowned
 
     /** The finalizers registered against one scope, run in reverse registration order when it closes. A nested run
       * joins as a child through [[addChild]], so inner resources release before outer.
