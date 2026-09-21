@@ -335,9 +335,15 @@ class SyncTest extends kyo.test.Test[Any]:
         "whose use suspends on an async join releases at its own end" in {
             for
                 released <- AtomicInt.init(0)
-                _        <- Sync.ensure(released.incrementAndGet.unit)(Async.sleep(1.millis).andThen(Sync.defer(())))
-                afterUse <- released.get
-                _        <- Async.sleep(1.millis)
+                joined   <- Promise.init[Unit, Any]
+                // The join is answered only once the use is parked on it, so the use never runs straight through.
+                _ <- Fiber.initUnscoped(assertEventually(joined.waiters.map(_ >= 1)).andThen(joined.completeUnitDiscard))
+                // The bracket runs in a fiber of its own, so that fiber's end is the boundary a misplaced release would land
+                // on: the count is read once right after the use, inside the fiber, and again once the fiber has ended.
+                fiber <- Fiber.initUnscoped {
+                    Sync.ensure(released.incrementAndGet.unit)(joined.get.andThen(Sync.defer(()))).andThen(released.get)
+                }
+                afterUse <- fiber.get
                 total    <- released.get
             yield
                 assert(afterUse == 1, s"released $afterUse right after the bracket's use completed")
