@@ -118,19 +118,19 @@ private[kyo] object AeronPlatformTransport:
         // second parameter is the effect row, not an error type: `Any` is the empty row, so
         // the join is `A < Async` and carries no typed failure. Only the panic branch can
         // fire, which is why onFail is uninhabited here.
-        Sync.Unsafe.defer {
-            val connecting = bindings.clientConnect(aeronDir)
-            var taken      = false
-            // A caller interrupted at the join is abandoned without resuming, so a client the connect produces, now or
-            // later, has no owner but this finalizer. `taken` marks the normal exit, where the runtime owns the client;
-            // the runtime is built in the step the client arrives so no checkpoint sits between the two.
-            Sync.Unsafe.ensure {
-                if !taken then connecting.onComplete(_.foreach(client => bindings.clientClose(client.eval)))
-            } {
-                Abort.recover[Nothing](
-                    onFail = (never: Nothing) => never,
-                    onPanic = mapConnectPanic
-                ) {
+        Abort.recover[Nothing](
+            onFail = (never: Nothing) => never,
+            onPanic = mapConnectPanic
+        ) {
+            Sync.Unsafe.defer {
+                val connecting = bindings.clientConnect(aeronDir)
+                var taken      = false
+                // A caller interrupted at the join is abandoned without resuming, so a client the connect produces, now
+                // or later, has no owner but this finalizer. `taken` marks the normal exit, where the runtime owns the
+                // client; the runtime is built in the step the client arrives so no checkpoint sits between the two.
+                Sync.Unsafe.ensure {
+                    if !taken then connecting.onComplete(_.foreach(client => bindings.clientClose(client.eval)))
+                } {
                     connecting.safe.use { client =>
                         taken = true
                         val ffiTransport = new FfiAeronTransport(bindings, client)
