@@ -2219,6 +2219,76 @@ class ChannelTest extends kyo.test.Test[Any]:
                 takes <- Abort.run(c.pendingTakes)
             yield assert(puts.isFailure && takes.isFailure)
         }
+
+        // The counts are of fibers currently waiting. An interrupted waiter's entry stays in its queue until something
+        // polls past it, and it must not be counted while it sits there. A count that never drops ends the leaf as its
+        // timeout.
+        "an interrupted waiter is not counted" - {
+            Seq(0, 2).foreach { capacity =>
+                s"a taker, capacity $capacity" in {
+                    for
+                        c <- Channel.init[Int](capacity)
+                        f <- Fiber.initUnscoped(c.take)
+                        _ <- assertEventually(c.pendingTakes.map(_ == 1))
+                        _ <- f.interrupt
+                        _ <- f.getResult
+                        _ <- assertEventually(c.pendingTakes.map(_ == 0))
+                    yield succeed
+                }
+                s"one of two takers, and the other still receives, capacity $capacity" in {
+                    for
+                        c  <- Channel.init[Int](capacity)
+                        f1 <- Fiber.initUnscoped(c.take)
+                        _  <- assertEventually(c.pendingTakes.map(_ == 1))
+                        f2 <- Fiber.initUnscoped(c.take)
+                        _  <- assertEventually(c.pendingTakes.map(_ == 2))
+                        _  <- f1.interrupt
+                        _  <- f1.getResult
+                        _  <- assertEventually(c.pendingTakes.map(_ == 1))
+                        p  <- Fiber.initUnscoped(c.put(7))
+                        v  <- f2.get
+                        _  <- p.get
+                        n  <- c.pendingTakes
+                    yield assert(v == 7 && n == 0)
+                }
+            }
+            "a producer behind a full ring" in {
+                for
+                    c <- Channel.init[Int](1)
+                    _ <- c.put(1)
+                    f <- Fiber.initUnscoped(c.put(2))
+                    _ <- assertEventually(c.pendingPuts.map(_ == 1))
+                    _ <- f.interrupt
+                    _ <- f.getResult
+                    _ <- assertEventually(c.pendingPuts.map(_ == 0))
+                yield succeed
+            }
+            "a producer on a zero-capacity channel" in {
+                for
+                    c <- Channel.init[Int](0)
+                    f <- Fiber.initUnscoped(c.put(2))
+                    _ <- assertEventually(c.pendingPuts.map(_ == 1))
+                    _ <- f.interrupt
+                    _ <- f.getResult
+                    _ <- assertEventually(c.pendingPuts.map(_ == 0))
+                yield succeed
+            }
+            "one of two producers, and the other is still delivered" in {
+                for
+                    c  <- Channel.init[Int](0)
+                    f1 <- Fiber.initUnscoped(c.put(1))
+                    _  <- assertEventually(c.pendingPuts.map(_ == 1))
+                    f2 <- Fiber.initUnscoped(c.put(2))
+                    _  <- assertEventually(c.pendingPuts.map(_ == 2))
+                    _  <- f1.interrupt
+                    _  <- f1.getResult
+                    _  <- assertEventually(c.pendingPuts.map(_ == 1))
+                    v  <- c.take
+                    _  <- f2.get
+                    n  <- c.pendingPuts
+                yield assert(v == 2 && n == 0)
+            }
+        }
     }
 
     private def verifyRaceDrainWithClose(
