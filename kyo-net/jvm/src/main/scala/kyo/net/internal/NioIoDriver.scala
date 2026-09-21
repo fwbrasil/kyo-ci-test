@@ -1127,6 +1127,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                     discard(pendingListenerReleases.offer(entry))
                     discard(selector.wakeup())
                     requeued = true
+            end if
         end while
         if requeued && selectorClosed.get() then drainListenerReleases()
     end drainListenerReleases
@@ -1172,10 +1173,10 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                     case _                                     => ()
                 pendingArm = pendingUpgradeArms.poll()
             end while
+            // Closing the selector runs implCloseSelector, which deregisters and kills every channel, so each queued listener release is true
+            // once it returns. The flag is set before the drain so a release armed after this drain completes itself.
             try selector.close()
             catch case _: IOException => ()
-            // implCloseSelector deregistered and killed every channel, so each queued listener release is true from here. The flag is set
-            // before the drain so a release armed after this drain completes itself.
             selectorClosed.set(true)
             drainListenerReleases()
             diagRegistration.close()

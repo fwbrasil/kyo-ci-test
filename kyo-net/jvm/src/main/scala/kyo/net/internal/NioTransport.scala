@@ -1803,10 +1803,10 @@ final private[net] class NioListener(
             // remaining chance to release, since the transport itself may never be closed.
             onCloseHook.foreach(_())
             driver.cleanupAccept(serverChannel, createdAt)
-            try serverChannel.close()
-            catch case _: IOException => ()
             // serverChannel.close() cancels the channel's SelectionKey but defers the real fd close (kill()) to the selector's next
             // deregistration pass. The driver forces that pass and completes `released` once it has run.
+            try serverChannel.close()
+            catch case _: IOException => ()
             driver.releaseListener(serverChannel, releasedPromise)
         end if
     end close
