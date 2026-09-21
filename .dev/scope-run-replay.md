@@ -99,6 +99,12 @@ off. Then full `kyo-coreJVM/test` and `kyo-coreJS/test`, since every `Scope.run`
 
 ## `EvalTest`: a stop on the body's last step parks in front of the crossing's capture
 
+**Superseded, 2026-09-21: the leaf was removed by the user's ruling and the `Isolate` edits undone.** The leaf came
+from the `robustness` branch (`87b21a1ea1`), where the rule was that a value produced on the slice its interrupt
+landed on wins. This branch pins the inverse in `FiberTest` ("completes with the interrupt"): the interrupt wins and
+the value is dropped by design. The analysis below is kept only as the record of what was tried; it was built on
+the rejected rule.
+
 Cause, read in `Isolate.Contextual.isolate`:
 
 ```scala

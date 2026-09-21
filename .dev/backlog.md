@@ -205,8 +205,13 @@ Open defects, no fix yet:
   (ScopeInterruptTest): the outer code never registers the handle's release.
 - **`Scope.run` under a handler that resumes more than once refuses the second branch with `Closed`**
   (ScopeTest, 2 leaves): the scope closes after the first shot.
-- **Kernel evaluator: a stop on a body's last step parks in front of an isolate crossing's capture** (EvalTest),
-  so an abandonment there drops the value. It reads as the mechanism behind the first two; not proven.
+- ~~Kernel evaluator: a stop on a body's last step parks in front of an isolate crossing's capture (EvalTest)~~
+  **Removed by the user's ruling.** Origin (git, read only): written on the `robustness` branch (`87b21a1ea1`) to
+  pin "a value produced on the slice its interrupt landed on wins", ported here by `f6e26c4ffe` which itself filed
+  it as a "design difference". This branch decided the inverse and pins it green in `FiberTest` ("... completes
+  with the interrupt": the value is dropped by design, the caller brackets what it must keep). The leaf asserted a
+  rejected rule. Two `ensureMap` edits I made in `Isolate` toward it were undone; `Isolate.scala` is byte-identical
+  to before. Not the mechanism behind the two join defects above, which are an abandoned cross-fiber join.
 - **A fiber spawned with `Fiber.Unsafe.init` does not carry the spawning code's frames in its failure trace**
   (FiberTest). Diagnostic only.
 
