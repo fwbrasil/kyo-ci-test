@@ -178,7 +178,7 @@ class FlowEngineLifecycleTest extends FlowEngineSupport:
         // A supervision that outlives its engine keeps renewing the claim of an execution nobody supervises. The engine is
         // closed once the supervision is tracked and the claim is written, and the claim must then stay exactly as the
         // closed engine left it while the clock advances past two renewals.
-        "closing the engine leaves no supervision renewing the claim" in {
+        "closing the engine leaves no supervision renewing the claim".times(30) in {
             Clock.withTimeControl { tc =>
                 FlowStore.initMemory.map { store =>
                     val flow = Flow.input[Int]("x")

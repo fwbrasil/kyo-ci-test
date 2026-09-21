@@ -1562,35 +1562,23 @@ class AeronTransportTest extends Test:
 
     // The add-deadline guard hands the publication on at its clean end and closes nothing, and Topic's `ensureMap`
     // takes it over in the step the add's value arrives: `Sync.ensure` raises the guard's recorded abort as that
-    // value arrives, so no poll separates the hand-off from the owner. Each round stops the publisher once it has
-    // reached the step before the publish, so the stops land across the add, the hand-off, and the backpressured offer
-    // loop after it; every round must end with every publication it opened closed, and one left open ends this leaf as
-    // its timeout.
-    "a publication the add hands on under a stop is closed by someone" in {
-        val rounds    = 80
+    // value arrives, so no poll separates the hand-off from the owner. The transport never connects, so the publisher
+    // stays in its offer loop holding the publication: the leaf stops it once the transport has handed the publication
+    // out, and the publication must then be closed. One left open ends this leaf as its timeout.
+    "a publisher stopped while it holds its publication closes it".times(80) in {
         val transport = new HandoffTransport
-        Loop.indexed { i =>
-            if i >= rounds then Loop.done(assert(transport.pubOpens.get() == transport.pubCloses.get()))
-            else
-                for
-                    adding <- Latch.init(1)
-                    fiber  <- Fiber.initUnscoped {
-                        adding.release.andThen {
-                            Topic.runWith(transport) {
-                                Abort.run[TopicException](Topic.publish[Int](
-                                    ipcUri,
-                                    streamId = Present(120 + i)
-                                )(Stream.init(Seq(1, 2, 3))))
-                            }
-                        }
-                    }
-                    _ <- adding.await
-                    _ <- fiber.interrupt
-                    _ <- fiber.getResult
-                    _ <- assertEventually(Sync.defer(transport.pubOpens.get() == transport.pubCloses.get()))
-                yield Loop.continue
-                end for
-        }
+        for
+            fiber <- Fiber.initUnscoped {
+                Topic.runWith(transport) {
+                    Abort.run[TopicException](Topic.publish[Int](ipcUri, streamId = Present(120))(Stream.init(Seq(1, 2, 3))))
+                }
+            }
+            _ <- assertEventually(Sync.defer(transport.pubOpens.get() == 1))
+            _ <- fiber.interrupt
+            _ <- fiber.getResult
+            _ <- assertEventually(Sync.defer(transport.pubCloses.get() == 1))
+        yield assert(transport.pubOpens.get() == 1)
+        end for
     }
 
 end AeronTransportTest

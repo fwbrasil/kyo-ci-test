@@ -3949,7 +3949,7 @@ class HttpServerTest extends BaseHttpTest:
 
     "init under interruption" - {
         // A listener nobody closes holds its port for good, so the re-bind never succeeds and the leaf ends as its timeout.
-        "a server whose owning fiber is interrupted releases its port" in {
+        "a server whose owning fiber is interrupted releases its port".times(80) in {
             val route                            = HttpRoute.getRaw("test").response(_.bodyText)
             val handler                          = route.handler(_ => HttpResponse.ok("hello"))
             def bind(port: Int): Boolean < Async =
@@ -3972,7 +3972,7 @@ class HttpServerTest extends BaseHttpTest:
         // The request is stopped while its handler is parked, so its connection is established and in use. The leaf then
         // closes the client's scope and reads the operating system's view of the sockets connected to the server's port:
         // a connection the client tracks closes with it, an untracked one stays, which the leaf timeout reports.
-        "a request stopped in flight leaves no connection behind once its client closes".notJs.notWasm in {
+        "a request stopped in flight leaves no connection behind once its client closes".notJs.notWasm.times(300) in {
             val route = HttpRoute.getRaw("test").response(_.bodyText)
             // Linux exposes the socket table as /proc/net/tcp: one row per socket, the state in column 4 (01 is
             // ESTABLISHED) and the remote address in column 3 as hex ip:port. Elsewhere lsof answers the same question.

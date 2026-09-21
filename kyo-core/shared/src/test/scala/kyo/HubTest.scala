@@ -564,7 +564,7 @@ class HubTest extends kyo.test.Test[Any]:
     "listen under interruption" - {
         // A listener left in the set with nobody to close it holds the first value in its one-slot buffer and parks the
         // publisher on the second, so no later value reaches the listeners that are alive.
-        "a listener whose fiber is interrupted is not left in the set" in {
+        "a listener whose fiber is interrupted is not left in the set".times(500) in {
             Hub.initWith[Int](8) { hub =>
                 for
                     listening <- Latch.init(1)
