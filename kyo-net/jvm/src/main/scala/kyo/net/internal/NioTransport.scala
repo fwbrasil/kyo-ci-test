@@ -59,9 +59,8 @@ final private[kyo] class NioTransport private (
 ) extends TransportImpl[NioHandle]:
 
     /** The driver pool powering this transport. A single-driver pool wrapping `driver`: connect, listen, accept, and the TLS handshake all run
-      * on that one driver, and `close()` shuts it down through the pool (no additional driver seam is introduced). Mirrors PosixTransport's
-      * single-driver pool: NIO runs exactly one driver, so the pool is a one-element wrapper that implements the abstract `TransportImpl.pool`
-      * member without an eager constructor-threaded field.
+      * on that one driver. Mirrors PosixTransport's single-driver pool: NIO runs exactly one driver, so the pool is a one-element wrapper that
+      * implements the abstract `TransportImpl.pool` member without an eager constructor-threaded field.
       */
     override val pool: IoDriverPool[NioHandle] =
         import AllowUnsafe.embrace.danger
@@ -71,9 +70,8 @@ final private[kyo] class NioTransport private (
     /** In-flight accept-side TLS handshakes, keyed by the promise that carries the handshake's outcome and valued by the listener that accepted
       * the connection.
       *
-      * A connection whose handshake has not completed has no [[Connection]] yet, so it is invisible to the [[connections]] registry that
-      * `close()` sweeps: nothing else knows the channel and handle exist. Without this, a peer that completed the TCP accept and then stalled
-      * held its channel and handle until the process exited, since a listener close tears down only its accept and its own server channel, and
+      * A connection whose handshake has not completed has no [[Connection]] yet, so nothing else knows the channel and handle exist. Without
+      * this, a peer that completed the TCP accept and then stalled held its channel and handle until the process exited, since a listener close tears down only its accept and its own server channel, and
       * the process-shared transport is never closed at all.
       *
       * Discharging an entry means failing its promise, which runs the teardown arm the handshake already installs, so there is one teardown path
@@ -112,7 +110,7 @@ final private[kyo] class NioTransport private (
       * The recheck is the reason this is a function rather than a bare `put`. [[dischargeListenerHandshakes]] runs on the closing carrier and
       * fails only the entries present at that instant, while a registration runs on the selector carrier, so a listener closing anywhere in
       * that window would leave an entry nothing ever reclaims: a second `close()` is a CAS no-op, the accept loop's own `!listener.isClosed`
-      * guard is check-then-act, and the transport-wide sweep runs only from `close()`, which the process-shared transport never sees. The
+      * guard is check-then-act, and the process-shared transport is never closed, so no later sweep exists. The
       * channel, handle and driver registration would then be held until the process exits, the default on this path since a handshake deadline
       * of `Infinity` arms no timer. Gating the discharge on the map removal makes it exactly-once against a sweep that did observe the entry.
       *
