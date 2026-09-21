@@ -1968,43 +1968,28 @@ class AsyncTest extends kyo.test.Test[Any]:
     "timeout under interruption" - {
         // The timeout forks the guarded computation and installs the bracket that owns it as the spawn's handle
         // arrives (`acquireReleaseWith`, no poll between): a stop requested as the handle settles must still interrupt
-        // the child, not leave it running. The window is a few microseconds, below what a timer lands in, so the leaf
-        // spins on a flag set before the timeout, staggers its offset, and requests the stop directly; a child known
-        // to have started must then release.
+        // the child, not leave it running. The timeout's only spawn is that fork, so a hook armed to interrupt the
+        // spawning fiber lands the stop exactly there, with the child already scheduled. The child then either starts
+        // and must release, or is interrupted before its first step and owes nothing; "never started" has no event to
+        // wait on, so that one wait is bounded.
         "an interrupt landing at the timeout's spawn reaches the guarded computation".notJs.notWasm in {
-            val rounds = 80
-            Loop.indexed { i =>
-                if i >= rounds then Loop.done(succeed)
-                else
-                    val arming = new java.util.concurrent.atomic.AtomicBoolean(false)
-                    for
-                        entered  <- Latch.init(1)
-                        gate     <- Latch.init(1)
-                        released <- AtomicBoolean.init(false)
-                        fiber    <- Fiber.initUnscoped {
-                            Sync.defer(arming.set(true)).andThen {
-                                Async.timeout(1.hour)(Sync.ensure(released.set(true))(entered.release.andThen(gate.await)))
-                            }
+            val hook = new SpawnHook
+            for
+                entered  <- Latch.init(1)
+                gate     <- Latch.init(1)
+                released <- AtomicBoolean.init(false)
+                fiber    <- Fiber.initUnscoped {
+                    SpawnHook.probing(hook) {
+                        Sync.defer(hook.armInterrupt()).andThen {
+                            Async.timeout(1.hour)(Sync.ensure(released.set(true))(entered.release.andThen(gate.await)))
                         }
-                        _ <- Sync.Unsafe.defer {
-                            val bound = java.lang.System.nanoTime() + 200_000_000L
-                            while !arming.get() && java.lang.System.nanoTime() < bound do ()
-                            val target = java.lang.System.nanoTime() + (i % 40) * 10_000L
-                            while java.lang.System.nanoTime() < target do ()
-                            discard(fiber.unsafe.interrupt())
-                        }
-                        _     <- fiber.getResult
-                        ran   <- Abort.run[Timeout](Async.timeout(1.second)(entered.await))
-                        freed <-
-                            if ran.isSuccess then
-                                Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get))).map(_.isSuccess)
-                            else Kyo.lift(true)
-                        _ <- gate.release
-                    yield
-                        assert(freed, s"round $i: the guarded computation kept running after the caller was interrupted at the spawn")
-                        Loop.continue
-                    end for
-            }
+                    }
+                }
+                r   <- fiber.getResult
+                ran <- Abort.run[Timeout](Async.timeout(1.second)(entered.await))
+                _   <- Sync.ensure(gate.release)(if ran.isSuccess then assertEventually(released.get) else Kyo.unit)
+            yield assert(r.isPanic, s"the caller did not settle with the interrupt the hook requested: $r")
+            end for
         }
     }
 
