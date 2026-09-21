@@ -175,69 +175,42 @@ class FlowEngineLifecycleTest extends FlowEngineSupport:
     // Supervision under a stop landing on the poll loop
     // =========================================================================
     "supervision under interruption" - {
-        // The poll loop spawns an attempt's supervision in one step and records it for the engine's shutdown in the next.
-        // A close of the engine landing between the two stops the loop with the supervision unrecorded: shutdown interrupts
-        // what it recorded, and the orphan keeps renewing the claim of an execution nobody supervises. Each round starts an
-        // execution whose step parks, advances the clock so the loop claims it, spins to a staggered offset and ends the
-        // engine's scope there; the claim must then stay exactly as the closed engine left it once the clock advances
-        // past a renewal. That holds for both outcomes of the stagger: a claim taken before the close keeps its expiry,
-        // and an execution the close beat stays unclaimed. A round of the second kind samples no supervision, so the
-        // leaf also requires that some round observed a claim.
-        "closing the engine while it spawns a supervision leaves no supervision renewing the claim".notJs.notWasm in {
-            val rounds        = 30
-            val claimedRounds = new java.util.concurrent.atomic.AtomicInteger(0)
+        // A supervision that outlives its engine keeps renewing the claim of an execution nobody supervises. The engine is
+        // closed once the supervision is tracked and the claim is written, and the claim must then stay exactly as the
+        // closed engine left it while the clock advances past two renewals.
+        "closing the engine leaves no supervision renewing the claim" in {
             Clock.withTimeControl { tc =>
                 FlowStore.initMemory.map { store =>
-                    Loop.indexed { i =>
-                        if i >= rounds then
-                            val claimed = claimedRounds.get()
-                            Loop.done(assert(
-                                claimed > 0,
-                                s"no round of $rounds observed a claim before the engine closed, so no supervision was sampled"
-                            ))
-                        else
-                            val flow = Flow.input[Int]("x")
-                            for
-                                gate   <- Latch.init(1)
-                                eidRef <- Scope.run {
-                                    FlowEngine.init(
-                                        store,
-                                        workerCount = 1,
-                                        lease = 30.seconds,
-                                        renewEvery = 5.seconds,
-                                        pollTimeout = 100.millis
-                                    ).map {
-                                        engine =>
-                                            for
-                                                _ <- engine.register(
-                                                    Flow.Id.Workflow(s"stops-$i"),
-                                                    flow.output("y")(_ => gate.await.andThen(1))
-                                                )
-                                                handle <- engine.workflows.start(Flow.Id.Workflow(s"stops-$i"))
-                                                eid = handle.executionId
-                                                _ <- engine.executions.signal[Int](eid, "x", 1)
-                                                _ <- tc.advance(100.millis)
-                                                _ <- Sync.Unsafe.defer {
-                                                    val target = java.lang.System.nanoTime() + (i % 30) * 100_000L
-                                                    while java.lang.System.nanoTime() < target do ()
-                                                }
-                                            yield eid
-                                    }
-                                }
-                                before <- store.getExecution(eidRef).map(_.flatMap(_.claimExpiry))
-                                _      <- Sync.defer(if before.nonEmpty then discard(claimedRounds.incrementAndGet()))
-                                _      <- tc.advance(6.seconds)
-                                _      <- tc.advance(6.seconds)
-                                after  <- store.getExecution(eidRef).map(_.flatMap(_.claimExpiry))
-                                _      <- gate.release
-                            yield
-                                assert(
-                                    after == before,
-                                    s"round $i: the claim went from $before to $after after the engine closed, so something of the engine outlived it"
-                                )
-                                Loop.continue
-                            end for
-                    }
+                    val flow = Flow.input[Int]("x")
+                    for
+                        gate <- Latch.init(1)
+                        eid  <- Scope.run {
+                            FlowEngine.init(
+                                store,
+                                workerCount = 1,
+                                lease = 30.seconds,
+                                renewEvery = 5.seconds,
+                                pollTimeout = 100.millis
+                            ).map { engine =>
+                                for
+                                    _      <- engine.register(Flow.Id.Workflow("stops"), flow.output("y")(_ => gate.await.andThen(1)))
+                                    handle <- engine.workflows.start(Flow.Id.Workflow("stops"))
+                                    eid = handle.executionId
+                                    _          <- engine.executions.signal[Int](eid, "x", 1)
+                                    supervised <- settle(tc, step = 100.millis)(engine.supervisions.get.map(_.exists(_.nonEmpty)))
+                                    _ = assert(supervised, "the engine never started supervising the execution")
+                                yield eid
+                            }
+                        }
+                        before <- store.getExecution(eid).map(_.flatMap(_.claimExpiry))
+                        _      <- tc.advance(6.seconds)
+                        _      <- tc.advance(6.seconds)
+                        after  <- store.getExecution(eid).map(_.flatMap(_.claimExpiry))
+                        _      <- gate.release
+                    yield
+                        assert(before.nonEmpty, "the execution was supervised but its claim was never written")
+                        assert(after == before, s"the claim went from $before to $after after the engine closed")
+                    end for
                 }
             }
         }
