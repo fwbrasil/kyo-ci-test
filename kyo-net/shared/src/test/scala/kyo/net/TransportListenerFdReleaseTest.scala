@@ -55,4 +55,36 @@ class TransportListenerFdReleaseTest extends Test:
         }
     }
 
+    // `listen` hands its listener over through a fiber. A caller that stops waiting before the transport completes that fiber never
+    // receives the listener, so the transport is the only one left that can close it. Each round stops waiting at once and then
+    // requires the port to become bindable again: a listener the caller did receive is the caller's to close, one it did not is the
+    // transport's. Rounds repeat because whether the stop beats the completion is a race on the backends that listen asynchronously.
+    "a listen whose caller stopped waiting does not leave its listener bound" - eachBackend { transport =>
+        def rebind(port: Int): Boolean < Async =
+            Abort.run[NetException](transport.listen("127.0.0.1", port, 16)(_ => ()).safe.get).map {
+                case Result.Success(again) =>
+                    again.close()
+                    again.released.safe.get.andThen(true)
+                case _ => false
+            }
+        transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { probe =>
+            val port = probe.port
+            probe.close()
+            probe.released.safe.get.andThen {
+                Loop.indexed { i =>
+                    if i >= 50 then Loop.done(succeed)
+                    else
+                        val listening = transport.listen("127.0.0.1", port, 16)(_ => ())
+                        discard(listening.interrupt())
+                        listening.safe.getResult.map {
+                            case Result.Success(received) =>
+                                received.close()
+                                received.released.safe.get
+                            case _ => ()
+                        }.andThen(assertEventually(rebind(port))).andThen(Loop.continue)
+                }
+            }
+        }
+    }
+
 end TransportListenerFdReleaseTest
