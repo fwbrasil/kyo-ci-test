@@ -251,9 +251,7 @@ class AeronClientTest extends Test:
     end FakeBindings
 
     // Deterministic via the seam: a fake binding gates the connect fiber and the interrupt is registered on it via onComplete (LIFO before the resume).
-    "an interrupt landing at the connect join leaves the connected client unclosed".pendingUntilFixed(
-        "externalWith builds the runtime and its close after the blocking clientConnect join; an interrupt at the join leaves the connected client unclosed"
-    ) in {
+    "an interrupt landing at the connect join closes the connected client" in {
         val closed        = new java.util.concurrent.atomic.AtomicBoolean(false)
         val connectCalled = new java.util.concurrent.atomic.AtomicBoolean(false)
         for
