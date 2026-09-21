@@ -5,6 +5,7 @@ import kyo.*
 import kyo.internal.codec.*
 import kyo.internal.util.*
 import kyo.net.internal.util.GrowableByteBuffer
+import kyo.scheduler.IOPromise
 import scala.annotation.tailrec
 
 /** Zero-copy HTTP/1.1 response parser for client connections. Callback-driven state machine that reads from the inbound Channel.Unsafe,
@@ -36,12 +37,13 @@ final private[kyo] class Http1ResponseParser(
     // Whether a Content-Length header has been seen at all, which a running value of -1 cannot express.
     private var seenContentLength = false
 
-    /** Reusable take promise, same pattern as Http1Parser.
+    /** Reusable take promise — same pattern as Http1Parser.
       *
-      * Extends `Waiter[Closed, Span[Byte]]` so poll() returns `Result[Closed, Span[Byte]]` directly, with no `< S` wrapper and no cast.
+      * Extends `IOPromise[Closed, Span[Byte]]` so poll() returns `Result[Closed, Span[Byte]]` directly — no `< S` wrapper, no cast needed.
+      * Cast to `Promise.Unsafe[Span[Byte], Abort[Closed]]` crosses the opaque boundary (same as ReadPump).
       */
-    private class TakePromise extends Channel.Unsafe.Waiter[Closed, Span[Byte]](inbound.liveTakes):
-        override protected def completed(): Unit =
+    private class TakePromise extends IOPromise[Closed, Span[Byte]]:
+        override protected def onComplete(): Unit =
             val result = poll()
             // Reset the promise back to Pending BEFORE calling parse(), so that if
             // parse() -> needMoreBytes() -> reuseTake() is called, the promise is
@@ -64,12 +66,16 @@ final private[kyo] class Http1ResponseParser(
                     onClosed()
                 case Absent => onClosed()
             end match
-        end completed
+        end onComplete
 
         def resetForReuse(): Boolean = becomeAvailable()
     end TakePromise
 
     private val takePromise = new TakePromise
+    // Cross opaque boundary: IOPromise[Closed, Span[Byte]] is the runtime representation of Promise.Unsafe[Span[Byte], Abort[Closed]].
+    // Same pattern as ReadPump.
+    private val takePromiseUnsafe: Fiber.Promise.Unsafe[Span[Byte], Abort[Closed]] =
+        takePromise.asInstanceOf[Fiber.Promise.Unsafe[Span[Byte], Abort[Closed]]]
 
     /** Starts the parser by initiating the first read from the inbound channel. */
     def start(): Unit =
@@ -138,7 +144,7 @@ final private[kyo] class Http1ResponseParser(
                         // No data available — register take promise directly.
                         // The promise is in Pending state either because it's fresh (first call)
                         // or because onComplete reset it before calling parse().
-                        inbound.reuseTake(takePromise)
+                        inbound.reuseTake(takePromiseUnsafe)
                 end match
             case Result.Failure(_: Closed) =>
                 onClosed()
