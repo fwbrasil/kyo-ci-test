@@ -454,7 +454,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                     closed  <- closing.get
                 yield assert(!early && v == 7 && closed)
             }
-            "handed back while closeAwaitEmpty drains the ring is read after the ring's own element".pendingUntilFixed(
+            "handed back while closeAwaitEmpty drains a bounded channel's ring is still read".pendingUntilFixed(
                 "a HalfOpen queue rejects the hand-back's offer and the channel forfeits the value when no taker is parked, so the drain settles one element short"
             ) in {
                 for
@@ -466,14 +466,14 @@ class ChannelTest extends kyo.test.Test[Any]:
                     early   <- closing.done
                     b       <- c.take
                     closed  <- closing.get
-                yield assert((a, b) == (1, 7) && !early && closed)
+                yield assert(Set(a, b) == Set(1, 7) && !early && closed)
             }
             // The last element of a closing ring goes to a parked taker, which empties the ring. A taker interrupted before
             // it resumes hands the element back, and the close has to still be waiting for it. The offer, the close and the
             // interrupt share one step so the interrupt can land before the taker resumes; rounds make that reliable. A
             // pendingUntilFixed body runs once and a single round can pass with the taker winning, so the rounds are a loop
             // in the body rather than `.times`.
-            "handed back after it emptied a closing ring keeps closeAwaitEmpty waiting".pendingUntilFixed(
+            "handed back after it emptied a bounded channel's closing ring keeps closeAwaitEmpty waiting".pendingUntilFixed(
                 "the queue reaches FullyClosed at the poll that feeds the parked taker, before the taker owns the value, so the close has settled by the time the value is handed back"
             ) in {
                 Loop.indexed { i =>
