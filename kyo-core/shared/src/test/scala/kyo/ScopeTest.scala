@@ -1671,42 +1671,27 @@ class ScopeTest extends kyo.test.Test[Any]:
             yield assert(result.isFailure && n == 1, s"a failed acquisition kept its resource: closes=$n")
         }
 
-        // Bounded well under the suite default: a leaf that is expected to fail spends its whole budget before
-        // reporting, and two minutes of that on every run of this module is time nobody gets back.
-        "releases when the body is abandoned".pendingUntilFixed(
-            "the Sync.ensure backstop does not reach a runUnowned whose body was abandoned while parked, so an " +
-                "acquisition interrupted partway keeps whatever it had opened. This is what the unscoped entry " +
-                "points did before runUnowned existed, so it is a gap to close rather than something they lost"
-        ).timeout(10.seconds) in {
+        // `started` is what makes this an abandonment of a PARKED body. The body is built under
+        // `Sync.Unsafe.defer`, and the abandonment walk walks a deferral without running it, so a fiber
+        // interrupted before its first step has no finalizer allocated and nothing registered: it reads zero
+        // for a reason that says nothing about this backstop. The release has to have run, and the body has to
+        // be parked, before the interrupt is worth anything.
+        "releases when the body is abandoned" in {
             for
-                closes <- AtomicInt.init(0)
-                gate   <- Latch.init(1)
-                fiber  <- Fiber.initUnscoped(
-                    Scope.runUnowned(Scope.ensure(closes.incrementAndGet.unit).andThen(gate.await))
+                closes  <- AtomicInt.init(0)
+                started <- Latch.init(1)
+                gate    <- Latch.init(1)
+                fiber   <- Fiber.initUnscoped(
+                    Scope.runUnowned(
+                        Scope.ensure(closes.incrementAndGet.unit).andThen(started.release).andThen(gate.await)
+                    )
                 )
+                _ <- started.await
                 _ <- fiber.interrupt
-                _ <- fiber.getResult
                 // The interrupt spawns the drain rather than waiting for it, so this is retried, not read once.
                 _ <- assertEventually(closes.get.map(_ == 1))
-            yield succeed
-        }
-
-        "PROBE C: Scope.run versus runUnowned under the same abandonment".timeout(30.seconds) in {
-            def abandon(body: (Unit < (Async & Scope)) => (Any < Async)): Int < (Async & Abort[Any]) =
-                for
-                    closes <- AtomicInt.init(0)
-                    gate   <- Latch.init(1)
-                    fiber  <- Fiber.initUnscoped(body(Scope.ensure(closes.incrementAndGet.unit).andThen(gate.await)))
-                    _      <- fiber.interrupt
-                    _      <- Abort.run[Any](fiber.getResult)
-                    _      <- Abort.run[Any](Async.timeout(3.seconds)(assertEventually(closes.get.map(_ == 1))))
-                    n      <- closes.get
-                yield n
-            for
-                viaRun     <- abandon(v => Scope.run(v))
-                viaUnowned <- abandon(v => Scope.runUnowned(v))
-            yield fail(s"PROBE C result: Scope.run closes=$viaRun  runUnowned closes=$viaUnowned")
-            end for
+                n <- closes.get
+            yield assert(n == 1, s"an abandoned acquisition kept its resource: closes=$n")
         }
 
         // A child would be closed by the enclosing scope, which is the same resource released under a caller that

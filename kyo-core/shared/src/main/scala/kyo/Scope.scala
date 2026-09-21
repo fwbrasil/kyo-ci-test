@@ -178,9 +178,8 @@ object Scope:
       * This covers the second case without causing the first: registrations made inside are run on a failure and
       * never on a clean end, so the value leaves with them still armed and nobody to fire them.
       *
-      * An abandonment is NOT covered today. The backstop does not reach a body interrupted while parked, so an
-      * acquisition stopped partway keeps what it had opened, which is what the unscoped entry points did before this
-      * existed. `ScopeTest` carries that as a pending leaf.
+      * An abandonment is covered: a body interrupted while parked unwinds through the backstop, which closes what it
+      * had registered.
       *
       * The scope is a root even when one encloses it. A child would be closed by the enclosing scope, which is the
       * same resource released under a caller that was handed it to keep.
@@ -195,11 +194,11 @@ object Scope:
         import AllowUnsafe.embrace.danger
         Sync.Unsafe.defer {
             val finalizer = Finalizer.Unsafe.init(1)
-            // Whether the value reached the step that delivers it. The backstop below runs on every ending and
-            // cannot tell the endings apart on its own: a clean one carries `Absent`, and so does an abandonment,
-            // which reaches it as neither a failure nor a panic. Closing on `Absent` would release the value on its
-            // way out; not closing on it would leave an abandoned acquisition holding everything it had opened.
-            // This flag is the difference, and it is set in the delivering step so no step separates the two.
+            // Whether the value reached the step that delivers it. The backstop below runs on every ending, and
+            // `Absent` does not identify one: a clean end carries it, and so does a remainder dropped with nothing
+            // recorded against it. Closing on `Absent` would release the value on its way out; not closing on it
+            // would leave a dropped acquisition holding everything it had opened. This flag is the difference, and
+            // it is set in the delivering step so no step separates the two.
             val delivered = AtomicBoolean.Unsafe.init(false)
             ContextEffect.handle(
                 Tag[Scope],
