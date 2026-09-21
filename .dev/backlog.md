@@ -247,7 +247,7 @@ Observed, not a failure: two `SignalTest` leaves take 1m08s each on JS on this M
 
 | rung | what | state |
 |---|---|---|
-| 1 | local: full JVM and JS of the whole tree; Native and Wasm for touched modules | kyo-core JS done (4 rounds); the rest not started |
+| 1 | local: full JVM and JS of the whole tree; Native and Wasm for touched modules | kyo-core JS done (4 rounds, before the 2026-09-21 `Channel`/`Hub`/waiter changes). After those changes, full module runs on the host: `kyo-coreJVM/test` 43 suites, 1899 passed, 0 failed, 26 pending; `kyo-netJVM/test` 246 suites, 0 failed; `kyo-browserJVM/test` 70 suites, 0 failed; `kyo-aeronJVM/test` and `kyo-aeronJS/test` 13 suites each, 0 failed; all `SBT_EXIT=0`. The rest of the tree, kyo-core JS again, Native and Wasm: not started |
 | 2 | one `mode=custom` CI dispatch with every proven suite | not started |
 | 3 | CI: Windows x64 and arm64 (JVM, JS); Native and Wasm on both Linux poles | not started |
 | 4 | full CI on all four OS poles: one uncounted smoke, then three counted | not started |
