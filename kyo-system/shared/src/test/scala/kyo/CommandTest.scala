@@ -282,38 +282,28 @@ class CommandTest extends kyo.test.Test[Any]:
     }
 
     // `spawn` must register the process's release in the step that forks it, or a stop during the fork parks the
-    // registration and the process is nobody's. The fork is below what a timer lands in, so the leaf's own fiber spins
-    // on a flag the spawner sets before the fork, staggers its offset, and requests the stop directly. The check is on
-    // the operating system's view, by a unique argv.
-    "an interrupt landing during spawn does not orphan the process".notJs.notWasm in {
+    // registration and the process is nobody's. A stop requested from another fiber at any point of the fork is seen
+    // by the spawner only once the fork returns, so requesting it from inside the fork step is the same state, placed
+    // exactly. The check is on the operating system's view, by a unique argv, and a process that outlives its scope
+    // ends as the leaf's timeout.
+    "an interrupt landing during spawn does not orphan the process" in {
         assumeUnix() // sleep / pgrep / kill have no Windows equivalent
         val seconds                                                  = 300 + scala.util.Random.nextInt(1000)
-        val cmd                                                      = Command("sleep", seconds.toString)
-        val rounds                                                   = 80
+        val cmd                                                      = new StoppedDuringFork(Command("sleep", seconds.toString).unsafe)
         def alive: Chunk[String] < (Async & Abort[CommandException]) =
             Command("pgrep", "-f", s"^sleep $seconds$$").textWithExitCode.map((out, _) =>
                 Chunk.from(out.linesIterator.map(_.trim).filter(_.nonEmpty).toSeq)
             )
-        for
-            _ <- Loop.indexed { i =>
-                if i >= rounds then Loop.done
-                else
-                    val forking = new java.util.concurrent.atomic.AtomicBoolean(false)
-                    Fiber.initUnscoped(Scope.run(Sync.defer(forking.set(true)).andThen(cmd.spawn).andThen(Async.never))).map { fiber =>
-                        Sync.Unsafe.defer {
-                            val bound = java.lang.System.nanoTime() + 200_000_000L
-                            while !forking.get() && java.lang.System.nanoTime() < bound do ()
-                            val target = java.lang.System.nanoTime() + (i % 40) * 100_000L
-                            while java.lang.System.nanoTime() < target do ()
-                            discard(fiber.unsafe.interrupt())
-                        }.andThen(fiber.getResult).andThen(Loop.continue)
-                    }
-            }
-            r    <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(alive.map(_.isEmpty))))
-            left <- alive
-            _    <- Kyo.foreachDiscard(left)(pid => Abort.run[CommandException](Command("kill", "-9", pid).waitFor).unit)
-        yield assert(r.isSuccess, s"${left.size} process(es) outlived the scope that spawned them: ${left.mkString(", ")}")
-        end for
+        // A process this leaf orphans would otherwise sit on the host for the lifetime of its `sleep`.
+        def killLeftovers: Unit < Async =
+            Abort.run[CommandException](alive.map(left => Kyo.foreachDiscard(left)(pid => Command("kill", "-9", pid).waitFor))).unit
+        Sync.ensure(killLeftovers) {
+            for
+                fiber  <- Fiber.initUnscoped(Scope.run(cmd.safe.spawn.andThen(Async.never)))
+                result <- fiber.getResult
+                _      <- assertEventually(alive.map(_.isEmpty))
+            yield assert(result.isPanic && cmd.forked.get())
+        }
     }
 
     "spawnUnscoped returns a live process the caller owns and must close" in {
@@ -629,3 +619,36 @@ class CommandTest extends kyo.test.Test[Any]:
     }
 
 end CommandTest
+
+/** A command whose fork carries a stop on the fiber running it: `spawn` requests the interrupt, then forks. */
+final private class StoppedDuringFork(underlying: Command.Unsafe) extends Command.Unsafe:
+
+    val forked = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+    def spawn()(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe] =
+        kyo.scheduler.IOTask.currentTask().foreach(_.interruptDiscard(Result.Panic(Interrupted(summon[Frame]))))
+        val result = underlying.spawn()
+        forked.set(result.isSuccess)
+        result
+    end spawn
+
+    def text()(using AllowUnsafe, Frame): Fiber.Unsafe[String, Abort[CommandException]]                    = underlying.text()
+    def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[ExitCode, Abort[CommandException]]               = underlying.waitFor()
+    def waitForSuccess()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[CommandException | ExitCode]] = underlying.waitForSuccess()
+    def args: Chunk[String]                                                                                = underlying.args
+    def workDir: Maybe[kyo.Path]                                                                           = underlying.workDir
+    private[kyo] def envMode: Command.EnvMode                                                              = underlying.envMode
+    def withCwd(path: kyo.Path): Command.Unsafe                                                            = underlying.withCwd(path)
+    def withEnvAppend(vars: Map[String, String]): Command.Unsafe                                           = underlying.withEnvAppend(vars)
+    def withEnvRemove(names: Set[String]): Command.Unsafe                                                  = underlying.withEnvRemove(names)
+    def withEnvReplace(vars: Map[String, String]): Command.Unsafe                                          = underlying.withEnvReplace(vars)
+    def withEnvClear: Command.Unsafe                                                                       = underlying.withEnvClear
+    def withStdin(input: Process.Input): Command.Unsafe                                                    = underlying.withStdin(input)
+    def withStdinStream(s: Stream[Byte, Sync]): Command.Unsafe                                             = underlying.withStdinStream(s)
+    def withInheritStdout(value: Boolean): Command.Unsafe               = underlying.withInheritStdout(value)
+    def withInheritStderr(value: Boolean): Command.Unsafe               = underlying.withInheritStderr(value)
+    def withStdoutFile(path: kyo.Path, append: Boolean): Command.Unsafe = underlying.withStdoutFile(path, append)
+    def withStderrFile(path: kyo.Path, append: Boolean): Command.Unsafe = underlying.withStderrFile(path, append)
+    def withRedirectErrorStream(value: Boolean): Command.Unsafe         = underlying.withRedirectErrorStream(value)
+    def withAndThen(that: Command.Unsafe): Command.Unsafe               = underlying.withAndThen(that)
+end StoppedDuringFork
