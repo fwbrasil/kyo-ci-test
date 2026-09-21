@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.internal.*
+import kyo.scheduler.IOPromise
 import scala.annotation.tailrec
 
 /** A channel for communicating between fibers.
