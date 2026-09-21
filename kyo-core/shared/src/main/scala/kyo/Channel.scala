@@ -481,42 +481,11 @@ object Channel:
             case Value(value: A, override val promise: Promise.Unsafe[Unit, Abort[Closed]])
         end Put
 
-        /** A waiter the channel created and queued. An interrupt completes it where it sits, and an entry cannot be removed from the
-          * middle of its queue, so `dead` counts the waiters in that state and the pending counts subtract it. The count moves on the
-          * interrupt only: a delivery never touches it.
-          */
-        final private[Unsafe] class Waiter[B](dead: AtomicInt.Unsafe)(using AllowUnsafe) extends IOPromise[Any, B < Abort[Closed]]:
-            override protected def interrupt(p: IOPromise.Pending[Any, B < Abort[Closed]], error: Result.Error[Any]): Boolean =
-                super.interrupt(p, error) && {
-                    discard(dead.incrementAndGet())
-                    true
-                }
-        end Waiter
-
         sealed abstract class BaseUnsafe[A](using AllowUnsafe) extends Unsafe[A]:
             val takes           = new MpmcUnboundedUnsafeQueue[Promise.Unsafe[A, Abort[Closed]]](8)
             val puts            = new MpmcUnboundedUnsafeQueue[Put[A]](8)
             val priorityPuts    = new MpmcUnboundedUnsafeQueue[Put[A]](8)
             val batchInProgress = AtomicBoolean.Unsafe.init(false)
-            val deadTakes       = AtomicInt.Unsafe.init(0)
-            val deadPuts        = AtomicInt.Unsafe.init(0)
-
-            /** Hands a polled taker its result. A refusal is a taker interrupted while it was queued, which has now left the queue. A
-              * taker registered through [[reuseTake]] is not a [[Waiter]] and was never counted.
-              */
-            final protected def settleTake(take: Promise.Unsafe[A, Abort[Closed]], result: Result[Closed, A]): Boolean =
-                take.complete(result) || {
-                    if take.isInstanceOf[Waiter[?]] then discard(deadTakes.decrementAndGet())
-                    false
-                }
-
-            /** Settles a producer that has left the queue for good. A refusal is a producer interrupted while it was queued. */
-            final protected def settlePut(put: Promise.Unsafe[Unit, Abort[Closed]], result: Result[Closed, Unit]): Unit =
-                if !put.complete(result) then discard(deadPuts.decrementAndGet())
-
-            /** The two reads are not one snapshot: between a poll of a dead entry and its decrement the difference is one short. */
-            final protected def live(queued: Int, dead: AtomicInt.Unsafe): Int =
-                Math.max(0, queued - dead.get())
 
             /** Values an interrupted taker handed back. No producer waits on them, so they are not puts: they are served ahead of every
               * parked producer, and a close returns them with its backlog where it fails a parked put. Polled only under the
@@ -552,7 +521,7 @@ object Channel:
             protected def flush()(using Frame): Unit
 
             final def putFiber(value: A)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
-                val promise = Promise.Unsafe.fromIOPromise(new Waiter[Unit](deadPuts))
+                val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
                 val put     = Put.Value(value, promise)
                 discard(puts.offer(put))
                 flush()
@@ -560,7 +529,7 @@ object Channel:
             end putFiber
 
             final def putBatchFiber(values: Seq[A])(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
-                val promise = Promise.Unsafe.fromIOPromise(new Waiter[Unit](deadPuts))
+                val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
                 val put     = Put.Batch(Chunk.from(values), promise)
                 discard(puts.offer(put))
                 flush()
@@ -568,7 +537,7 @@ object Channel:
             end putBatchFiber
 
             final def takeFiber()(using AllowUnsafe, Frame): Fiber.Unsafe[A, Abort[Closed]] =
-                val promise = Promise.Unsafe.fromIOPromise(new Waiter[A](deadTakes))
+                val promise = Promise.Unsafe.init[A, Abort[Closed]]()
                 discard(takes.offer(promise))
                 flush()
                 promise
@@ -592,11 +561,9 @@ object Channel:
             @tailrec
             final protected def pollNextLive()(using AllowUnsafe, Frame): Maybe[Put[A]] =
                 (priorityPuts.poll().orElse(puts.poll()): @unchecked) match
-                    case Absent => Absent
-                    case Present(Put.Value(_, promise)) if promise.done() =>
-                        discard(deadPuts.decrementAndGet())
-                        pollNextLive()
-                    case Present(p) => Present(p)
+                    case Absent                                           => Absent
+                    case Present(Put.Value(_, promise)) if promise.done() => pollNextLive()
+                    case Present(p)                                       => Present(p)
         end BaseUnsafe
 
         final class ZeroCapacityUnsafe[A](val initFrame: Frame)(using allow: AllowUnsafe) extends BaseUnsafe[A]:
