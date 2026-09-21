@@ -41,14 +41,13 @@ final private[kyo] class Http1Parser(
     private var hasContentLength     = false
     private var hasTransferEncoding  = false
 
-    /** Reusable take promise that extends IOPromise to be directly registered as a channel taker. The onComplete override fires
+    /** Reusable take promise that extends the channel's waiter to be directly registered as a channel taker. The completed override fires
       * synchronously when the channel delivers data. The resetForReuse method exposes the protected becomeAvailable for the parser to call.
       *
-      * Extends `IOPromise[Closed, Span[Byte]]` so poll() returns `Result[Closed, Span[Byte]]` directly — no `< S` wrapper, no cast needed.
-      * Cast to `Promise.Unsafe[Span[Byte], Abort[Closed]]` crosses the opaque boundary (same as ReadPump).
+      * Extends `Waiter[Closed, Span[Byte]]` so poll() returns `Result[Closed, Span[Byte]]` directly, with no `< S` wrapper and no cast.
       */
-    private class TakePromise extends IOPromise[Closed, Span[Byte]]:
-        override protected def onComplete(): Unit =
+    private class TakePromise extends Channel.Unsafe.Waiter[Closed, Span[Byte]]:
+        override protected def completed(): Unit =
             val result = poll()
             // Reset the promise back to Pending BEFORE calling parse(), so that if
             // parse() -> needMoreBytes() -> reuseTake() is called, the promise is
