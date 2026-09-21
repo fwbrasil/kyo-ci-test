@@ -95,7 +95,7 @@ No hot loop added by the kernel work remains on this branch. State per site:
 
 | # | site | what was done | state |
 |---|---|---|---|
-| H1 | `AsyncTest` "an interrupt landing at the timeout's spawn" | leaf DELETED (`df7ff24b24`): both of its forms were rejected. `Async.timeout`'s fork window has no test. Whether the fork and its bracket can share one block, as in `Hub`, has not been read | suite RAN GREEN, 134 |
+| H1 | `AsyncTest` "an interrupt landing at the timeout's spawn" | leaf DELETED (`df7ff24b24`): both of its forms were rejected. Nothing else is owed: `Async.timeout`'s fork is already the acquire of `Sync.acquireReleaseWith`, so the window is closed by construction, and the barrier leaf "interrupting a timeout interrupts the computation it guards" covers the observable behavior | suite RAN GREEN, 134 |
 | H2 | `HubTest` `Hub.use` spawn leaf | production fix (`df7ff24b24`): `Hub.initUnscopedWith` spawns with `Fiber.Unsafe.init` in the block that builds the hub and applies `f`, so the window does not exist. Leaf removed. Behavior change: the publisher no longer inherits `Local`s | RAN GREEN, 38 |
 | H3 | `HubTest` listener abandonment | `Hub.listen` already registers the close before the add. Barrier leaf "a listener whose fiber is interrupted is not left in the set", `.times(500)`, all platforms | one round RAN GREEN on the JVM; 500 rounds and JS in flight |
 | H4 | `CommandTest` "an interrupt landing during spawn" | a `Command.Unsafe` wrapper requests the interrupt on the forking fiber, then forks (`d0fa1d21b0`, `2861009d7e`). One round. Gate removed | RAN GREEN on the JVM, 51. No red proof, JS never run. It interrupts the current task from test code, which is close to what the user rejected in the spawn hook: raise it at review |

@@ -53,8 +53,8 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
     // is never reaped ends this leaf as its timeout. A `pgrep` that cannot run fails the leaf rather than counting zero.
     "a launch stopped while its Chrome is up leaves no Chrome behind".times(40) in {
         assume(!Platform.isWindows, "POSIX process tree")
-        val token                                                         = s"--kyo-launch-probe-${UUID.randomUUID().toString.take(8)}"
-        def alive: Int < (Async & Abort[CommandException])                =
+        val token                                          = s"--kyo-launch-probe-${UUID.randomUUID().toString.take(8)}"
+        def alive: Int < (Async & Abort[CommandException]) =
             Command("pgrep", "-f", token).textWithExitCode.map((out, _) => out.linesIterator.count(_.trim.nonEmpty))
         // A Chrome this leaf fails to reap would otherwise run for the rest of the suite.
         def kill: Unit < Async =
