@@ -274,8 +274,8 @@ class SqlClientInterruptTest extends SqlContainerTest:
                             fiber  <- Fiber.initUnscoped(Abort.run[SqlException](client.close))
                             _      <- fiber.interrupt
                             _      <- fiber.getResult
-                            began <- client.isClosed
-                            gone  <-
+                            began  <- client.isClosed
+                            gone   <-
                                 if began then
                                     Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(sessions.map(_ == 0)))).map(_.isSuccess)
                                 else Abort.run[SqlException](client.close).andThen(assertEventually(sessions.map(_ == 0))).andThen(true)
@@ -310,7 +310,7 @@ class SqlClientInterruptTest extends SqlContainerTest:
                                 fiber <- Fiber.initUnscoped(Abort.run[SqlException](client.query("SELECT 1")))
                                 _     <- fiber.interrupt
                                 _     <- fiber.getResult
-                                n <- sessions
+                                n     <- sessions
                             yield
                                 assert(n <= 2, s"round $i: the server holds $n sessions for a pool of two")
                                 Loop.continue
