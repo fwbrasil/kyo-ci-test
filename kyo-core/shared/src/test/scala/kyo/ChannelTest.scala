@@ -2205,17 +2205,19 @@ class ChannelTest extends kyo.test.Test[Any]:
                                 c.takeWith(v => Scope.acquireRelease(v)(_ => released.incrementAndGet.unit)).andThen(Async.never)
                             }
                         }
-                        _       <- assertEventually(c.pendingTakes.map(_ == 1))
-                        _       <- c.put(i)
-                        _       <- taker.interrupt
-                        _       <- taker.getResult
-                        settled <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(
-                            released.get.map(r => c.size.map(s => r == 1 || s == 1))
-                        )))
+                        _ <- assertEventually(c.pendingTakes.map(_ == 1))
+                        _ <- c.put(i)
+                        _ <- taker.interrupt
+                        _ <- taker.getResult
+                        _ <- assertEventually(released.get.map(r =>
+                            c.size.map { s =>
+                                assert(r == 1 || s == 1, s"round $i: the element was delivered to the taker and never released")
+                                true
+                            }
+                        ))
                         rel  <- released.get
                         left <- c.size
                     yield
-                        assert(settled.isSuccess, s"round $i: the element was delivered to the taker and never released")
                         assert((rel == 1 && left == 0) || (rel == 0 && left == 1), s"round $i: released=$rel left=$left")
                         Loop.continue
             }

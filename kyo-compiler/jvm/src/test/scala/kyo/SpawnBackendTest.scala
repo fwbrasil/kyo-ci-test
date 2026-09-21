@@ -313,21 +313,21 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
                 if i >= rounds then Loop.done(succeed)
                 else
                     val token = s"kyo-orphan-probe-${java.util.UUID.randomUUID().toString.take(8)}"
-                    for
-                        fiber <- Fiber.initUnscoped(
-                            Abort.run[CompilerException](SpawnBackend.init(spawnConfig(Chunk(s"-Wconf:msg=$token:s")), driver, 300 + i))
-                        )
-                        _ <- Async.delay(if i < 48 then (i * 250).micros else (12 + (i - 48) * 4).millis)(fiber.interrupt)
-                        r <- fiber.getResult
-                        _ <- r match
-                            case Result.Success(Result.Success(backend)) => Abort.run[Throwable](backend.close).unit
-                            case _                                       => Kyo.unit
-                        gone <- Abort.run[Timeout](Async.timeout(10.seconds)(assertEventually(workers(token).map(_ == 0))))
-                        _    <- if gone.isSuccess then Kyo.unit else kill(token)
-                    yield
-                        assert(gone.isSuccess, s"round $i: a worker JVM outlived the interrupted init")
-                        Loop.continue
-                    end for
+                    // A round whose worker is never reaped would otherwise leave a JVM running for the rest of the suite.
+                    Scope.run(Scope.ensure(kill(token)).andThen {
+                        for
+                            fiber <- Fiber.initUnscoped(
+                                Abort.run[CompilerException](SpawnBackend.init(spawnConfig(Chunk(s"-Wconf:msg=$token:s")), driver, 300 + i))
+                            )
+                            _ <- Async.delay(if i < 48 then (i * 250).micros else (12 + (i - 48) * 4).millis)(fiber.interrupt)
+                            r <- fiber.getResult
+                            _ <- r match
+                                case Result.Success(Result.Success(backend)) => Abort.run[Throwable](backend.close).unit
+                                case _                                       => Kyo.unit
+                            _ <- assertEventually(workers(token).map(_ == 0))
+                        yield Loop.continue
+                        end for
+                    })
             }
         }
     }

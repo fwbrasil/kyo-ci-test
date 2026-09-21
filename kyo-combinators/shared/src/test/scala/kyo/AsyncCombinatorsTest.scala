@@ -132,9 +132,9 @@ class AsyncCombinatorsTest extends kyo.test.Test[Any]:
                     _ <- entered.await
                     _ <- fiber.interrupt
                     _ <- fiber.getResult
-                    r <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get)))
+                    _ <- assertEventually(released.get)
                     _ <- gate.release
-                yield assert(r.isSuccess, "the registered effect was orphaned: its finalizer did not run once the caller was interrupted")
+                yield succeed
                 end for
             }
         }

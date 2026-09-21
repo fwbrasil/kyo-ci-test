@@ -58,14 +58,14 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
             a      <- f(client, browser, wire)
         yield a
 
-    private def sawEventually(wire: Wire, method: String)(using Frame, kyo.test.AssertScope): Boolean < Async =
-        Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(wire.seen.get.map(_.contains(method))))).map(_.isSuccess)
+    private def sawEventually(wire: Wire, method: String)(using Frame, kyo.test.AssertScope): Unit < Async =
+        assertEventually(wire.seen.get.map(_.contains(method)))
 
-    /** Whether `method` shows up at least `n` times within a bounded wait; `false` on timeout. Most sites re-send their
-      * apply method for the restore, so "fired again" is a count, not a second name the way `withViewport`'s pair is.
+    /** Asserts `method` shows up at least `n` times. Most sites re-send their apply method for the restore, so "fired
+      * again" is a count, not a second name the way `withViewport`'s pair is.
       */
-    private def sawEventuallyCount(wire: Wire, method: String, n: Int)(using Frame, kyo.test.AssertScope): Boolean < Async =
-        Abort.run[Timeout](Async.timeout(1.second)(assertEventually(wire.seen.get.map(_.count(_ == method) >= n)))).map(_.isSuccess)
+    private def sawEventuallyCount(wire: Wire, method: String, n: Int)(using Frame, kyo.test.AssertScope): Unit < Async =
+        assertEventually(wire.seen.get.map(_.count(_ == method) >= n))
 
     /** Canned `Runtime.evaluate` reply for `screenshotElement`'s box-stable check: a resolved rect, found and stable on the
       * first sample, so `Actionability.withRetry` never loops.
@@ -148,15 +148,15 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                     fiber <- Fiber.initUnscoped(Abort.run[BrowserReadException | BrowserSetupException](
                         Scope.run(CdpBackend.initUnscoped(client, cfg).andThen(Async.never))
                     ))
-                    probed   <- sawEventually(wire, "Browser.getVersion")
-                    _        <- fiber.interrupt
-                    _        <- gate.release
-                    _        <- fiber.getResult
-                    _        <- Abort.run[Closed](browser.send(JsonRpcRequest(JsonRpcId(9001L), "Probe.ping", Absent, Absent)))
+                    _ <- sawEventually(wire, "Browser.getVersion")
+                    _ <- fiber.interrupt
+                    _ <- gate.release
+                    _ <- fiber.getResult
+                    _ <- Abort.run[Closed](browser.send(JsonRpcRequest(JsonRpcId(9001L), "Probe.ping", Absent, Absent)))
+                    // An answer that never comes is the claim, and no barrier can witness an absence: the window is
+                    // what an owner still on the wire would need to answer within.
                     answered <- Abort.run[Timeout](Async.timeout(1.second)(assertEventually(wire.replies.get.map(_ > 0)))).map(_.isSuccess)
-                yield
-                    assert(probed, "the init never reached the version probe")
-                    assert(!answered, "an endpoint nobody owns is still answering the wire after the init that built it was stopped")
+                yield assert(!answered, "an endpoint nobody owns is still answering the wire after the init that built it was stopped")
                 end for
             }
         }
@@ -165,7 +165,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
     // The probe captures the dialog queue the drainer parks on, so the orphan is observable.
     "an interrupt landing at the version probe leaves no dialog drainer parked".pendingUntilFixed(
         "the dialog drainer is spawned before the version probe and owned by the backend's close, which init never registers when the probe abandons it; the drainer stays parked on the dialog queue"
-    ) in {
+    ).timeout(10.seconds) in {
         val captured =
             new java.util.concurrent.atomic.AtomicReference[Maybe[Channel[(Boolean, String, Maybe[SessionId])]]](Maybe.empty)
         Latch.init(1).map { gate =>
@@ -174,18 +174,14 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                     fiber <- Fiber.initUnscoped(Abort.run[BrowserReadException | BrowserSetupException](
                         Scope.run(CdpBackend.initUnscoped(client, cfg, q => captured.set(Maybe(q))).andThen(Async.never))
                     ))
-                    probed <- sawEventually(wire, "Browser.getVersion")
-                    _      <- fiber.interrupt
-                    _      <- gate.release
-                    _      <- fiber.getResult
-                    _      <- assertEventually(Sync.defer(captured.get().isDefined))
+                    _ <- sawEventually(wire, "Browser.getVersion")
+                    _ <- fiber.interrupt
+                    _ <- gate.release
+                    _ <- fiber.getResult
+                    _ <- assertEventually(Sync.defer(captured.get().isDefined))
                     q = captured.get().get
-                    idle <- Abort.run[Timeout | Closed](
-                        Async.timeout(1.second)(assertEventually(q.pendingTakes.map(_ == 0)))
-                    ).map(_.isSuccess)
-                yield
-                    assert(probed, "the init never reached the version probe")
-                    assert(idle, "the dialog drainer is still parked on the dialog queue after the init that spawned it was stopped")
+                    _ <- assertEventually(q.pendingTakes.map(_ == 0))
+                yield succeed
                 end for
             }
         }
@@ -200,14 +196,12 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                             fiber <- Fiber.initUnscoped(Abort.run[BrowserReadException](
                                 Scope.run(BrowserTabSetup.attachAndSetupTab(backend).andThen(Async.never))
                             ))
-                            created  <- sawEventually(wire, "Target.createBrowserContext")
-                            _        <- fiber.interrupt
-                            _        <- gate.release
-                            _        <- fiber.getResult
-                            disposed <- sawEventually(wire, "Target.disposeBrowserContext")
-                        yield
-                            assert(created, "the setup never asked for a browser context")
-                            assert(disposed, "the context the reply delivered was never disposed after the setup was stopped at that reply")
+                            _ <- sawEventually(wire, "Target.createBrowserContext")
+                            _ <- fiber.interrupt
+                            _ <- gate.release
+                            _ <- fiber.getResult
+                            _ <- sawEventually(wire, "Target.disposeBrowserContext")
+                        yield succeed
                         end for
                     }
                 }
@@ -229,17 +223,12 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                                         )
                                     )
                                 ))
-                                overridden <- sawEventually(wire, "Emulation.setDeviceMetricsOverride")
-                                _          <- fiber.interrupt
-                                _          <- gate.release
-                                _          <- fiber.getResult
-                                restored   <- sawEventually(wire, "Emulation.clearDeviceMetricsOverride")
-                            yield
-                                assert(overridden, "the viewport override was never sent")
-                                assert(
-                                    restored,
-                                    "the override the reply confirmed was never cleared after the caller was stopped at that reply"
-                                )
+                                _ <- sawEventually(wire, "Emulation.setDeviceMetricsOverride")
+                                _ <- fiber.interrupt
+                                _ <- gate.release
+                                _ <- fiber.getResult
+                                _ <- sawEventually(wire, "Emulation.clearDeviceMetricsOverride")
+                            yield succeed
                             end for
                         }
                     }
@@ -250,7 +239,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
 
     "an interrupt landing at the background-color override reply still clears it".pendingUntilFixed(
         "the CDP override lands on the server before its reply and Scope.acquireRelease registers the restore only when the reply lands; an interrupt at the reply strands the override with no restore"
-    ) in {
+    ).timeout(10.seconds) in {
         Latch.init(1).map { gate =>
             wired(Map("Emulation.setDefaultBackgroundColorOverride" -> gate)) { (client, _, wire) =>
                 Scope.run {
@@ -263,17 +252,12 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                                             .andThen(Async.never)
                                     )
                                 ))
-                                overridden <- sawEventually(wire, "Emulation.setDefaultBackgroundColorOverride")
-                                _          <- fiber.interrupt
-                                _          <- gate.release
-                                _          <- fiber.getResult
-                                cleared    <- sawEventuallyCount(wire, "Emulation.setDefaultBackgroundColorOverride", 2)
-                            yield
-                                assert(overridden, "the background-color override was never sent")
-                                assert(
-                                    cleared,
-                                    "the override the reply confirmed was never cleared after the caller was stopped at that reply"
-                                )
+                                _ <- sawEventually(wire, "Emulation.setDefaultBackgroundColorOverride")
+                                _ <- fiber.interrupt
+                                _ <- gate.release
+                                _ <- fiber.getResult
+                                _ <- sawEventuallyCount(wire, "Emulation.setDefaultBackgroundColorOverride", 2)
+                            yield succeed
                             end for
                         }
                     }
@@ -287,7 +271,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
     // answer.
     "an interrupt landing at the emulated-media override reply still restores it".pendingUntilFixed(
         "the CDP override lands on the server before its reply and Scope.acquireRelease registers the restore only when the reply lands; an interrupt at the reply strands the override with no restore"
-    ) in {
+    ).timeout(10.seconds) in {
         Latch.init(1).map { gate =>
             wired(Map("Emulation.setEmulatedMedia" -> gate)) { (client, _, wire) =>
                 Scope.run {
@@ -301,17 +285,12 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                                         )
                                     )
                                 ))
-                                overridden <- sawEventually(wire, "Emulation.setEmulatedMedia")
-                                _          <- fiber.interrupt
-                                _          <- gate.release
-                                _          <- fiber.getResult
-                                restored   <- sawEventuallyCount(wire, "Emulation.setEmulatedMedia", 2)
-                            yield
-                                assert(overridden, "the emulated-media override was never sent")
-                                assert(
-                                    restored,
-                                    "the override the reply confirmed was never restored after the caller was stopped at that reply"
-                                )
+                                _ <- sawEventually(wire, "Emulation.setEmulatedMedia")
+                                _ <- fiber.interrupt
+                                _ <- gate.release
+                                _ <- fiber.getResult
+                                _ <- sawEventuallyCount(wire, "Emulation.setEmulatedMedia", 2)
+                            yield succeed
                             end for
                         }
                     }
@@ -322,7 +301,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
 
     "an interrupt landing at the download-policy reply still restores it".pendingUntilFixed(
         "the CDP override lands on the server before its reply and Scope.acquireRelease registers the restore only when the reply lands; an interrupt at the reply strands the override with no restore"
-    ) in {
+    ).timeout(10.seconds) in {
         Latch.init(1).map { gate =>
             wired(Map("Page.setDownloadBehavior" -> gate)) { (client, _, wire) =>
                 Scope.run {
@@ -334,17 +313,12 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                                         Browser.withDownloads("/tmp/kyo-browser-interrupt-test")(Async.never)
                                     )
                                 ))
-                                allowed  <- sawEventually(wire, "Page.setDownloadBehavior")
-                                _        <- fiber.interrupt
-                                _        <- gate.release
-                                _        <- fiber.getResult
-                                restored <- sawEventuallyCount(wire, "Page.setDownloadBehavior", 2)
-                            yield
-                                assert(allowed, "the download policy was never sent")
-                                assert(
-                                    restored,
-                                    "the policy the reply confirmed was never restored after the caller was stopped at that reply"
-                                )
+                                _ <- sawEventually(wire, "Page.setDownloadBehavior")
+                                _ <- fiber.interrupt
+                                _ <- gate.release
+                                _ <- fiber.getResult
+                                _ <- sawEventuallyCount(wire, "Page.setDownloadBehavior", 2)
+                            yield succeed
                             end for
                         }
                     }
@@ -355,7 +329,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
 
     "an interrupt landing at the freeze-style injection reply still removes the freeze style".pendingUntilFixed(
         "the freeze style is injected on the server before its reply and the removal registers only when the reply lands; an interrupt at the reply strands the injected style with no removal"
-    ) in {
+    ).timeout(10.seconds) in {
         wiredEval(_.contains("'freeze'"), _.contains("'unfrozen'")) { (client, _, wire, gate) =>
             Scope.run {
                 CdpBackend.initUnscoped(client, cfg).map { backend =>
@@ -364,14 +338,12 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                             fiber <- Fiber.initUnscoped(Abort.run[BrowserReadException](
                                 Browser.runOn(tab)(HoldStill.withFrozenPage(Async.never))
                             ))
-                            injected <- sawEventually(wire, "Runtime.evaluate:gate-hit")
-                            _        <- fiber.interrupt
-                            _        <- gate.release
-                            _        <- fiber.getResult
-                            removed  <- sawEventually(wire, "Runtime.evaluate:remove-hit")
-                        yield
-                            assert(injected, "the freeze style was never injected")
-                            assert(removed, "the freeze style injected before the interrupt was never removed")
+                            _ <- sawEventually(wire, "Runtime.evaluate:gate-hit")
+                            _ <- fiber.interrupt
+                            _ <- gate.release
+                            _ <- fiber.getResult
+                            _ <- sawEventually(wire, "Runtime.evaluate:remove-hit")
+                        yield succeed
                         end for
                     }
                 }
@@ -384,7 +356,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
     // marks overlay's acquire never registered its removal.
     "an interrupt landing at the marks injection reply still removes the marks overlay".pendingUntilFixed(
         "the marks overlay is injected on the server before its reply and the removal registers only when the reply lands; an interrupt at the reply strands the overlay with no removal"
-    ) in {
+    ).timeout(10.seconds) in {
         val mark =
             Browser.ElementInfo("body", "body", Absent, Chunk.empty, Absent, Browser.Bounds(0, 0, 10, 10), true, true, true, false, Absent)
         wiredEval(_.contains("'marks'"), _.contains("'unmarked'")) { (client, _, wire, gate) =>
@@ -395,14 +367,12 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                             fiber <- Fiber.initUnscoped(Abort.run[BrowserReadException](
                                 Browser.runOn(tab)(Browser.screenshotMarks(Chunk(mark)).unit.andThen(Async.never))
                             ))
-                            injected <- sawEventually(wire, "Runtime.evaluate:gate-hit")
-                            _        <- fiber.interrupt
-                            _        <- gate.release
-                            _        <- fiber.getResult
-                            removed  <- sawEventually(wire, "Runtime.evaluate:remove-hit")
-                        yield
-                            assert(injected, "the marks overlay was never injected")
-                            assert(removed, "the marks overlay injected before the interrupt was never removed")
+                            _ <- sawEventually(wire, "Runtime.evaluate:gate-hit")
+                            _ <- fiber.interrupt
+                            _ <- gate.release
+                            _ <- fiber.getResult
+                            _ <- sawEventually(wire, "Runtime.evaluate:remove-hit")
+                        yield succeed
                         end for
                     }
                 }

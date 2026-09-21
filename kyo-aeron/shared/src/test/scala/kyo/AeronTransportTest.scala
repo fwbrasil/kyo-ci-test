@@ -1571,10 +1571,10 @@ class AeronTransportTest extends Test:
         Loop.indexed { i =>
             if i >= rounds then Loop.done(succeed)
             else
-                val adding = new java.util.concurrent.atomic.AtomicBoolean(false)
                 for
-                    fiber <- Fiber.initUnscoped {
-                        Sync.defer(adding.set(true)).andThen {
+                    adding <- Latch.init(1)
+                    fiber  <- Fiber.initUnscoped {
+                        adding.release.andThen {
                             Topic.runWith(transport) {
                                 Abort.run[TopicException](Topic.publish[Int](
                                     ipcUri,
@@ -1583,23 +1583,15 @@ class AeronTransportTest extends Test:
                             }
                         }
                     }
+                    _ <- adding.await
                     _ <- Sync.Unsafe.defer {
-                        val bound = java.lang.System.nanoTime() + 200_000_000L
-                        while !adding.get() && java.lang.System.nanoTime() < bound do ()
                         val target = java.lang.System.nanoTime() + (i % 40) * 25_000L
                         while java.lang.System.nanoTime() < target do ()
                         discard(fiber.unsafe.interrupt())
                     }
-                    _       <- fiber.getResult
-                    settled <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(
-                        Sync.defer(transport.pubOpens.get() == transport.pubCloses.get())
-                    )))
-                yield
-                    assert(
-                        settled.isSuccess,
-                        s"round $i: opened ${transport.pubOpens.get()} publication(s), closed ${transport.pubCloses.get()}"
-                    )
-                    Loop.continue
+                    _ <- fiber.getResult
+                    _ <- assertEventually(Sync.defer(transport.pubOpens.get() == transport.pubCloses.get()))
+                yield Loop.continue
                 end for
         }
     }

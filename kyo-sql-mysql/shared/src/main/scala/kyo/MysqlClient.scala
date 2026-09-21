@@ -197,7 +197,7 @@ object MysqlClient:
     private[kyo] def openUnscoped(url: SqlConfig.Url, config: SqlConfig)(using
         Frame
     ): MysqlClient < (Async & Abort[SqlException]) =
-        Scope.run(opened(url, config))
+        Scope.runUnowned(opened(url, config))
 
     /** Assembles the carrier through [[kyo.db.Runtime.init]] and wraps it in a client.
       *

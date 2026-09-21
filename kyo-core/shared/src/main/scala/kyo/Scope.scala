@@ -167,6 +167,48 @@ object Scope:
                 .handle(Sync.ensure(finalizer.close))
         }
 
+    /** Runs `v` under a scope that releases only if `v` does not reach its end, for an acquisition whose value the
+      * caller is meant to own.
+      *
+      * An `initUnscoped`-style entry point has a gap no registration closes: the resource exists from partway through
+      * the acquisition, but the owner is the caller, who cannot register anything until the value reaches them. Using
+      * [[run]] for the acquisition would close the resource at the end of it, which is the opposite of handing it
+      * over. Registering nothing leaves an acquisition abandoned partway holding whatever it had opened.
+      *
+      * This covers the second case without causing the first: registrations made inside are run on a failure or an
+      * abandonment and never on a clean end, so the value leaves with them still armed and nobody to fire them.
+      *
+      * The scope is a root even when one encloses it. A child would be closed by the enclosing scope, which is the
+      * same resource released under a caller that was handed it to keep.
+      *
+      * What remains uncovered is the caller's own first step: the value is handed over with nothing registered
+      * against it, so an interrupt landing there abandons it. That is inherent to returning an unowned resource, and
+      * it is why the scoped entry points exist.
+      */
+    private[kyo] def runUnowned[A, S](v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
+        Sync.Unsafe.defer {
+            val finalizer = Finalizer.Unsafe.init(1)
+            ContextEffect.handle(
+                Tag[Scope],
+                derive = (_: Maybe[Finalizer]) => finalizer,
+                fork = (parent: Finalizer) => parent.forked,
+                join = (parent: Finalizer, _: Finalizer, _: Finalizer) => parent
+            )(v)
+                .handle(Abort.run[Any])
+                .map { result =>
+                    result.error match
+                        case Present(error) =>
+                            finalizer
+                                .close(Present(error))
+                                .andThen(finalizer.await)
+                                .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
+                        case Absent =>
+                            Abort.get(result.asInstanceOf[Result[Nothing, A]])
+                }
+                // The abandonment edge, which carries a panic rather than a clean end, so it closes.
+                .handle(Sync.ensure(finalizer.close))
+        }
+
     /** The finalizers registered against one scope, run in reverse registration order when it closes. A nested run
       * joins as a child through [[addChild]], so inner resources release before outer.
       */

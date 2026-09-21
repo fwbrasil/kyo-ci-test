@@ -957,16 +957,18 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                             }
                         }
                     }
-                    ran   <- Abort.run[Timeout](Async.timeout(500.millis)(entered.await))
-                    freed <-
-                        if ran.isSuccess then Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get))).map(_.isSuccess)
-                        else Kyo.lift(true)
+                    ran <- Abort.run[Timeout](Async.timeout(500.millis)(entered.await))
+                    _ <-
+                        if ran.isSuccess then
+                            assertEventually(released.get.map { freed =>
+                                assert(freed, s"round $i: the handler kept running after the endpoint serving it was closed")
+                                true
+                            })
+                        else Kyo.unit
                     _ <- gate.release
                     _ <- ta.close
                     _ <- tb.close
-                yield
-                    assert(freed, s"round $i: the handler kept running after the endpoint serving it was closed")
-                    Loop.continue
+                yield Loop.continue
                 end for
         }
     }
@@ -1001,9 +1003,12 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             _      <- joiner.interrupt
             _      <- joiner.getResult
             _      <- blockGate.release
-            done   <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(transportClosed.get))).map(_.isSuccess)
-            _      <- ta.close
-        yield assert(done, "the caller's interrupt abandoned the finalizer, leaving the transport unclosed")
+            _      <- assertEventually(transportClosed.get.map { closed =>
+                assert(closed, "the caller's interrupt abandoned the finalizer, leaving the transport unclosed")
+                true
+            })
+            _ <- ta.close
+        yield succeed
     }
 
     // A send that loses to the finalizer's writerChannel.close fails on the closed channel. Reporting that as a
@@ -1120,7 +1125,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             }
             transports <- JsonRpcTransport.inMemory
             (ta, tb) = transports
-            started <- Scope.run {
+            _ <- Scope.run {
                 probing(hook)(JsonRpcHandler.init(tb, Seq(route))).map { _ =>
                     Scope.run {
                         JsonRpcHandler.init(ta, Seq.empty).map { a =>
@@ -1128,20 +1133,16 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                                 IOTask.currentTask().foreach(_.interruptDiscard(Result.Panic(Interrupted(summon[Frame]))))
                             }).andThen {
                                 Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("park", AddReq(0, 0))))
-                            }.andThen {
-                                Abort.run[Timeout](Async.timeout(2.seconds)(entered.await)).map(_.isSuccess)
-                            }
+                            }.andThen(entered.await)
                         }
                     }
                 }
             }
-            freed <- Abort.run[Timeout](Async.timeout(2.seconds)(released.await)).map(_.isSuccess)
-            _     <- gate.release
-            _     <- ta.close
-            _     <- tb.close
-        yield
-            assert(started, "the request never reached its handler")
-            assert(freed, "the handler kept running after the endpoint serving it was closed")
+            _ <- released.await
+            _ <- gate.release
+            _ <- ta.close
+            _ <- tb.close
+        yield succeed
         end for
     }
 
@@ -1151,7 +1152,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         // scheduled fiber is the only thing that stops it. The forward lands before the fiber runs a step, so the
         // handler's own result never exists and the completion hook answers the caller with the interrupt instead.
         // Nothing gates the route, so a handler the forward failed to reach answers with its own result. The caller's
-        // outcome separates the two with no timing dependence; the timeout only guards against a hang.
+        // outcome separates the two with no timing dependence.
         val hook = new SpawnHook
         for
             transports <- JsonRpcTransport.inMemory
@@ -1172,11 +1173,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                                         case _ => ()
                                 }
                             }).andThen {
-                                Abort.run[Timeout] {
-                                    Async.timeout(5.seconds) {
-                                        Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("park", AddReq(0, 0)))
-                                    }
-                                }
+                                Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("park", AddReq(0, 0)))
                             }
                         }
                     }
@@ -1185,8 +1182,8 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             _ <- ta.close
             _ <- tb.close
         yield outcome match
-            case Result.Success(Result.Failure(_: JsonRpcError)) => succeed
-            case Result.Success(Result.Success(r))               =>
+            case Result.Failure(_: JsonRpcError) => succeed
+            case Result.Success(r)               =>
                 fail(s"the sweep's interrupt never reached the handler: it ran and answered $r")
             case other =>
                 fail(s"expected the interrupted handler's error response, got $other")

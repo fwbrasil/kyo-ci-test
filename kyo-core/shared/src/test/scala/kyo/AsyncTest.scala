@@ -508,7 +508,7 @@ class AsyncTest extends kyo.test.Test[Any]:
 
     "a value the shielded body produces is not stranded when the caller is interrupted at the join".pendingUntilFixed(
         "Async.uninterruptible joins the shielded fiber's promise and hands its value to the caller's next step, so a stop landing at that join abandons the value with no owner"
-    ) in {
+    ).timeout(10.seconds) in {
         for
             entered  <- Latch.init(1)
             gate     <- Latch.init(1)
@@ -524,8 +524,8 @@ class AsyncTest extends kyo.test.Test[Any]:
             _ <- fiber.interrupt
             _ <- gate.release
             _ <- fiber.getResult
-            r <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get)))
-        yield assert(r.isSuccess, "the shielded body handed its value to a join the interrupt had abandoned, and its release never ran")
+            _ <- assertEventually(released.get)
+        yield succeed
         end for
     }
 
@@ -1993,16 +1993,20 @@ class AsyncTest extends kyo.test.Test[Any]:
                             while java.lang.System.nanoTime() < target do ()
                             discard(fiber.unsafe.interrupt())
                         }
-                        _     <- fiber.getResult
-                        ran   <- Abort.run[Timeout](Async.timeout(1.second)(entered.await))
-                        freed <-
+                        _   <- fiber.getResult
+                        ran <- Abort.run[Timeout](Async.timeout(1.second)(entered.await))
+                        _   <-
                             if ran.isSuccess then
-                                Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get))).map(_.isSuccess)
-                            else Kyo.lift(true)
+                                assertEventually(released.get.map { freed =>
+                                    assert(
+                                        freed,
+                                        s"round $i: the guarded computation kept running after the caller was interrupted at the spawn"
+                                    )
+                                    true
+                                })
+                            else Kyo.unit
                         _ <- gate.release
-                    yield
-                        assert(freed, s"round $i: the guarded computation kept running after the caller was interrupted at the spawn")
-                        Loop.continue
+                    yield Loop.continue
                     end for
             }
         }

@@ -397,7 +397,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
     // The inner finalizer parks on a gate so the drain is a real join when the interrupt lands.
     "an interrupt at Scope.run's drain await does not strand the value the body produced".pendingUntilFixed(
         "Scope.run's clean exit awaits its drain on a join with the body's value in flight, so an interrupt there abandons the continuation and the value never reaches the caller's registration"
-    ) in {
+    ).timeout(10.seconds) in {
         for
             gate     <- Latch.init(1)
             draining <- Latch.init(1)
@@ -412,9 +412,11 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             _ <- fiber.interrupt
             _ <- gate.release
             _ <- fiber.getResult
-            r <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(closes.get.map(_ == 1))))
-            c <- closes.get
-        yield assert(r.isSuccess && c == 1, s"the handle the inner run produced was registered by nobody: closes=$c")
+            _ <- assertEventually(closes.get.map { c =>
+                assert(c == 1, s"the handle the inner run produced was registered by nobody: closes=$c")
+                true
+            })
+        yield succeed
         end for
     }
 

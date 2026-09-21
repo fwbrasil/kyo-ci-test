@@ -210,11 +210,15 @@ class KyoAppTest extends kyo.test.Test[Any]:
                 Sync.ensure(released.set(true))(started.release.andThen(gate.get))
             ))
             _ = assert(result.failure.exists(_.isInstanceOf[Timeout]), s"the block must report the timeout, got $result")
-            ran   <- Abort.run[Timeout](Async.timeout(2.seconds)(started.await))
-            freed <-
-                if ran.isSuccess then Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get))).map(_.isSuccess)
-                else Kyo.lift(true)
-        yield assert(freed, "the computation started, and its finalizer has not run after runAndBlock reported the timeout")
+            ran <- Abort.run[Timeout](Async.timeout(2.seconds)(started.await))
+            _   <-
+                if ran.isSuccess then
+                    assertEventually(released.get.map { freed =>
+                        assert(freed, "the computation started, and its finalizer has not run after runAndBlock reported the timeout")
+                        true
+                    })
+                else Kyo.unit
+        yield succeed
         end for
     }
 

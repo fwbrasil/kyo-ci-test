@@ -581,9 +581,9 @@ class HubTest extends kyo.test.Test[Any]:
                             while java.lang.System.nanoTime() < target do ()
                             discard(fiber.unsafe.interrupt())
                         }
-                        r <- Abort.run[Timeout](Async.timeout(2.seconds)(fiber.getResult.map(_.isPanic)))
+                        r <- fiber.getResult
                     yield
-                        assert(r.contains(true), s"round $i: the caller did not settle with the interrupt: $r")
+                        assert(r.isPanic, s"round $i: the caller did not settle with the interrupt: $r")
                         Loop.continue
                     end for
             }
@@ -619,13 +619,13 @@ class HubTest extends kyo.test.Test[Any]:
                         end for
                 }.andThen {
                     hub.listen(8).map { live =>
-                        Abort.run[Timeout] {
-                            Async.timeout(2.seconds) {
-                                hub.put(1).andThen(hub.put(2)).andThen(live.take.map(a => live.take.map(b => (a, b))))
-                            }
-                        }.map {
-                            case Result.Success((1, 2)) => succeed
-                            case other                  => fail(s"a leaked listener stalled the hub's publisher: $other")
+                        hub.put(1).andThen(hub.put(2)).andThen {
+                            assertEventually(live.size.map { held =>
+                                assert(held == 2, s"a leaked listener stalled the hub's publisher: the live listener holds $held of 2")
+                                true
+                            })
+                        }.andThen {
+                            live.take.map(a => live.take.map(b => assert(a == 1 && b == 2, s"the live listener received ($a, $b)")))
                         }
                     }
                 }

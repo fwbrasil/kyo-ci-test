@@ -1335,10 +1335,12 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 _ <- started.await
                 _ <- consumer.interrupt
                 _ <- consumer.getResult
-                r <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get.map(_ == 4))))
+                _ <- assertEventually(released.get.map { n =>
+                    assert(n == 4, s"$n of the 4 element fibers were interrupted with the consumer; the rest ran on unowned")
+                    true
+                })
                 _ <- gate.release
-                n <- released.get
-            yield assert(r.isSuccess, s"$n of the 4 element fibers were interrupted with the consumer; the rest ran on unowned")
+            yield succeed
             end for
         }
 
@@ -1494,11 +1496,11 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                         entered.release.andThen(gate.get).andThen(rest.run)
                     }
                 }
-                _   <- entered.await
-                _   <- fiber.interrupt
-                out <- Abort.run[Timeout](Async.timeout(3.seconds)(done.await))
-                r   <- released.get
-            yield assert(out.isSuccess && r == 1, s"released $r ($out)")
+                _ <- entered.await
+                _ <- fiber.interrupt
+                _ <- done.await
+                r <- released.get
+            yield assert(r == 1, s"released $r")
             end for
         }
 
@@ -1524,9 +1526,9 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 yield (res, released, done)
             }.map { (res, released, done) =>
                 for
-                    out <- Abort.run[Timeout](Async.timeout(3.seconds)(done.await))
-                    r   <- released.get
-                yield assert(res.isFailure && out.isSuccess && r == 1, s"$res released $r ($out)")
+                    _ <- done.await
+                    r <- released.get
+                yield assert(res.isFailure && r == 1, s"$res released $r")
             }
         }
 
@@ -1608,9 +1610,9 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 head     <- unbounded(released, done).mapPar(2)(i => Sync.defer(i + 1)).splitAtWith(2) { (head, _) =>
                     head
                 }
-                out <- Abort.run[Timeout](Async.timeout(3.seconds)(done.await))
-                r   <- released.get
-            yield assert(head == Chunk(1, 2) && out.isSuccess && r == 1, s"$head released $r ($out)")
+                _ <- done.await
+                r <- released.get
+            yield assert(head == Chunk(1, 2) && r == 1, s"$head released $r")
             end for
         }
     }

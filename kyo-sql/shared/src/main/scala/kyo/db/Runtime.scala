@@ -164,7 +164,8 @@ object Runtime:
       * Warm-up therefore completes before a caller can run a statement, and a partial warm-up leaves no session open.
       *
       * The carrier's pool belongs to the enclosing [[kyo.Scope]] from the instant it is allocated, which is why this returns at that row.
-      * Closing the client releases it; so does the scope ending, whichever comes first, and neither can double-close the other's ring.
+      * Closing the client releases it; so does that scope ending, whichever comes first. Both go through one election, so neither can
+      * drain a ring the other is draining.
       *
       * The merged value is the carrier's open-time settings, and it is what an operation supplying none of its own runs under. A backend
       * does not merge the URL itself: resolving TLS, the connect timeout and the rest of the URL's options happens here, once, for every
@@ -186,37 +187,37 @@ object Runtime:
     )(using Frame): Runtime[C] < (Async & Abort[SqlException] & Scope) =
         url.toConfig(config).map { merged =>
             AtomicBoolean.init(false).map { closedRef =>
-                // Unsafe: SqlConnectionPool.init allocates the lock-free ring and requires AllowUnsafe; it opens no socket,
-                // so assembly stays a pure allocation until warm-up.
-                Sync.Unsafe.defer(SqlConnectionPool.init[C](merged, connections, url.options.connectTimeout, summon[Frame]))
+                // The release is recorded in the step that allocates, which is the last point where the two can be made
+                // one. Allocating is not inert: it spawns the idle reaper and registers the pool with diagnostics, and
+                // from the first park in warm-up onwards the carrier travels through this method's tail and the
+                // backend's before any caller can register a close for it. `acquireRelease` records the release as the
+                // value arrives, so no step separates them.
+                //
+                // Unconditional, not conditional on an error. A registration made in a forked fiber lands on the scope
+                // the fork came from, so an assembly abandoned inside `Async.timeout` or `Async.race` leaves its
+                // registration on a scope that goes on to end cleanly; a release that only fires on an error edge
+                // would never run there. Two closers reaching one pool is what `closeOnce` is for.
+                Scope.acquireRelease(
+                    // Unsafe: SqlConnectionPool.init allocates the lock-free ring and requires AllowUnsafe. It opens no
+                    // socket, but it does spawn the reaper, so this is an acquisition rather than a plain allocation.
+                    Sync.Unsafe.defer(SqlConnectionPool.init[C](merged, connections, url.options.connectTimeout, summon[Frame]))
+                    // The same grace the client's own close uses, so ending the scope and calling close are one
+                    // shutdown rather than two with different deadlines racing each other in the same drain.
+                )(closeOnce(_, closedRef, merged.closeGrace))
                     .map { pool =>
-                        // The net that catches an abandoned assembly, registered on the caller's scope before warm-up
-                        // opens anything. It has to be here rather than anywhere after: warm-up parks on every session
-                        // it opens, and the carrier then travels through this method's tail and the backend's before a
-                        // caller can register a close for it, so every one of those steps can be the one an interrupt
-                        // lands on. Registering one step after the allocation is safe only because the allocation opens
-                        // nothing; an interrupt before warm-up abandons an empty ring.
-                        //
-                        // It fires on an error edge only, which is what an abandonment is. The ordinary shutdown stays
-                        // the client's own close, so a scope that ends cleanly leaves a live client alone, which is
-                        // what `initUnscoped` needs when it runs this under a scope of its own.
-                        Scope.ensure { error =>
-                            if error.isDefined then closeOnce(pool, closedRef, Duration.Zero)
-                            else ()
-                        }.andThen {
-                            AtomicRef.init(Maybe.empty[Idiom.ServerVersion]).map { serverVersionRef =>
-                                // The clamp lives here so each backend does not carry its own copy.
-                                val warmCount = merged.minConnections.min(merged.maxConnections)
-                                Scope.run {
-                                    Scope.ensure { error =>
-                                        // A raised warm-up failure does not end the caller's scope, so the net above
-                                        // would leave a partial warm-up open for as long as that scope lasts. This
-                                        // closes it at the failure instead.
-                                        if error.isDefined then closeOnce(pool, closedRef, Duration.Zero)
-                                        else ()
-                                    }.andThen(pool.warmUp(url.address, url.password, warmCount, merged))
-                                }.andThen(new Runtime[C](url, merged, pool, closedRef, serverVersionRef))
-                            }
+                        AtomicRef.init(Maybe.empty[Idiom.ServerVersion]).map { serverVersionRef =>
+                            // The clamp lives here so each backend does not carry its own copy.
+                            val warmCount = merged.minConnections.min(merged.maxConnections)
+                            Scope.run {
+                                Scope.ensure { error =>
+                                    // A raised warm-up failure does not end the caller's scope, so the release above
+                                    // would leave a partial warm-up open for as long as that scope lasts, which can
+                                    // be the life of the program. This closes it at the failure instead, and the two
+                                    // cannot both drain the ring.
+                                    if error.isDefined then closeOnce(pool, closedRef, Duration.Zero)
+                                    else ()
+                                }.andThen(pool.warmUp(url.address, url.password, warmCount, merged))
+                            }.andThen(new Runtime[C](url, merged, pool, closedRef, serverVersionRef))
                         }
                     }
             }

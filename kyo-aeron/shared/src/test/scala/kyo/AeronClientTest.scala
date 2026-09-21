@@ -41,23 +41,22 @@ class AeronClientTest extends Test:
     // asserts what the driver can show: after rounds of connects stopped at sub-millisecond offsets, with every client
     // the rounds did receive closed, the embedded driver still closes within its bound rather than waiting on a client
     // that nobody closed.
-    "connects stopped at staggered offsets leave a driver that still closes".notJs.notWasm in {
+    "connects stopped at staggered offsets leave a driver that still closes".notJs.notWasm.timeout(60.seconds) in {
         Path.run(Path.tempDir("kyo-aeron-client-stops")).map { root =>
             val dir    = root / AeronDriver.mediaDirName
             val rounds = 40
-            Abort.run[Timeout](Async.timeout(60.seconds)(Scope.run {
+            Scope.run {
                 withExternalDriver(dir) {
                     Loop.indexed { i =>
                         if i >= rounds then Loop.done(succeed)
                         else
-                            val connecting = new java.util.concurrent.atomic.AtomicBoolean(false)
                             for
-                                fiber <- Fiber.initUnscoped(
-                                    Sync.defer(connecting.set(true)).andThen(Abort.run[TopicException](AeronClient.connectUnscoped(dir)))
+                                connecting <- Latch.init(1)
+                                fiber      <- Fiber.initUnscoped(
+                                    connecting.release.andThen(Abort.run[TopicException](AeronClient.connectUnscoped(dir)))
                                 )
+                                _ <- connecting.await
                                 _ <- Sync.Unsafe.defer {
-                                    val bound = java.lang.System.nanoTime() + 200_000_000L
-                                    while !connecting.get() && java.lang.System.nanoTime() < bound do ()
                                     val target = java.lang.System.nanoTime() + (i % 40) * 100_000L
                                     while java.lang.System.nanoTime() < target do ()
                                     discard(fiber.unsafe.interrupt())
@@ -70,7 +69,7 @@ class AeronClientTest extends Test:
                             end for
                     }
                 }
-            })).map(r => assert(r.isSuccess, "the driver did not close within the bound after the interrupted connects"))
+            }
         }
     }
 
@@ -258,7 +257,7 @@ class AeronClientTest extends Test:
     // Deterministic via the seam: a fake binding gates the connect fiber and the interrupt is registered on it via onComplete (LIFO before the resume).
     "an interrupt landing at the connect join leaves the connected client unclosed".pendingUntilFixed(
         "externalWith builds the runtime and its close after the blocking clientConnect join; an interrupt at the join leaves the connected client unclosed"
-    ) in {
+    ).timeout(10.seconds) in {
         val closed        = new java.util.concurrent.atomic.AtomicBoolean(false)
         val connectCalled = new java.util.concurrent.atomic.AtomicBoolean(false)
         for
@@ -269,13 +268,13 @@ class AeronClientTest extends Test:
                     Sync.Unsafe.defer(rt.close())
                 ).andThen(Async.never)
             ))
-            _         <- assertEventually(Sync.defer(connectCalled.get()))
-            _         <- assertEventually(connectFiber.safe.waiters.map(_ >= 1))
-            _         <- connectFiber.safe.onComplete(_ => fiber.interrupt.unit)
-            _         <- Sync.Unsafe.defer(connectFiber.completeDiscard(Result.succeed(Ffi.Handle.wrap[AeronClientHandle](new AnyRef))))
-            _         <- fiber.getResult
-            wasClosed <- Abort.run[Timeout](Async.timeout(1.second)(assertEventually(Sync.defer(closed.get())))).map(_.isSuccess)
-        yield assert(wasClosed, "the connected client was never closed after the connect join was interrupted")
+            _ <- assertEventually(Sync.defer(connectCalled.get()))
+            _ <- assertEventually(connectFiber.safe.waiters.map(_ >= 1))
+            _ <- connectFiber.safe.onComplete(_ => fiber.interrupt.unit)
+            _ <- Sync.Unsafe.defer(connectFiber.completeDiscard(Result.succeed(Ffi.Handle.wrap[AeronClientHandle](new AnyRef))))
+            _ <- fiber.getResult
+            _ <- assertEventually(Sync.defer(closed.get()))
+        yield succeed
         end for
     }
 

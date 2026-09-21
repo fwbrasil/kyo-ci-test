@@ -70,27 +70,26 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
             Loop.indexed { i =>
                 if i >= rounds then Loop.done(succeed)
                 else
-                    val token     = s"--kyo-launch-probe-${UUID.randomUUID().toString.take(8)}"
-                    val cfg       = base.copy(extraArgs = Chunk(token))
-                    val launching = new java.util.concurrent.atomic.AtomicBoolean(false)
-                    for
-                        fiber <- Fiber.initUnscoped(Abort.run[BrowserSetupException](Scope.run(
-                            Sync.defer(launching.set(true)).andThen(BrowserLauncher.launch(cfg)).andThen(Async.never)
-                        )))
-                        _ <- Sync.Unsafe.defer {
-                            val bound = java.lang.System.nanoTime() + 200_000_000L
-                            while !launching.get() && java.lang.System.nanoTime() < bound do ()
-                            val target = java.lang.System.nanoTime() + (i % 40) * 500_000L
-                            while java.lang.System.nanoTime() < target do ()
-                            discard(fiber.unsafe.interrupt())
-                        }
-                        _    <- fiber.getResult
-                        gone <- Abort.run[Timeout](Async.timeout(10.seconds)(assertEventually(alive(token).map(_ == 0))))
-                        _    <- if gone.isSuccess then Kyo.unit else kill(token)
-                    yield
-                        assert(gone.isSuccess, s"round $i: a Chrome process outlived the launch that was stopped")
-                        Loop.continue
-                    end for
+                    val token = s"--kyo-launch-probe-${UUID.randomUUID().toString.take(8)}"
+                    val cfg   = base.copy(extraArgs = Chunk(token))
+                    // A round whose Chrome is never reaped would otherwise leave it running for the rest of the suite.
+                    Scope.run(Scope.ensure(kill(token)).andThen {
+                        for
+                            launching <- Latch.init(1)
+                            fiber     <- Fiber.initUnscoped(Abort.run[BrowserSetupException](Scope.run(
+                                launching.release.andThen(BrowserLauncher.launch(cfg)).andThen(Async.never)
+                            )))
+                            _ <- launching.await
+                            _ <- Sync.Unsafe.defer {
+                                val target = java.lang.System.nanoTime() + (i % 40) * 500_000L
+                                while java.lang.System.nanoTime() < target do ()
+                                discard(fiber.unsafe.interrupt())
+                            }
+                            _ <- fiber.getResult
+                            _ <- assertEventually(alive(token).map(_ == 0))
+                        yield Loop.continue
+                        end for
+                    })
             }
         }
     }
@@ -100,9 +99,17 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
     // directory re-created behind it.
     "terminateTree leaves no descendant alive to write into the directory" in {
         assume(!Platform.isWindows, "POSIX process tree")
-        val outerTmp                = Paths.get(java.lang.System.getProperty("java.io.tmpdir"))
-        val dir                     = outerTmp.resolve(s"kyo-browser-jvm-test-${UUID.randomUUID()}")
-        val script                  = s"mkdir -p '$dir'; (while true; do mkdir -p '$dir/x'; sleep 0.005; done) & wait"
+        val outerTmp = Paths.get(java.lang.System.getProperty("java.io.tmpdir"))
+        val dir      = outerTmp.resolve(s"kyo-browser-jvm-test-${UUID.randomUUID()}")
+        val loop     = s"while true; do mkdir -p '$dir/x'; sleep 0.005; done"
+        val script   = s"mkdir -p '$dir'; ($loop) & wait"
+        // The loop text, not the directory, is what picks out the shell and its subshell: the `mkdir` each iteration
+        // forks carries the directory in its own argv and is not part of the tree terminateTree owns.
+        def survivors: Int < Async =
+            Abort.run[CommandException](Command("pgrep", "-f", loop).textWithExitCode).map {
+                case Result.Success((out, _)) => out.linesIterator.count(_.trim.nonEmpty)
+                case _                        => 0
+            }
         def removeDir: Unit < Async =
             Abort.run[FileSystemException](Path.run(Path(dir.toString).removeAll)).unit
         Scope.run {
@@ -111,9 +118,11 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
                     proc <- Command("sh", "-c", script).spawnUnscoped
                     _    <- assertEventually(Sync.defer(Files.exists(dir.resolve("x"))))
                     _    <- BrowserLauncher.terminateTree(proc)
+                    left <- survivors
                     _    <- removeDir
-                    _    <- Async.sleep(300.millis)
-                yield assert(!Files.exists(dir), s"a descendant survived terminateTree and re-created $dir")
+                yield
+                    assert(left == 0, s"terminateTree returned with $left process(es) of the tree still alive")
+                    assert(!Files.exists(dir), s"a descendant survived terminateTree and re-created $dir")
             }
         }
     }

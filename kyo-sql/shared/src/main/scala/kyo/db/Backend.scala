@@ -84,6 +84,10 @@ abstract class Backend:
       * side of all that is separable from the sessions by an interrupt. `Runtime.init` registers against this scope at the instant it
       * allocates the ring, which is why it appears here rather than being something the caller adds afterwards.
       *
+      * Register nothing else against it. It is the assembly's scope, not the client's, and the unscoped entry points end it as soon as the
+      * client is built, so anything registered here that was meant to live as long as the client is torn down before the client is handed
+      * out. Cleanup that belongs to the client belongs to [[kyo.SqlClient.close]].
+      *
       * A backend does not resolve the URL's own declarations: `init` merges them under `config`, and the merged value is the settings the
       * returned client was opened under.
       */

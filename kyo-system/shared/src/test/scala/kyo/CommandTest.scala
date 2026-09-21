@@ -282,9 +282,9 @@ class CommandTest extends kyo.test.Test[Any]:
     }
 
     // `spawn` must register the process's release in the step that forks it, or a stop during the fork parks the
-    // registration and the process is nobody's. The fork is below what a timer lands in, so the leaf's own fiber spins
-    // on a flag the spawner sets before the fork, staggers its offset, and requests the stop directly. The check is on
-    // the operating system's view, by a unique argv.
+    // registration and the process is nobody's. The fork is below what a timer lands in, so the leaf's own fiber waits
+    // for the spawner to reach it, staggers its offset, and requests the stop directly. The check is on the operating
+    // system's view, by a unique argv.
     "an interrupt landing during spawn does not orphan the process".notJs.notWasm in {
         assumeUnix() // sleep / pgrep / kill have no Windows equivalent
         val seconds                                                  = 300 + scala.util.Random.nextInt(1000)
@@ -294,26 +294,31 @@ class CommandTest extends kyo.test.Test[Any]:
             Command("pgrep", "-f", s"^sleep $seconds$$").textWithExitCode.map((out, _) =>
                 Chunk.from(out.linesIterator.map(_.trim).filter(_.nonEmpty).toSeq)
             )
-        for
-            _ <- Loop.indexed { i =>
-                if i >= rounds then Loop.done
-                else
-                    val forking = new java.util.concurrent.atomic.AtomicBoolean(false)
-                    Fiber.initUnscoped(Scope.run(Sync.defer(forking.set(true)).andThen(cmd.spawn).andThen(Async.never))).map { fiber =>
-                        Sync.Unsafe.defer {
-                            val bound = java.lang.System.nanoTime() + 200_000_000L
-                            while !forking.get() && java.lang.System.nanoTime() < bound do ()
-                            val target = java.lang.System.nanoTime() + (i % 40) * 100_000L
-                            while java.lang.System.nanoTime() < target do ()
-                            discard(fiber.unsafe.interrupt())
-                        }.andThen(fiber.getResult).andThen(Loop.continue)
-                    }
-            }
-            r    <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(alive.map(_.isEmpty))))
-            left <- alive
-            _    <- Kyo.foreachDiscard(left)(pid => Abort.run[CommandException](Command("kill", "-9", pid).waitFor).unit)
-        yield assert(r.isSuccess, s"${left.size} process(es) outlived the scope that spawned them: ${left.mkString(", ")}")
-        end for
+        // A process this leaf orphans would otherwise sit on the host for the lifetime of its `sleep`.
+        def killLeftovers: Unit < Async =
+            Abort.run[CommandException](alive.map(left => Kyo.foreachDiscard(left)(pid => Command("kill", "-9", pid).waitFor))).unit
+        Scope.run(Scope.ensure(killLeftovers).andThen {
+            for
+                _ <- Loop.indexed { i =>
+                    if i >= rounds then Loop.done
+                    else
+                        for
+                            forking <- Latch.init(1)
+                            fiber   <- Fiber.initUnscoped(Scope.run(forking.release.andThen(cmd.spawn).andThen(Async.never)))
+                            _       <- forking.await
+                            _       <- Sync.Unsafe.defer {
+                                val target = java.lang.System.nanoTime() + (i % 40) * 100_000L
+                                while java.lang.System.nanoTime() < target do ()
+                                discard(fiber.unsafe.interrupt())
+                            }
+                            _ <- fiber.getResult
+                        yield Loop.continue
+                        end for
+                }
+                _ <- assertEventually(alive.map(_.isEmpty))
+            yield succeed
+            end for
+        })
     }
 
     "spawnUnscoped returns a live process the caller owns and must close" in {

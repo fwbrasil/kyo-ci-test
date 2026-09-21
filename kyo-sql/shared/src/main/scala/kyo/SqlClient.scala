@@ -1477,12 +1477,11 @@ object SqlClient:
     private[kyo] def openUnscoped(rawUrl: String, config: SqlConfig, registry: Backend.Registry)(using
         Frame
     ): SqlClient < (Async & Abort[SqlException]) =
-        // The scope here is the assembly's, not the client's: it exists so the net `Runtime.init` registers has
-        // somewhere to live while the pool is being warmed, and it ends as soon as the client is built. Because that
-        // net fires only on an error edge, a clean assembly hands the client out with nothing registered against it,
-        // which is what this entry point promises. An assembly abandoned partway ends this scope with the error and
-        // is closed, which is what the caller could not have done for a client it never received.
-        factoryFor(rawUrl, registry).flatMap((url, backend) => Scope.run(backend.open(url, config)))
+        // `runUnowned`, not `run`: the release `Runtime.init` records has to be armed while the pool is being warmed,
+        // and it must not fire when the assembly reaches its end, because the client that leaves here is the caller's
+        // to close. An assembly abandoned partway does fire it, which is the one thing a caller holding no client
+        // could not have done for itself.
+        factoryFor(rawUrl, registry).flatMap((url, backend) => Scope.runUnowned(backend.open(url, config)))
 
     /** Parses `rawUrl` and pairs it with the factory claiming its scheme, or fails naming the schemes that are available. */
     private[kyo] def factoryFor(rawUrl: String, registry: Backend.Registry)(using

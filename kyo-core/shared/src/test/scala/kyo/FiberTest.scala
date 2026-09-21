@@ -188,12 +188,14 @@ class FiberTest extends kyo.test.Test[Any]:
                                 Sync.defer(1),
                                 Sync.ensure(done.incrementAndGet.unit)(spin(stop)).andThen(2)
                             )).map(_.getResult)
-                            freed <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(done.get.map(_ == 1))))
-                            _ = stop.set(true)
-                            _ <- assertEventually(done.get.map(_ == 1))
+                            _ <- Sync.ensure(Sync.defer(stop.set(true))) {
+                                assertEventually(done.get.map { count =>
+                                    assert(count == 1, s"round $i: the losing spinner was not stopped by the race")
+                                    true
+                                })
+                            }
                         yield
                             assert(r.contains(1), s"round $i: the immediate computation did not win: $r")
-                            assert(freed.isSuccess, s"round $i: the losing spinner was not stopped by the race")
                             Loop.continue
                         end for
                 }
