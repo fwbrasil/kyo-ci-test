@@ -2292,8 +2292,9 @@ object Browser:
       * the empty-string clear for [[Browser.ColorScheme.NoPreference]] since W3C dropped that value) and is omitted when `Absent`;
       * `prefers-reduced-motion` is sent as `reduce` only when `reducedMotion = true` and is omitted otherwise. So a color-scheme-only
       * call leaves the page's real `prefers-reduced-motion` untouched, and `reducedMotion = false` means "do not emulate reduced
-      * motion", not "force no-preference". The override is cached on the tab and re-applied on exit via `Scope.acquireRelease` inside
-      * an inner `Scope.run`, so nested calls compose in LIFO order and the restore fires on success, failure, AND interruption. When no
+      * motion", not "force no-preference". The override is cached on the tab and its restore is owed to an inner `Scope.run` from the
+      * moment the override's reply arrives, so nested calls compose in LIFO order and the restore fires on success, failure, AND
+      * interruption, including an interruption at that reply. When no
       * prior override was active the restore clears all media emulation with an empty `Emulation.setEmulatedMedia` send, so the host's
       * real media values return rather than a forced override. The apply settles via `MutationSettlement.afterAction` so any
       * media-query re-layout has quiesced before `body` starts.
@@ -2307,17 +2308,7 @@ object Browser:
             val params = emulatedMediaParams(media.map(_.wire), colorScheme.map(_.wire), reducedMotion)
             Scope.run {
                 tab.emulationOverride.get.map { prior =>
-                    Scope.acquireRelease(
-                        MutationSettlement.afterAction {
-                            tab.emulationOverride.set(Present(BrowserTab.EmulatedMediaState(
-                                colorScheme.map(_.wire),
-                                media.map(_.wire),
-                                reducedMotion
-                            ))).andThen(
-                                CdpBackend.setEmulatedMedia(tab.session, params)
-                            )
-                        }(Absent)
-                    ) { _ =>
+                    val restore =
                         tab.emulationOverride.set(prior).andThen(
                             prior match
                                 case Present(s) =>
@@ -2330,6 +2321,20 @@ object Browser:
                                     // features list with empty media drops every prefers-* override back to the environment value.
                                     CdpBackend.setEmulatedMedia(tab.session, clearEmulatedMediaParams)
                         )
+                    // The override is owed its restore on this scope; the restore registers as the override's reply
+                    // arrives, so `finalizer` is named here rather than read from the settlement wait's inner scope.
+                    ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
+                        MutationSettlement.afterAction {
+                            tab.emulationOverride.set(Present(BrowserTab.EmulatedMediaState(
+                                colorScheme.map(_.wire),
+                                media.map(_.wire),
+                                reducedMotion
+                            ))).andThen(
+                                tab.session.acquire[SetEmulatedMediaParams, Unit](finalizer, "Emulation.setEmulatedMedia", params)(_ =>
+                                    restore
+                                )
+                            )
+                        }(Absent)
                     }.andThen(body)
                 }
             }
