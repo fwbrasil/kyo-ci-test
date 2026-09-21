@@ -43,4 +43,29 @@ class ScratchEnsureRecoverTest extends kyo.test.Test[Any]:
         yield assert(r == Result.fail("mapped"), s"got $r")
     }
 
+    // The joiner has parked before the panic arrives, so it is resumed rather than finding the promise already done.
+    "recover inside ensure, joiner parked before the panic arrives" in {
+        for
+            p <- Promise.init[Int, Any]
+            joiner <- Fiber.initUnscoped(Abort.run[String](Sync.ensure(()) {
+                Abort.recover[Nothing](onFail = (never: Nothing) => never, onPanic = mapped)(p.get)
+            }))
+            _ <- assertEventually(p.waiters.map(_ >= 1))
+            _ <- Sync.Unsafe.defer(p.unsafe.completeDiscard(Result.Panic(boom)))
+            r <- joiner.get
+        yield assert(r == Result.fail("mapped"), s"got $r")
+    }
+
+    "ensure inside recover, joiner parked before the panic arrives" in {
+        for
+            p <- Promise.init[Int, Any]
+            joiner <- Fiber.initUnscoped(Abort.run[String](
+                Abort.recover[Nothing](onFail = (never: Nothing) => never, onPanic = mapped)(Sync.ensure(())(p.get))
+            ))
+            _ <- assertEventually(p.waiters.map(_ >= 1))
+            _ <- Sync.Unsafe.defer(p.unsafe.completeDiscard(Result.Panic(boom)))
+            r <- joiner.get
+        yield assert(r == Result.fail("mapped"), s"got $r")
+    }
+
 end ScratchEnsureRecoverTest
