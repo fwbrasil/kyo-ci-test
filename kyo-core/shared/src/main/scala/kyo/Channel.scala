@@ -443,7 +443,7 @@ object Channel:
         def putFiber(value: A)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]]
         def putBatchFiber(values: Seq[A])(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]]
         def takeFiber()(using AllowUnsafe, Frame): Fiber.Unsafe[A, Abort[Closed]]
-        private[kyo] def reuseTake(waiter: Unsafe.Waiter[Closed, A])(using AllowUnsafe, Frame): Unit
+        private[kyo] def reuseTake(promise: Promise.Unsafe[A, Abort[Closed]])(using AllowUnsafe, Frame): Unit
 
         /** Returns a value a taker received but never consumed (see [[Channel.parkedTake]]) to the channel. */
         private[kyo] def putBack(value: A)(using AllowUnsafe, Frame): Unit
@@ -481,36 +481,11 @@ object Channel:
             case Value(value: A, override val promise: Promise.Unsafe[Unit, Abort[Closed]])
         end Put
 
-        /** A parked taker or producer. It is pending from the moment the channel queues it until it completes, whatever completes it.
-          * An interrupt completes it where it sits and its entry stays in the queue until a delivery polls past it, so the pending
-          * counts are the waiters and not the queue sizes.
-          */
-        private[kyo] class Waiter[E, B](using AllowUnsafe) extends IOPromise[E, B]:
-            private var pending: Maybe[AtomicInt.Unsafe] = Absent
-
-            /** Called before the offer to the queue, which is what publishes the write to `pending`. */
-            final private[Unsafe] def queued(count: AtomicInt.Unsafe): Unit =
-                pending = Present(count)
-                discard(count.incrementAndGet())
-
-            // Cleared before `completed`, which may make the waiter available again and queue it a second time.
-            final override protected def onComplete(): Unit =
-                pending.foreach(count => discard(count.decrementAndGet()))
-                pending = Absent
-                completed()
-            end onComplete
-
-            /** Runs in the completing step, once the waiter no longer counts as pending. */
-            protected def completed(): Unit = ()
-        end Waiter
-
         sealed abstract class BaseUnsafe[A](using AllowUnsafe) extends Unsafe[A]:
             val takes           = new MpmcUnboundedUnsafeQueue[Promise.Unsafe[A, Abort[Closed]]](8)
             val puts            = new MpmcUnboundedUnsafeQueue[Put[A]](8)
             val priorityPuts    = new MpmcUnboundedUnsafeQueue[Put[A]](8)
             val batchInProgress = AtomicBoolean.Unsafe.init(false)
-            val liveTakes       = AtomicInt.Unsafe.init(0)
-            val livePuts        = AtomicInt.Unsafe.init(0)
 
             /** Values an interrupted taker handed back. No producer waits on them, so they are not puts: they are served ahead of every
               * parked producer, and a close returns them with its backlog where it fails a parked put. Polled only under the
@@ -545,14 +520,8 @@ object Channel:
 
             protected def flush()(using Frame): Unit
 
-            private def waiter[B](count: AtomicInt.Unsafe): Promise.Unsafe[B, Abort[Closed]] =
-                val waiter = new Waiter[Any, B < Abort[Closed]]
-                waiter.queued(count)
-                Promise.Unsafe.fromIOPromise(waiter)
-            end waiter
-
             final def putFiber(value: A)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
-                val promise = waiter[Unit](livePuts)
+                val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
                 val put     = Put.Value(value, promise)
                 discard(puts.offer(put))
                 flush()
@@ -560,7 +529,7 @@ object Channel:
             end putFiber
 
             final def putBatchFiber(values: Seq[A])(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
-                val promise = waiter[Unit](livePuts)
+                val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
                 val put     = Put.Batch(Chunk.from(values), promise)
                 discard(puts.offer(put))
                 flush()
@@ -568,22 +537,17 @@ object Channel:
             end putBatchFiber
 
             final def takeFiber()(using AllowUnsafe, Frame): Fiber.Unsafe[A, Abort[Closed]] =
-                val promise = waiter[A](liveTakes)
+                val promise = Promise.Unsafe.init[A, Abort[Closed]]()
                 discard(takes.offer(promise))
                 flush()
                 promise
             end takeFiber
 
-            /** Registers an existing waiter as a taker without allocation. The waiter must have been reset via becomeAvailable(). This is
+            /** Registers an existing promise as a taker without allocation. The promise must have been reset via becomeAvailable(). This is
               * the zero-alloc alternative to takeFiber().
               */
-            final private[kyo] def reuseTake(waiter: Waiter[Closed, A])(using AllowUnsafe, Frame): Unit =
-                waiter.queued(liveTakes)
-                // The take queue holds the opaque promise type, which a waiter is at runtime.
-                require(
-                    takes.offer(waiter.asInstanceOf[Promise.Unsafe[A, Abort[Closed]]]),
-                    "reuseTake: unbounded queue offer must not fail"
-                )
+            final private[kyo] def reuseTake(promise: Promise.Unsafe[A, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+                require(takes.offer(promise), "reuseTake: unbounded queue offer must not fail")
                 flush()
             end reuseTake
 
@@ -639,8 +603,9 @@ object Channel:
 
             def size()(using AllowUnsafe, Frame) = succeedIfOpen(0)
 
-            def pendingPuts()(using AllowUnsafe, Frame)  = succeedIfOpen(livePuts.get())
-            def pendingTakes()(using AllowUnsafe, Frame) = succeedIfOpen(liveTakes.get())
+            def pendingPuts()(using AllowUnsafe, Frame) =
+                succeedIfOpen((if pendingBatch.nonEmpty then 1 else 0) + priorityPuts.size() + puts.size())
+            def pendingTakes()(using AllowUnsafe, Frame) = succeedIfOpen(takes.size())
 
             def offer(value: A)(using AllowUnsafe, Frame) =
                 takes.poll() match
@@ -832,8 +797,8 @@ object Channel:
 
             def size()(using AllowUnsafe, Frame) = queue.size()
 
-            def pendingPuts()(using AllowUnsafe, Frame)  = queue.size().map(_ => livePuts.get())
-            def pendingTakes()(using AllowUnsafe, Frame) = queue.size().map(_ => liveTakes.get())
+            def pendingPuts()(using AllowUnsafe, Frame)  = queue.size().map(_ => priorityPuts.size() + puts.size())
+            def pendingTakes()(using AllowUnsafe, Frame) = queue.size().map(_ => (takes.size()))
 
             def offer(value: A)(using AllowUnsafe, Frame) =
                 val result = queue.offer(value)
