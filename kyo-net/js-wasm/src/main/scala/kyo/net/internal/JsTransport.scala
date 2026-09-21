@@ -665,7 +665,9 @@ final private[kyo] class JsTransport private (
                 val actualPort = addr.port.asInstanceOf[Int]
                 val actualHost = addr.address.asInstanceOf[String]
                 listener.setAddress(actualPort, actualHost)
-                promise.completeDiscard(Result.succeed(listener))
+                if !promise.complete(Result.succeed(listener)) then
+                    // The listen was interrupted before delivery: nobody holds this listener, so close it.
+                    listener.close()
             }: js.Function0[Unit]
         ))
 
@@ -878,7 +880,9 @@ final private[kyo] class JsTransport private (
             js.Dynamic.literal(path = path, backlog = backlog),
             { () =>
                 listener.setAddress(-1, path)
-                promise.completeDiscard(Result.succeed(listener))
+                if !promise.complete(Result.succeed(listener)) then
+                    // The listen was interrupted before delivery: nobody holds this listener, so close it.
+                    listener.close()
             }: js.Function0[Unit]
         ))
 

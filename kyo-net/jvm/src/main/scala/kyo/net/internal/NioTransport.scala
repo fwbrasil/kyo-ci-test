@@ -370,7 +370,9 @@ final private[kyo] class NioTransport private (
 
                 val listener = new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
                 startAcceptLoop(serverChannel, handler, listener, config)
-                promise.completeDiscard(Result.succeed(listener))
+                if !promise.complete(Result.succeed(listener)) then
+                    // The listen was interrupted before delivery: nobody holds this listener, so close it.
+                    listener.close()
             end if
         catch
             case e: UnresolvedAddressException =>
@@ -1122,7 +1124,9 @@ final private[kyo] class NioTransport private (
                 // Only the TLS listen path can have in-flight handshakes; a plaintext accept becomes a tracked Connection immediately.
                 listener.onClose(() => dischargeListenerHandshakes(listener))
                 startTlsAcceptLoop(serverChannel, handler, listener, tls, config)
-                promise.completeDiscard(Result.succeed(listener))
+                if !promise.complete(Result.succeed(listener)) then
+                    // The listen was interrupted before delivery: nobody holds this listener, so close it.
+                    listener.close()
             end if
         catch
             case e: UnresolvedAddressException =>
@@ -1384,7 +1388,9 @@ final private[kyo] class NioTransport private (
 
                 val listener = new NioListener(serverChannel, -1, path, driver, NetAddress.Unix(path), frame)
                 startAcceptLoop(serverChannel, handler, listener, config)
-                promise.completeDiscard(Result.succeed(listener))
+                if !promise.complete(Result.succeed(listener)) then
+                    // The listen was interrupted before delivery: nobody holds this listener, so close it.
+                    listener.close()
             end if
         catch
             case e: IOException =>

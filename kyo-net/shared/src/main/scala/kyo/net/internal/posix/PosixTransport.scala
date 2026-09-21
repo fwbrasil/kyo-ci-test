@@ -1006,7 +1006,9 @@ final private[net] class PosixTransport private[posix] (
                                 if shim.kyo_posix_set_nonblocking(fd) != 0 then
                                     Log.live.unsafe.warn(s"listen: failed to set listen fd non-blocking fd=$fd")
                                 startAcceptLoop(listener, handler, tls, config)
-                                promise.completeDiscard(Result.succeed(listener))
+                                if !promise.complete(Result.succeed(listener)) then
+                                    // The listen was interrupted before delivery: nobody holds this listener, so close it.
+                                    listener.close()
                             end if
                         end if
                     end if
