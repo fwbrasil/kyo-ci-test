@@ -3018,9 +3018,7 @@ object Browser:
         Env.use[BrowserTab] { tab =>
             Scope.run {
                 tab.downloadPolicy.get.map { prior =>
-                    Scope.acquireRelease(
-                        setDownloadBehavior(Browser.DownloadBehavior.Allow, Present(toPath))
-                    ) { _ =>
+                    val restore =
                         tab.downloadPolicy.set(prior).andThen(
                             prior match
                                 case Present((behavior, p)) =>
@@ -3028,7 +3026,9 @@ object Browser:
                                 case Absent =>
                                     PageDownload.setDownloadBehavior(tab.session, Browser.DownloadBehavior.Deny.toInternal, Absent)
                         )
-                    }.andThen(body)
+                    recordDownloadPolicy(tab, Browser.DownloadBehavior.Allow, Present(toPath)).andThen(
+                        PageDownload.acquireDownloadBehavior(tab.session, Browser.DownloadBehavior.Allow.toInternal, Present(toPath))(restore)
+                    ).andThen(body)
                 }
             }
         }
@@ -3047,6 +3047,16 @@ object Browser:
         Frame
     ): Unit < (Browser & Abort[BrowserReadException]) =
         Env.use[BrowserTab] { tab =>
+            recordDownloadPolicy(tab, behavior, toPath).andThen(
+                PageDownload.setDownloadBehavior(tab.session, behavior.toInternal, toPath)
+            )
+        }
+
+    /** Validates `toPath` and records the policy on the tab, ahead of the CDP call that applies it. */
+    private def recordDownloadPolicy(tab: BrowserTab, behavior: Browser.DownloadBehavior, toPath: Maybe[String])(using
+        Frame
+    ): Unit < (Sync & Abort[BrowserReadException]) =
+        locally {
             val validate: Unit < Abort[BrowserReadException] = toPath match
                 case Present(p) if !isAbsolutePath(p) =>
                     Abort.fail(BrowserInvalidArgumentException("setDownloadBehavior", s"toPath must be absolute, got '$p'"))
@@ -3065,13 +3075,11 @@ object Browser:
             // Cache write FIRST (post-validate), then issue the CDP call. Skip caching the "Deny + Absent" tear-down state because that
             // matches the implicit "no override active" semantics of Absent in the cache, keeping the restore-to-Absent path correct.
             validate.andThen {
-                val updateCache: Unit < Sync =
-                    if behavior == Browser.DownloadBehavior.Deny && toPath.isEmpty then tab.downloadPolicy.set(Absent)
-                    else tab.downloadPolicy.set(Present((behavior, toPath)))
-                updateCache.andThen(PageDownload.setDownloadBehavior(tab.session, behavior.toInternal, toPath))
+                if behavior == Browser.DownloadBehavior.Deny && toPath.isEmpty then tab.downloadPolicy.set(Absent)
+                else tab.downloadPolicy.set(Present((behavior, toPath)))
             }
         }
-    end setDownloadBehavior
+    end recordDownloadPolicy
 
     /** Subscribes to download events for the duration of `action`. `f` is invoked for each `Page.downloadWillBegin` /
       * `Page.downloadProgress` event observed on the current tab.
