@@ -160,14 +160,11 @@ final private[kyo] class WritePump[Handle](
 
     private def requestNextTake()(using AllowUnsafe, Frame): Unit =
         // A FRESH take promise per span: the pump registers a new taker per take, never a reused one.
-        val p = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+        val p = new Channel.Unsafe.Waiter[Closed, Span[Byte]](channel.liveTakes)
         p.onComplete { r =>
             import AllowUnsafe.embrace.danger
             given Frame = Frame.internal
-            // The completion's payload is pending (Span[Byte] < Any); eval extracts the concrete span, mirroring PosixTransport's identical
-            // step. The promise is completed only by the channel taker's own plain value, never a suspended computation, so eval always
-            // returns immediately. Failure and Panic pass through map untouched.
-            onTake(r.map(_.eval))
+            onTake(r)
         }
         channel.reuseTake(p)
     end requestNextTake
