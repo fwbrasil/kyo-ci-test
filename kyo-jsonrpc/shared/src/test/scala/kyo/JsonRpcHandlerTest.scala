@@ -930,17 +930,19 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             }
             transports <- JsonRpcTransport.inMemory
             (ta, tb) = transports
-            outcome <- Sync.ensure(gate.release.andThen(ta.close).andThen(tb.close)) {
-                Scope.run {
-                    JsonRpcHandler.init(tb, Seq(route)).map { _ =>
-                        Scope.run {
-                            JsonRpcHandler.init(ta, Seq.empty).map { a =>
-                                Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("park", AddReq(0, 0))))
-                                    .map(call => entered.await.andThen(call))
+            outcome <- Scope.run {
+                Scope.ensure(gate.release.andThen(ta.close).andThen(tb.close)).andThen {
+                    Scope.run {
+                        JsonRpcHandler.init(tb, Seq(route)).map { _ =>
+                            Scope.run {
+                                JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                                    Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("park", AddReq(0, 0))))
+                                        .map(call => entered.await.andThen(call))
+                                }
                             }
                         }
-                    }
-                }.map(call => released.await.andThen(call.get))
+                    }.map(call => released.await.andThen(call.get))
+                }
             }
         yield assert(outcome.isFailure, s"the caller of an interrupted handler got $outcome")
     }
@@ -976,7 +978,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             _      <- joiner.getResult
             _      <- blockGate.release
             // An abandoned finalizer never closes the transport, which ends this leaf as its timeout.
-            _ <- Sync.ensure(ta.close)(assertEventually(transportClosed.get))
+            _ <- Scope.run(Scope.ensure(ta.close).andThen(assertEventually(transportClosed.get)))
         yield succeed
     }
 
@@ -1095,20 +1097,22 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             transports <- JsonRpcTransport.inMemory
             (ta, tb) = transports
             // A handler the request never reaches, or one the close never reaches, ends this leaf as its timeout.
-            outcome <- Sync.ensure(gate.release.andThen(ta.close).andThen(tb.close)) {
-                Scope.run {
-                    probing(hook)(JsonRpcHandler.init(tb, Seq(route))).map { _ =>
-                        Scope.run {
-                            JsonRpcHandler.init(ta, Seq.empty).map { a =>
-                                Sync.defer(hook.arm { () =>
-                                    IOTask.currentTask().foreach(_.interruptDiscard(Result.Panic(Interrupted(summon[Frame]))))
-                                }).andThen {
-                                    Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("park", AddReq(0, 0))))
-                                }.map(call => entered.await.andThen(call))
+            outcome <- Scope.run {
+                Scope.ensure(gate.release.andThen(ta.close).andThen(tb.close)).andThen {
+                    Scope.run {
+                        probing(hook)(JsonRpcHandler.init(tb, Seq(route))).map { _ =>
+                            Scope.run {
+                                JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                                    Sync.defer(hook.arm { () =>
+                                        IOTask.currentTask().foreach(_.interruptDiscard(Result.Panic(Interrupted(summon[Frame]))))
+                                    }).andThen {
+                                        Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("park", AddReq(0, 0))))
+                                    }.map(call => entered.await.andThen(call))
+                                }
                             }
                         }
-                    }
-                }.map(call => released.await.andThen(call.get))
+                    }.map(call => released.await.andThen(call.get))
+                }
             }
         yield assert(outcome.isFailure, s"the caller of an interrupted handler got $outcome")
         end for

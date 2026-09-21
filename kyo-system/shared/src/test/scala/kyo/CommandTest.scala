@@ -297,8 +297,9 @@ class CommandTest extends kyo.test.Test[Any]:
         // A process this leaf orphans would otherwise sit on the host for the lifetime of its `sleep`.
         def killLeftovers: Unit < Async =
             Abort.run[CommandException](alive.map(left => Kyo.foreachDiscard(left)(pid => Command("kill", "-9", pid).waitFor))).unit
-        Sync.ensure(killLeftovers) {
+        Scope.run {
             for
+                _      <- Scope.ensure(killLeftovers)
                 fiber  <- Fiber.initUnscoped(Scope.run(cmd.safe.spawn.andThen(Async.never)))
                 result <- fiber.getResult
                 _      <- assertEventually(alive.map(_.isEmpty))
