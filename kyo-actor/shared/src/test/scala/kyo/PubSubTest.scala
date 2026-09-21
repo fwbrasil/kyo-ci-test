@@ -43,6 +43,27 @@ class PubSubTest extends kyo.test.Test[Any]:
                 n     <- topic.subscriberCount
             yield assert(n == 0)
         }
+        // The add commits to the shared set, so a removal registered in a later step is separable from it by an
+        // interrupt, and the subscriber then stays published to for good. Unlike the linearized case there is no
+        // join to aim at: the window is a single preemption point between two steps of one fiber, so the rounds
+        // sweep the interrupt across it rather than waiting for a moment that would already be past it.
+        "a subscriber interrupted as it joins the set is not left there" in {
+            val rounds = 200
+            Loop.indexed { i =>
+                if i >= rounds then Loop.done
+                else
+                    for
+                        topic <- PubSub.init[Int]
+                        chan  <- Channel.init[Int](4)
+                        fiber <- Fiber.initUnscoped(Scope.run(topic.subscribe(Subject.init(chan)).andThen(Async.never)))
+                        _     <- Async.delay((i % 8).micros)(fiber.interrupt)
+                        _     <- fiber.getResult
+                        n     <- topic.subscriberCount
+                    yield
+                        assert(n == 0, s"round $i: the subscriber stayed in the set after its fiber was interrupted")
+                        Loop.continue
+            }
+        }
         "delivers to live subscribers even when a dead one is pruned in the same publish" in {
             for
                 topic <- PubSub.init[Int]
@@ -151,11 +172,10 @@ class PubSubTest extends kyo.test.Test[Any]:
             yield assert(n == 0)
         }
 
-        // The subscribe reply is a join: the actor has added the subscriber by the time it answers, and the
-        // unsubscribe is registered only when the subscriber's fiber resumes. An interrupt landing between the two
-        // would abandon that continuation and leave the subscriber in the set, where every later publish waits on a
-        // mailbox nobody drains. The interrupt here is requested as soon as the actor reports the subscriber, so the
-        // rounds sample that window.
+        // The subscribe reply is a join: the actor has added the subscriber by the time it answers, so an unsubscribe
+        // registered on the far side of that reply is separable from the add by an interrupt, and the subscriber is
+        // then in the set with nothing to remove it. The interrupt is requested as soon as the actor reports the
+        // subscriber, which is the moment the join is open; the rounds are what make landing inside it reliable.
         "a subscriber interrupted at the subscribe reply is not left in the set" in {
             val rounds = 200
             Loop.indexed { i =>

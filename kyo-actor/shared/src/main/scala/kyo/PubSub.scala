@@ -92,9 +92,12 @@ object PubSub:
                 closed.get.map {
                     case true  => Abort.fail(Closed("PubSub", frame))
                     case false =>
-                        state.updateAndGet(_ + subscriber).andThen {
-                            Scope.ensure(state.updateAndGet(_ - subscriber).unit)
-                        }
+                        // The removal is registered before the add commits. Registered after, it sits one step past a
+                        // subscriber that is already reachable, and an interrupt landing in that step leaves the
+                        // subscriber in the set for good. Removing one the set never gained is a no-op, so the early
+                        // registration costs nothing on the paths that do not need it.
+                        Scope.ensure(state.updateAndGet(_ - subscriber).unit)
+                            .andThen(state.updateAndGet(_ + subscriber).unit)
                 }
             def subscriberCount(using Frame): Int < (Async & Abort[Closed]) = state.get.map(_.size)
             def close(using Frame): Unit < Sync                             = closed.set(true).andThen(state.set(Set.empty))
@@ -205,9 +208,13 @@ object PubSub:
                     actor.ask(Command.Publish(value, _))
 
                 def subscribe(subscriber: Subject[A])(using Frame): Unit < (Async & Abort[Closed] & Scope) =
-                    actor.ask(Command.Subscribe(subscriber, _)).andThen {
-                        Scope.ensure(Abort.run[Closed](actor.ask(Command.Unsubscribe(subscriber, _))).unit)
-                    }
+                    // The actor's fiber commits the add, so the reply is a join and a registration after it lands on
+                    // the far side. An interrupt taken at that join leaves the subscriber in the set with nothing to
+                    // remove it, and since the subscriber's mailbox is the buffer, every later publish then parks in
+                    // fanOut forever and the topic wedges. Registered first, the unsubscribe covers both sides of the
+                    // join, and it is a no-op for a subscriber the actor never added.
+                    Scope.ensure(Abort.run[Closed](actor.ask(Command.Unsubscribe(subscriber, _))).unit)
+                        .andThen(actor.ask(Command.Subscribe(subscriber, _)))
 
                 def subscriberCount(using Frame): Int < (Async & Abort[Closed]) =
                     actor.ask(Command.Count(_))
