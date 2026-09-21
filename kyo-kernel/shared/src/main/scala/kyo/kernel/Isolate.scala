@@ -278,13 +278,10 @@ object Isolate:
                             case _                                => cont2(f(Nested.unnest[Stack](v).contextual()), Arrow.id)
 
             def isolate[A, S](state: Stack.Snapshot, v: A < S)(using Frame): (Stack.Snapshot, Stack.Snapshot, A) < S =
-                val forked = fork(state)
-                // `ensureMap`, not `map`, on both steps: the capture and the pairing are applied as the body's value
-                // arrives. A `map` polls for a stop first and would park in front of the step with the value inside,
-                // where an abandonment drops it; the value belongs to the region's done.
-                val inner: (Stack.Snapshot, A) < S  = v.ensureMap(a => capture(finals => (finals, a)))
+                val forked                          = fork(state)
+                val inner: (Stack.Snapshot, A) < S  = v.map(a => capture(finals => (finals, a)))
                 val parked: (Stack.Snapshot, A) < S = Pending.Park[(Stack.Snapshot, A), S](inner.asInstanceOf[Any < Any], forked)
-                parked.ensureMap((finals, a) => (forked, finals, a))
+                parked.map((finals, a) => (forked, finals, a))
             end isolate
 
             def restore[A, S](v: (Stack.Snapshot, Stack.Snapshot, A) < S)(using _frame: Frame): A < S =
