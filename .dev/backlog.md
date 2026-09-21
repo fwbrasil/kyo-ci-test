@@ -108,7 +108,7 @@ No hot loop added by the kernel work remains on this branch. State per site:
 | H8 | `BrowserLauncherJvmTest` launch stop | production fix (`cd8c87ee12`): the Chrome spawn is the acquire of `Scope.acquireRelease`. Barrier leaf stops the launch once the OS shows its Chrome, `.times(40)`. The base commit's leaf was VACUOUS: its token starts with `--`, `pgrep -f <token>` rejects it as an illegal option and prints nothing, so the count was always zero and the `pkill` cleanup never matched. The new barrier exposed it as a 2 m timeout; fixed with a `--` before the pattern and a fail-closed exit-code check (`f19b7a612f`). Whether an interrupted launch really reaps its Chrome was therefore never tested before | RAN GREEN on the host JVM with the real count: 3 passed, 40 rounds in 3.8 s, no Chrome left behind |
 | H9 | `HttpServerTest` bind | `HttpServer.init` already registers its finalizer before the bind. Barrier leaf "a server whose owning fiber is interrupted releases its port", `.times(80)`, all platforms (`2ecaf6a601`) | one round RAN GREEN on the JVM; rounds in flight |
 | H10 | `HttpServerTest` client connection | the client already tracks a connection in the step that creates it. Barrier leaf "a request stopped in flight leaves no connection behind once its client closes", `.times(300)` | one round RAN GREEN on the JVM; rounds in flight |
-| H11, H12 | `SqlClientInterruptTest`, two leaves | spin removed, stop requested directly, rounds (120 and 200), assertions and bounds unchanged, gate removed (`1b69e878d2`) | NEVER RUN. Needs the real Postgres container on JVM and JS |
+| H11, H12 | `SqlClientInterruptTest`, two leaves | spin removed, stop requested directly, rounds (120 and 200), assertions and bounds unchanged, gate removed (`1b69e878d2`) | **run, green** against a real Postgres container, 2026-09-21: `SqlClientInterruptTest` 8 passed, 0 failed, 1 pending on the JVM and the same on JS, `SBT_EXIT=0`. Both rewritten leaves pass; the 1 pending is the contended advisory-lock leaf, waiting on the user's #1982 |
 | H13 | `FlowEngineLifecycleTest` supervision | production fix (`af574a4edd`): `superviseDetached` recorded the supervision in a `map` after the spawn, a real gap. Now `ensureMap` with the registry update and the completion callback in one unsafe block; the spawn stays `initUnscoped` because renewals run on the `Clock` local. Barrier leaf through the file's `settle` helper, `.times(30)`, all platforms | one round RAN GREEN on the JVM; rounds in flight |
 
 **Host runs of 2026-09-21 evening, which supersede the state column above** (all `SBT_EXIT=0`, rounds included):
@@ -124,7 +124,7 @@ No hot loop added by the kernel work remains on this branch. State per site:
 | `BrowserLauncherJvmTest` (H8, 40 rounds) | 3 passed | JVM-only suite |
 | `HttpServerTest` (H9 80 rounds, H10 300 rounds) | 320 passed | 319 passed (H10 is JVM and Native only) |
 | `FlowEngineLifecycleTest` (H13, 30 rounds) | 6 passed | 6 passed |
-| `SqlClientInterruptTest` (H11, H12) | NEVER RUN: needs the Postgres container | NEVER RUN |
+| `SqlClientInterruptTest` (H11, H12) | 8 passed, 0 failed, 1 pending (real Postgres container) | 8 passed, 0 failed, 1 pending (real Postgres container) |
 
 Still owed for this section: H11 and H12 on the real Postgres container; every suite above on Linux, Native and
 Wasm; no leaf here has a red proof, because the windows they used to sample no longer exist or never did.
