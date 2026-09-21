@@ -699,8 +699,18 @@ private[kyo] object CdpBackend:
       * dialogIdCounter (disjoint from JsonRpcIdStrategy.SequentialInt's positive
       * allocator, per INV-018), and writes Page.handleJavaScriptDialog
       * fire-and-forget via endpoint.sendUnmatched.
+      *
+      * The spawn is the bracket's acquire, so the drainer is owed its stop to the scope its endpoint lives in from the step it is
+      * live. The backend's close stops it too, but an init abandoned before it yields a backend has no close to run.
       */
     private def buildDialogDrainer(
+        endpoint: JsonRpcHandler,
+        dialogQueue: Channel[(Boolean, String, Maybe[SessionId])],
+        dialogIdCounter: AtomicInt
+    )(using Frame): Fiber[Unit, Any] < (Sync & Scope) =
+        Scope.acquireRelease(spawnDialogDrainer(endpoint, dialogQueue, dialogIdCounter))(_.interrupt.unit)
+
+    private def spawnDialogDrainer(
         endpoint: JsonRpcHandler,
         dialogQueue: Channel[(Boolean, String, Maybe[SessionId])],
         dialogIdCounter: AtomicInt
