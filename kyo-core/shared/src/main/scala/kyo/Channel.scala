@@ -617,43 +617,52 @@ object Channel:
                 loop(Chunk.from(values))
             end offerAll
 
-            def poll()(using AllowUnsafe, Frame) =
-                succeedIfOpen {
-                    pollNextLive() match
-                        case Absent =>
-                            Absent
-                        case Present(Put.Value(value, promise)) =>
-                            promise.completeUnitDiscard()
-                            flush()
-                            Present(value)
-                        case Present(put: Put.Batch[A] @unchecked) =>
-                            discard(priorityPuts.offer(put))
-                            Absent
-                }
-            end poll
-
-            def drainUpTo(max: Int)(using AllowUnsafe, Frame) =
+            /** Reads up to `max` values straight from the parked producers, in the order a taker would receive them: the remainder of a
+              * partly transferred batch first, then the queued puts. A batch is consumed element by element and what is left of it goes
+              * back to `pendingBatch`, never to a queue, so it stays contiguous and ahead of every later producer.
+              *
+              * Runs under the `batchInProgress` claim because `pendingBatch` belongs to whoever holds it. A `flush` that loses the claim
+              * returns at once and relies on the holder to flush after releasing, which is what the trailing `flush()` is for.
+              */
+            private def readParked(max: Int)(using Frame): Chunk[A] =
                 @tailrec
-                def loop(current: Chunk[A], i: Int): Result[Closed, Chunk[A]] =
-                    if i <= 0 then Result.Success(current)
+                def loop(remaining: Int, acc: Chunk[A]): Chunk[A] =
+                    if remaining <= 0 then acc
                     else
-                        pollNextLive() match
-                            case Absent =>
-                                flush()
-                                succeedIfNonEmptyOrOpen(current)
+                        val next: Maybe[Put[A]] = pendingBatch match
+                            case Present(batch) =>
+                                pendingBatch = Absent
+                                Present(batch: Put[A])
+                            case _ =>
+                                pollNextLive()
+                        next match
                             case Present(Put.Value(value, promise)) =>
                                 promise.completeUnitDiscard()
-                                loop(current.appended(value), i - 1)
-                            case Present(put: Put.Batch[A] @unchecked) =>
-                                discard(priorityPuts.offer(put))
-                                flush()
-                                succeedIfNonEmptyOrOpen(current)
+                                loop(remaining - 1, acc.appended(value))
+                            case Present(Put.Batch(chunk, promise)) =>
+                                if chunk.length <= remaining then
+                                    promise.completeUnitDiscard()
+                                    loop(remaining - chunk.length, acc.concat(chunk))
+                                else
+                                    pendingBatch = Present(Put.Batch(chunk.dropLeft(remaining), promise))
+                                    acc.concat(chunk.take(remaining))
+                            case _ =>
+                                acc
                         end match
-                    end if
-                end loop
+                while !batchInProgress.compareAndSet(false, true) do ()
+                val taken = loop(max, Chunk.empty)
+                batchInProgress.set(false)
+                flush()
+                taken
+            end readParked
 
-                loop(Chunk.empty, max)
-            end drainUpTo
+            def poll()(using AllowUnsafe, Frame) =
+                // A value already read is returned even when the channel closed meanwhile: its producer was told the put succeeded.
+                val value = readParked(1).headMaybe
+                if value.isEmpty then succeedIfOpen(value) else Result.succeed(value)
+
+            def drainUpTo(max: Int)(using AllowUnsafe, Frame) =
+                succeedIfNonEmptyOrOpen(readParked(max))
 
             /** Held as a put: the rendezvous transfers it to the next taker, or fails it with the channel. */
             final private[kyo] def putBack(value: A)(using AllowUnsafe, Frame): Unit =
@@ -661,22 +670,7 @@ object Channel:
                 flush()
 
             def drain()(using AllowUnsafe, Frame) =
-                @tailrec
-                def loop(current: Chunk[A]): Result[Closed, Chunk[A]] =
-                    pollNextLive() match
-                        case Absent =>
-                            succeedIfNonEmptyOrOpen(current)
-                        case Present(Put.Value(value, promise)) =>
-                            promise.completeUnitDiscard()
-                            loop(current.appended(value))
-                        case Present(put: Put.Batch[A] @unchecked) =>
-                            discard(priorityPuts.offer(put))
-                            succeedIfNonEmptyOrOpen(current)
-                    end match
-                end loop
-
-                loop(Chunk.empty)
-            end drain
+                succeedIfNonEmptyOrOpen(readParked(Int.MaxValue))
 
             // A zero-capacity channel has no ring, so no offer can be mid-commit and the backlog is always known immediately.
             private def closeAndFlush()(using Frame, AllowUnsafe): Maybe[Chunk[A]] =
