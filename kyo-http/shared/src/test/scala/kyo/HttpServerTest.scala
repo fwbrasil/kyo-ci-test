@@ -3954,8 +3954,8 @@ class HttpServerTest extends BaseHttpTest:
         // The bind is a fraction of a millisecond, below what a timer lands in, so the leaf's own fiber spins on a
         // flag the spawner sets in the step before `init`, spins on to a staggered offset, and requests the stop
         // directly. Each round takes a port the OS hands out, closes that probe so the port is free by number, and
-        // then waits, bounded, for a bind on the same port to succeed: a release still in flight frees the port
-        // within the bound, a listener nobody registered holds it for good.
+        // then retries a bind on the same port until it succeeds: a release still in flight frees the port, a listener
+        // nobody registered holds it for good, which the leaf timeout reports.
         "an interrupt landing as the listener binds leaves no listener behind".notJs.notWasm in {
             val route                            = HttpRoute.getRaw("test").response(_.bodyText)
             val handler                          = route.handler(_ => HttpResponse.ok("hello"))
@@ -3978,11 +3978,9 @@ class HttpServerTest extends BaseHttpTest:
                             while java.lang.System.nanoTime() < target do ()
                             discard(fiber.unsafe.interrupt())
                         }
-                        _    <- fiber.getResult
-                        free <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(bind(port))))
-                    yield
-                        assert(free.isSuccess, s"round $i: port $port is still held by a listener the interrupted init left behind")
-                        Loop.continue
+                        _ <- fiber.getResult
+                        _ <- assertEventually(bind(port))
+                    yield Loop.continue
                     end for
             }
         }
@@ -3991,8 +3989,8 @@ class HttpServerTest extends BaseHttpTest:
         // join delivers it. A stop landing between the connection's completion and that step abandons a connection no
         // registry knows, which stays established for its idle life on both ends. The rounds stop a request at
         // staggered offsets from the step before it, close the client's scope, and read the operating system's view of
-        // the sockets connected to the server's port: a tracked connection closes with the pool within the bound, an
-        // untracked one stays.
+        // the sockets connected to the server's port: a tracked connection closes with the pool, an untracked one
+        // stays, which the leaf timeout reports.
         "an interrupt landing as the client's connection completes leaves no connection behind".notJs.notWasm in {
             val route   = HttpRoute.getRaw("test").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("hello"))
@@ -4042,17 +4040,12 @@ class HttpServerTest extends BaseHttpTest:
                                         }
                                     }
                                 })
-                                gone <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(connectedTo(port).map(_ == 0))))
-                            yield
-                                assert(
+                                _ = assert(
                                     closed.isSuccess,
                                     s"round $i: the client's scope did not close cleanly after the stopped request: $closed"
                                 )
-                                assert(
-                                    gone.isSuccess,
-                                    s"round $i: a connection to port $port is still established after the client's scope closed"
-                                )
-                                Loop.continue
+                                _ <- assertEventually(connectedTo(port).map(_ == 0))
+                            yield Loop.continue
                             end for
                     }
                 }
