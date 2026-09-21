@@ -193,25 +193,30 @@ class ChannelTest extends kyo.test.Test[Any]:
                                 }
                         }
                     }
-                    // A value held as a put moves into the ring only when a flush sees room, so a take is one.
+                    // A hand-back whose ring was full is held as a put, and a held put moves into the ring only when
+                    // something runs a flush. A drain over an empty ring returns without flushing, so the sentinel
+                    // is what gives the drain something to find: its loop flushes after each non-empty pass, which
+                    // transfers the held value into the ring the pass before it is read. The sentinel is negative
+                    // and the items are positive, so it filters out of the accounting.
                     //
-                    // The wait is on everything being accounted for, not on `pendingPuts` reaching zero. A taker's
-                    // hand-back runs on its abandonment, which is spawned rather than waited for, so zero is also
-                    // what is read while the last round's values are still on their way back, and reading it once
-                    // is what made this leaf drop the tail. `assertEventually` suspends between attempts, which
-                    // matters here: the hand-back needs the runtime to make progress. A value that genuinely went
-                    // missing never arrives, and the leaf fails with the diff below.
+                    // `pendingPuts` is not the signal for any of this: it is the size of the put queue, which still
+                    // counts puts whose promise is done, the ones `pollNextLive` skips. Reading it as a count of
+                    // live values strands a `take` on a queue that holds only dead entries.
+                    //
+                    // Attempts repeat because a taker's hand-back runs on its abandonment, which is spawned rather
+                    // than waited for, so a value can still be on its way back. The budget is bounded so that a
+                    // value which genuinely went missing reports the diff below rather than spending the leaf.
                     collected <- AtomicRef.init(Chunk.empty[Int])
-                    _         <- assertEventually {
-                        c.drain.flatMap { chunk =>
-                            collected.updateAndGet(_.concat(chunk)).flatMap { acc =>
-                                c.pendingPuts.flatMap { held =>
-                                    if held > 0 then
-                                        c.take.flatMap(v => collected.updateAndGet(_.append(v)))
-                                            .map(next => received.size + next.size >= items)
-                                    else collected.get.map(a => received.size + a.size >= items)
-                                }
-                            }
+                    _         <- Abort.run[String] {
+                        Retry[String](Schedule.fixed(10.millis).take(300)) {
+                            for
+                                _     <- c.offer(-1)
+                                chunk <- c.drain
+                                acc   <- collected.updateAndGet(_.concat(chunk.filter(_ > 0)))
+                                _     <-
+                                    if received.size + acc.size >= items then Kyo.unit
+                                    else Abort.fail("accounting incomplete")
+                            yield ()
                         }
                     }
                     drained <- collected.get

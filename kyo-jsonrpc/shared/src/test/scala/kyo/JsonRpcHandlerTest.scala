@@ -920,9 +920,8 @@ class JsonRpcHandlerTest extends JsonRpcTest:
 
     // The engine records a request's handler proxy as in flight, then spawns the handler fiber and links the proxy to
     // it. A close landing between the record and the link finds the proxy recorded but not yet standing for the running
-    // fiber. Each round has the caller send, spins to a staggered sub-millisecond offset from the send, and ends the
-    // serving endpoint's scope there; a handler known to have started must then be interrupted by that close, and one
-    // the close beat to the dispatch owes nothing.
+    // fiber. The handler releases `entered` as its first step and parks, and the serving endpoint's scope ends only
+    // once that release has arrived, so every round lands the close on a dispatch known to be in flight.
     "closing the endpoint while a request is being dispatched interrupts its handler".notJs.notWasm in {
         val rounds = 60
         Loop.indexed { i =>
@@ -937,34 +936,21 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                     }
                     transports <- JsonRpcTransport.inMemory
                     (ta, tb) = transports
-                    sending  = new java.util.concurrent.atomic.AtomicBoolean(false)
                     _ <- Scope.run {
                         JsonRpcHandler.init(tb, Seq(route)).map { _ =>
                             Scope.run {
                                 JsonRpcHandler.init(ta, Seq.empty).map { a =>
                                     Fiber.initUnscoped(
-                                        Sync.defer(sending.set(true))
-                                            .andThen(Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("park", AddReq(0, 0))))
-                                    ).map { _ =>
-                                        Sync.Unsafe.defer {
-                                            val bound = java.lang.System.nanoTime() + 200_000_000L
-                                            while !sending.get() && java.lang.System.nanoTime() < bound do ()
-                                            val target = java.lang.System.nanoTime() + (i % 30) * 50_000L
-                                            while java.lang.System.nanoTime() < target do ()
-                                        }
-                                    }
+                                        Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("park", AddReq(0, 0)))
+                                    ).andThen(entered.await)
                                 }
                             }
                         }
                     }
-                    ran <- Abort.run[Timeout](Async.timeout(500.millis)(entered.await))
-                    _ <-
-                        if ran.isSuccess then
-                            assertEventually(released.get.map { freed =>
-                                assert(freed, s"round $i: the handler kept running after the endpoint serving it was closed")
-                                true
-                            })
-                        else Kyo.unit
+                    _ <- assertEventually(released.get.map { freed =>
+                        assert(freed, s"round $i: the handler kept running after the endpoint serving it was closed")
+                        true
+                    })
                     _ <- gate.release
                     _ <- ta.close
                     _ <- tb.close

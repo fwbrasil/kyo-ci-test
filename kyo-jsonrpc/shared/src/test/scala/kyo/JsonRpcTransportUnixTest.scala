@@ -35,8 +35,8 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
     "an interrupt landing as the listener binds leaves no listener or socket file behind" in {
         assumeUnixSockets()
         Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
-            val sock   = Path(tempDir, "test.sock")
-            val rounds = 40
+            val sock                                 = Path(tempDir, "test.sock")
+            val rounds                               = 40
             def removed(using Frame): Boolean < Sync =
                 Abort.run[FileSystemException](Path.runReadOnly(sock.exists)).map {
                     case Result.Success(exists) => !exists

@@ -1691,6 +1691,24 @@ class ScopeTest extends kyo.test.Test[Any]:
             yield succeed
         }
 
+        "PROBE C: Scope.run versus runUnowned under the same abandonment".timeout(30.seconds) in {
+            def abandon(body: (Unit < (Async & Scope)) => (Any < Async)): Int < (Async & Abort[Any]) =
+                for
+                    closes <- AtomicInt.init(0)
+                    gate   <- Latch.init(1)
+                    fiber  <- Fiber.initUnscoped(body(Scope.ensure(closes.incrementAndGet.unit).andThen(gate.await)))
+                    _      <- fiber.interrupt
+                    _      <- Abort.run[Any](fiber.getResult)
+                    _      <- Abort.run[Any](Async.timeout(3.seconds)(assertEventually(closes.get.map(_ == 1))))
+                    n      <- closes.get
+                yield n
+            for
+                viaRun     <- abandon(v => Scope.run(v))
+                viaUnowned <- abandon(v => Scope.runUnowned(v))
+            yield fail(s"PROBE C result: Scope.run closes=$viaRun  runUnowned closes=$viaUnowned")
+            end for
+        }
+
         // A child would be closed by the enclosing scope, which is the same resource released under a caller that
         // was handed it to keep.
         "is a root, so an enclosing scope ending does not release it" in {
