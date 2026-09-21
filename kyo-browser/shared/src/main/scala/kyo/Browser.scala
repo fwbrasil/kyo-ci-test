@@ -3025,7 +3025,11 @@ object Browser:
                                     PageDownload.setDownloadBehavior(tab.session, Browser.DownloadBehavior.Deny.toInternal, Absent)
                         )
                     recordDownloadPolicy(tab, Browser.DownloadBehavior.Allow, Present(toPath)).andThen(
-                        PageDownload.acquireDownloadBehavior(tab.session, Browser.DownloadBehavior.Allow.toInternal, Present(toPath))(restore)
+                        PageDownload.acquireDownloadBehavior(
+                            tab.session,
+                            Browser.DownloadBehavior.Allow.toInternal,
+                            Present(toPath)
+                        )(restore)
                     ).andThen(body)
                 }
             }

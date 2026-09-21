@@ -163,9 +163,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
     }
 
     // The probe captures the dialog queue the drainer parks on, so the orphan is observable.
-    "an interrupt landing at the version probe leaves no dialog drainer parked".pendingUntilFixed(
-        "the dialog drainer is spawned before the version probe and owned by the backend's close, which init never registers when the probe abandons it; the drainer stays parked on the dialog queue"
-    ) in {
+    "an interrupt landing at the version probe leaves no dialog drainer parked" in {
         val captured =
             new java.util.concurrent.atomic.AtomicReference[Maybe[Channel[(Boolean, String, Maybe[SessionId])]]](Maybe.empty)
         Latch.init(1).map { gate =>
@@ -248,9 +246,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     }
 
-    "an interrupt landing at the background-color override reply still clears it".pendingUntilFixed(
-        "the CDP override lands on the server before its reply and Scope.acquireRelease registers the restore only when the reply lands; an interrupt at the reply strands the override with no restore"
-    ) in {
+    "an interrupt landing at the background-color override reply still clears it" in {
         Latch.init(1).map { gate =>
             wired(Map("Emulation.setDefaultBackgroundColorOverride" -> gate)) { (client, _, wire) =>
                 Scope.run {
@@ -282,12 +278,9 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     }
 
-    // `withEmulation` applies the emulated-media override through the same un-detached `Scope.acquireRelease` shape;
-    // quiescence is disabled so `afterAction` sends it directly, not via a mutation observer the fake browser does not
-    // answer.
-    "an interrupt landing at the emulated-media override reply still restores it".pendingUntilFixed(
-        "the CDP override lands on the server before its reply and Scope.acquireRelease registers the restore only when the reply lands; an interrupt at the reply strands the override with no restore"
-    ) in {
+    // Quiescence is disabled so `afterAction` sends the override directly, not via a mutation observer the fake browser
+    // does not answer.
+    "an interrupt landing at the emulated-media override reply still restores it" in {
         Latch.init(1).map { gate =>
             wired(Map("Emulation.setEmulatedMedia" -> gate)) { (client, _, wire) =>
                 Scope.run {
@@ -320,9 +313,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     }
 
-    "an interrupt landing at the download-policy reply still restores it".pendingUntilFixed(
-        "the CDP override lands on the server before its reply and Scope.acquireRelease registers the restore only when the reply lands; an interrupt at the reply strands the override with no restore"
-    ) in {
+    "an interrupt landing at the download-policy reply still restores it" in {
         Latch.init(1).map { gate =>
             wired(Map("Page.setDownloadBehavior" -> gate)) { (client, _, wire) =>
                 Scope.run {
@@ -353,9 +344,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     }
 
-    "an interrupt landing at the freeze-style injection reply still removes the freeze style".pendingUntilFixed(
-        "the freeze style is injected on the server before its reply and the removal registers only when the reply lands; an interrupt at the reply strands the injected style with no removal"
-    ) in {
+    "an interrupt landing at the freeze-style injection reply still removes the freeze style" in {
         wiredEval(_.contains("'freeze'"), _.contains("'unfrozen'")) { (client, _, wire, gate) =>
             Scope.run {
                 CdpBackend.initUnscoped(client, cfg).map { backend =>
@@ -379,12 +368,9 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     }
 
-    // `screenshotMarks` injects the numbered-badge overlay the same way, inside an outer `withFrozenPage`. A stop at
-    // the marks injection reply abandons that acquire specifically: the freeze/unfreeze pair unwinds normally, but the
-    // marks overlay's acquire never registered its removal.
-    "an interrupt landing at the marks injection reply still removes the marks overlay".pendingUntilFixed(
-        "the marks overlay is injected on the server before its reply and the removal registers only when the reply lands; an interrupt at the reply strands the overlay with no removal"
-    ) in {
+    // `screenshotMarks` injects its overlay inside an outer `withFrozenPage`, so the gate is on the marks expression
+    // alone: the freeze injection before it has to go through for the stop to land at the marks reply.
+    "an interrupt landing at the marks injection reply still removes the marks overlay" in {
         val mark =
             Browser.ElementInfo("body", "body", Absent, Chunk.empty, Absent, Browser.Bounds(0, 0, 10, 10), true, true, true, false, Absent)
         wiredEval(_.contains("'marks'"), _.contains("'unmarked'")) { (client, _, wire, gate) =>

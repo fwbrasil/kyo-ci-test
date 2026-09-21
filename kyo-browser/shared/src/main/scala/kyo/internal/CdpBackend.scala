@@ -517,8 +517,8 @@ private[kyo] object CdpBackend:
     private[kyo] def initUnscoped(
         transport: JsonRpcTransport,
         launchCfg: Browser.LaunchConfig,
-        // Test seam: handed the dialog queue during init, so a test can observe the unscoped dialog drainer parked on
-        // it after an interrupt at the version probe abandons init before it yields the backend. A no-op in production.
+        // Test seam: handed the dialog queue during init, the only way to observe whether the dialog drainer is still
+        // parked on it when an init is abandoned before it yields the backend. A no-op in production.
         dialogQueueProbe: Channel[(Boolean, String, Maybe[SessionId])] => Unit = _ => ()
     )(using
         Frame
