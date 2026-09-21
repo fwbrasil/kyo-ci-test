@@ -58,7 +58,7 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
         val token                                          = s"--kyo-launch-probe-${UUID.randomUUID().toString.take(8)}"
         def alive: Int < (Async & Abort[CommandException]) =
             Command("pgrep", "-f", "--", token).textWithExitCode.map {
-                case (out, ExitCode.Success) => out.linesIterator.count(_.trim.nonEmpty)
+                case (out, ExitCode.Success)  => out.linesIterator.count(_.trim.nonEmpty)
                 case (_, ExitCode.Failure(1)) => 0
                 case (out, code)              => fail(s"pgrep could not count the launch's processes: $code $out")
             }
