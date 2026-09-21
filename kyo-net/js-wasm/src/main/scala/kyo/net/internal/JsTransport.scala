@@ -1243,6 +1243,8 @@ final private[net] class JsListener(
     // Unsafe: created at construction with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the caller's
     // AllowUnsafe.
     private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+    // Unsafe: same construction-time bridge as closedFlag; completed from the server handle's close callback on the Node loop.
+    private val releasedPromise = Promise.Unsafe.init[Unit, Any]()(using AllowUnsafe.embrace.danger)
 
     // Write-once address fields: `_address` (constructor), `_port`, and `_host` are written exactly once, in `setAddress` from the listen
     // callback, and read-only thereafter. The Node event loop is single-threaded, so the write happens-before every later read on the same loop
@@ -1264,12 +1266,16 @@ final private[net] class JsListener(
 
     def isClosed(using AllowUnsafe): Boolean = closedFlag.get()
 
+    def released(using AllowUnsafe): Fiber.Unsafe[Unit, Any] = releasedPromise
+
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
             // Reclaim the accepted sockets still mid-handshake first: server.close() stops accepting but does not release them, and nothing else
             // knows about a socket that never became a connection.
             onCloseHook.foreach(_())
-            discard(server.close())
+            // Node fires the callback once the handle is closed, which it defers until every accepted connection has ended; the callback
+            // also fires, with an error, for a server that was not listening, so the release is never left pending.
+            discard(server.close({ (_: js.Any) => releasedPromise.completeDiscard(Result.succeed(())) }: js.Function1[js.Any, Unit]))
         end if
     end close
 end JsListener

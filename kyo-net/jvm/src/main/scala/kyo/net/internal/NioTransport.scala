@@ -1790,8 +1790,12 @@ final private[net] class NioListener(
     // Unsafe: created at construction with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the caller's
     // AllowUnsafe.
     private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+    // Unsafe: same construction-time bridge as closedFlag; the driver completes it on the carrier that observes the descriptor gone.
+    private val releasedPromise = Promise.Unsafe.init[Unit, Any]()(using AllowUnsafe.embrace.danger)
 
     def isClosed(using AllowUnsafe): Boolean = closedFlag.get()
+
+    def released(using AllowUnsafe): Fiber.Unsafe[Unit, Any] = releasedPromise
 
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
@@ -1801,12 +1805,9 @@ final private[net] class NioListener(
             driver.cleanupAccept(serverChannel, createdAt)
             try serverChannel.close()
             catch case _: IOException => ()
-                // serverChannel.close() cancels the channel's SelectionKey but, on JDK 11+, defers the real fd close (kill()) until the selector
-                // deregisters the cancelled key on its next select(). The driver loop selects with no timeout, so an idle driver (no other channel
-                // activity) never runs that pass and the listen socket leaks in LISTEN indefinitely. Wake the selector unconditionally so the
-                // deferred deregistration + kill runs now, whether or not an accept was pending at close.
-            end try
-            driver.wakeup()
+            // serverChannel.close() cancels the channel's SelectionKey but defers the real fd close (kill()) to the selector's next
+            // deregistration pass. The driver forces that pass and completes `released` once it has run.
+            driver.releaseListener(serverChannel, releasedPromise)
         end if
     end close
 end NioListener

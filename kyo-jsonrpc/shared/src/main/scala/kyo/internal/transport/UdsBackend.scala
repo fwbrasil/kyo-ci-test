@@ -7,15 +7,17 @@ import kyo.net.NetPlatform
 /** Unix-domain-socket backend over kyo-net, shared across JVM, JS, Native, and Wasm.
   *
   * Binds a listener on `sockPath` through the platform transport and serves a single client: the first accepted connection completes `first` and
-  * becomes the wire; any later accept is closed immediately. Scope cleanup closes the accepted connection, closes the listener, and removes the
-  * socket file (kyo-net does not unlink it). A single backend path that runs everywhere kyo-net's transport runs.
+  * becomes the wire; any later accept is closed immediately. Scope cleanup closes the accepted connection, closes the listener, waits for the
+  * listener's descriptor to be released, and removes the socket file (kyo-net does not unlink it). A single backend path that runs everywhere
+  * kyo-net's transport runs.
   */
 private[kyo] object UdsBackend:
 
     def connect(
         sockPath: Path,
         framer: JsonRpcFramer = JsonRpcFramer.lineDelimited,
-        codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]]
+        codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]],
+        releaseTimeout: Duration = JsonRpcTransport.DefaultReleaseTimeout
     )(using Frame): JsonRpcTransport < (Async & Scope & Abort[Throwable]) =
         // Unsafe: listenUnix and Promise.Unsafe are unsafe-tier; the AllowUnsafe bridged here is captured by the accept-handler closure below.
         Sync.Unsafe.defer {
@@ -31,18 +33,21 @@ private[kyo] object UdsBackend:
                         Sync.Unsafe.defer(listenCell.get()).map {
                             case Present(listenFiber) =>
                                 listenFiber.interrupt.andThen(listenFiber.getResult).map {
-                                    case Result.Success(listener) => Sync.Unsafe.defer(listener.close())
-                                    case _                        => ()
+                                    case Result.Success(listener) =>
+                                        // The unlink below has to follow the descriptor's release, not just the close: a platform that
+                                        // refuses to unlink a socket file whose descriptor is open fails otherwise. The wait is bounded
+                                        // because this finalizer runs uninterruptibly, so a release that never arrives must not wedge
+                                        // the scope; the unlink is attempted either way.
+                                        Sync.Unsafe.defer { listener.close(); listener.released.safe }.map { released =>
+                                            Abort.run[Timeout](Async.timeout(releaseTimeout)(released.get)).unit
+                                        }
+                                    case _ => ()
                                 }
                             case Absent => ()
                         }
                     }.andThen {
-                        // KNOWN GAP, deliberately not papered over: `Listener.close()` returns before the descriptor is
-                        // released (it wakes the selector to force the deferred kill, but does not wait for that pass),
-                        // and a platform that refuses to unlink a socket file whose descriptor is open will fail here.
-                        // The fix belongs in the listener, which must expose a completion to await; retrying the unlink
-                        // until the race resolves only hides it. The failure is logged rather than swallowed, because a
-                        // socket file left behind is what the next bind on the same path trips over.
+                        // A socket file left behind is what the next bind on the same path trips over, so the failure is logged rather
+                        // than swallowed.
                         Abort.run[FileSystemException](Path.run(sockPath.remove)).map(_.foldError(
                             _ => (),
                             error => Log.error(s"UdsBackend: could not remove the socket file at $sockPath", error.exception)

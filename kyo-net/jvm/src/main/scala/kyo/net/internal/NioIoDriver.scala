@@ -120,6 +120,22 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     private val pendingStagedDeliveries =
         new java.util.concurrent.ConcurrentLinkedQueue[NioHandle]()
 
+    // Concurrent-collection audit: listener releases deferred to the selector's deregistration pass. releaseListener (any carrier) offers the
+    // closed server channel with its release promise; the poll carrier drains after each select(), the closing carrier drains once more after
+    // selector.close(), and a releasing carrier that observes the selector closed after its offer drains its own entry. More than one consumer,
+    // so entries are dequeued with poll() (never the peek-then-poll the single-consumer queues above use) and a still-registered entry is
+    // re-offered rather than left at the head: poll is atomic, so no entry is completed twice or dropped. Same raw-ConcurrentLinkedQueue
+    // no-equivalent exception as its siblings; offer is the happens-before barrier.
+    private val pendingListenerReleases =
+        new java.util.concurrent.ConcurrentLinkedQueue[(ServerSocketChannel, Promise.Unsafe[Unit, Any])]()
+
+    // Set right after selector.close() in close(): from then on implCloseSelector has killed every channel, so a queued release is true
+    // regardless of isRegistered(). Read after an offer by releaseListener and by the poll carrier's re-offer, paired with close()'s write
+    // before its drain, so an entry that misses the closing drain is completed by the carrier that offered it: volatile ordering makes at
+    // least one side observe the other, the same store-load pairing the rebuild's compensating wakeup relies on.
+    // Unsafe: construction-time bridge, like closedFlag.
+    private val selectorClosed = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+
     // Diagnostics dump so a connection this driver still holds shows up in kyo-test's end-of-run leak report (LeakCheck reads Diagnostics.dumpAll).
     // NIO was the one backend that registered nothing, so a leaked NIO connection was unattributable. The dump surfaces the pending-op maps AND every
     // channel still registered with the selector, by local->remote address (a backpressured connection holds a registered key with no pending op,
@@ -1077,6 +1093,44 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             discard(selector.wakeup())
     end wakeup
 
+    /** Arm the release of a closed listener's descriptor. `serverChannel.close()` has already cancelled the channel's SelectionKey, but the fd is
+      * closed (`kill()`ed) only inside a later selector pass that deregisters the cancelled key. The entry is queued for the poll carrier and the
+      * selector is woken unconditionally rather than through the coalescing `wakeup()`: a wakeup coalesced into a pass that began before the
+      * cancel landed would leave an idle driver parked with the descriptor open. The promise completes once a pass has observed the channel
+      * deregistered, or at once when the driver is already closed, since `implCloseSelector` killed every channel. On a driver whose loop has
+      * not started it completes on the loop's first pass or in `close()`, whichever comes first, and never earlier.
+      */
+    def releaseListener(serverChannel: ServerSocketChannel, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe): Unit =
+        discard(pendingListenerReleases.offer((serverChannel, released)))
+        discard(selector.wakeup())
+        if selectorClosed.get() then drainListenerReleases()
+    end releaseListener
+
+    /** Complete every queued listener release whose channel the selector has deregistered, re-queuing the rest for the next pass.
+      *
+      * `isRegistered()` is the observation: `SelectorImpl.processDeregisterQueue` decrements the channel's key count one statement before it
+      * calls `kill()`, so a false read after `select()` returned means the fd is closed. A channel still registered cancelled its key after that
+      * pass's deregistration ran; the wakeup armed here makes the next pass run its deregistration before parking and return at once, so an
+      * entry is re-queued at most once and the single extra zero-key return cannot accumulate toward the rebuild threshold. Bounded by the size
+      * snapshot so a re-queued entry is not revisited within the pass. After a re-queue the closed flag is re-read: a `close()` that ran between
+      * the registration check and the re-offer drained a queue this entry was absent from, and this carrier then completes it itself.
+      */
+    private def drainListenerReleases()(using AllowUnsafe): Unit =
+        var remaining = pendingListenerReleases.size()
+        var requeued  = false
+        while remaining > 0 do
+            remaining -= 1
+            val entry = pendingListenerReleases.poll()
+            if entry ne null then
+                if selectorClosed.get() || !entry._1.isRegistered() then entry._2.completeUnitDiscard()
+                else
+                    discard(pendingListenerReleases.offer(entry))
+                    discard(selector.wakeup())
+                    requeued = true
+        end while
+        if requeued && selectorClosed.get() then drainListenerReleases()
+    end drainListenerReleases
+
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
             Log.live.unsafe.debug(
@@ -1120,6 +1174,10 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             end while
             try selector.close()
             catch case _: IOException => ()
+            // implCloseSelector deregistered and killed every channel, so each queued listener release is true from here. The flag is set
+            // before the drain so a release armed after this drain completes itself.
+            selectorClosed.set(true)
+            drainListenerReleases()
             diagRegistration.close()
         end if
     end close
@@ -1323,6 +1381,9 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             // now be registered cleanly. Done before key dispatch so a freshly registered channel can have its
             // interest armed (awaitX) and reported on the next cycle.
             drainPendingRegistrations()
+            // Complete the releases of listeners closed since the previous pass: the select() that just returned ran the deregistration that
+            // kills a cancelled listener channel. Before dispatch, so a continuation awaiting a release runs among this cycle's completions.
+            drainListenerReleases()
             // Apply any deferred STARTTLS demand-driven upgrade arm on this (poll) carrier, so its OP_READ registration is selector-confined and
             // never a cross-carrier interestOps read-modify-write. Done after drainPendingRegistrations (the channel's key already
             // exists, kept live by detachForUpgrade) and before reassert so the freshly armed read is reasserted on this same cycle if needed.

@@ -1049,8 +1049,12 @@ final private[net] class PosixTransport private[posix] (
             driver.closeListener(
                 handle,
                 () =>
-                    discard(sockets.shutdown(listener.serverFd, PosixConstants.SHUT_RDWR))
-                    discard(sockets.close(listener.serverFd))
+                    // The release completes after the fd close on this same carrier, which on io_uring is the reap carrier behind the
+                    // engine FIFO: the descriptor is gone by the time the promise is observed.
+                    try
+                        discard(sockets.shutdown(listener.serverFd, PosixConstants.SHUT_RDWR))
+                        discard(sockets.close(listener.serverFd))
+                    finally listener.releasedPromise.completeDiscard(Result.succeed(()))
             )
         }
 
@@ -2583,7 +2587,13 @@ final private[net] class PosixListener(
 
     private[posix] def onClose(f: () => Unit): Unit = teardownAccept = Present(f)
 
+    // Unsafe: created at construction with no ambient AllowUnsafe, like the listener flags; completed on whichever carrier closes the fd:
+    // this one on the readiness drivers, the reap carrier on io_uring.
+    private[posix] val releasedPromise = Promise.Unsafe.init[Unit, Any]()(using AllowUnsafe.embrace.danger)
+
     def isClosed(using AllowUnsafe): Boolean = closedFlag.get()
+
+    def released(using AllowUnsafe): Fiber.Unsafe[Unit, Any] = releasedPromise
 
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
@@ -2597,8 +2607,10 @@ final private[net] class PosixListener(
                     teardown()
                 case Absent =>
                     // No accept loop ever wired (listenImpl failed before startAcceptLoop): nothing is registered anywhere, close directly.
-                    discard(sockets.shutdown(serverFd, PosixConstants.SHUT_RDWR))
-                    discard(sockets.close(serverFd))
+                    try
+                        discard(sockets.shutdown(serverFd, PosixConstants.SHUT_RDWR))
+                        discard(sockets.close(serverFd))
+                    finally releasedPromise.completeDiscard(Result.succeed(()))
             end match
     end close
 
