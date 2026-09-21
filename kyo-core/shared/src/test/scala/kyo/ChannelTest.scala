@@ -403,6 +403,79 @@ class ChannelTest extends kyo.test.Test[Any]:
                     case other                          => fail(s"$other was not Result.Failure[Closed]")
             }
         }
+        // A zero-capacity channel has no ring, so a parked batch is read straight from the producer. Every reader has to
+        // consume it element by element, including the remainder a partial transfer leaves behind, and hand the rest back
+        // in order. Each leaf waits for the batch to park before reading, so the reads are sequential and deterministic.
+        "a parked batch on a zero-capacity channel" - {
+            "drain returns every element and completes the producer" in {
+                for
+                    c <- Channel.init[Int](0)
+                    f <- Fiber.initUnscoped(c.putBatch(Chunk(1, 2, 3)))
+                    _ <- assertEventually(c.pendingPuts.map(_ == 1))
+                    r <- c.drain
+                    _ <- f.get
+                    p <- c.pendingPuts
+                yield assert(r == Chunk(1, 2, 3) && p == 0)
+            }
+            "drain returns the remainder a take left behind" in {
+                for
+                    c <- Channel.init[Int](0)
+                    f <- Fiber.initUnscoped(c.putBatch(Chunk(1, 2, 3)))
+                    _ <- assertEventually(c.pendingPuts.map(_ == 1))
+                    v <- c.take
+                    r <- c.drain
+                    _ <- f.get
+                yield assert(v == 1 && r == Chunk(2, 3))
+            }
+            "drain returns the values parked behind the batch" in {
+                for
+                    c  <- Channel.init[Int](0)
+                    f1 <- Fiber.initUnscoped(c.putBatch(Chunk(1, 2)))
+                    _  <- assertEventually(c.pendingPuts.map(_ == 1))
+                    f2 <- Fiber.initUnscoped(c.put(3))
+                    _  <- assertEventually(c.pendingPuts.map(_ == 2))
+                    r  <- c.drain
+                    _  <- f1.get
+                    _  <- f2.get
+                yield assert(r == Chunk(1, 2, 3))
+            }
+            "drainUpTo stops inside the batch and the next read continues it" in {
+                for
+                    c  <- Channel.init[Int](0)
+                    f  <- Fiber.initUnscoped(c.putBatch(Chunk(1, 2, 3)))
+                    _  <- assertEventually(c.pendingPuts.map(_ == 1))
+                    r1 <- c.drainUpTo(2)
+                    d1 <- f.done
+                    r2 <- c.drainUpTo(5)
+                    _  <- f.get
+                yield assert(r1 == Chunk(1, 2) && !d1 && r2 == Chunk(3))
+            }
+            "poll returns the elements one at a time" in {
+                for
+                    c  <- Channel.init[Int](0)
+                    f  <- Fiber.initUnscoped(c.putBatch(Chunk(1, 2)))
+                    _  <- assertEventually(c.pendingPuts.map(_ == 1))
+                    v1 <- c.poll
+                    d1 <- f.done
+                    v2 <- c.poll
+                    _  <- f.get
+                    v3 <- c.poll
+                yield assert(v1 == Present(1) && !d1 && v2 == Present(2) && v3 == Absent)
+            }
+            "a batch a read left partly consumed stays ahead of a later producer" in {
+                for
+                    c  <- Channel.init[Int](0)
+                    f1 <- Fiber.initUnscoped(c.putBatch(Chunk(1, 2, 3)))
+                    _  <- assertEventually(c.pendingPuts.map(_ == 1))
+                    f2 <- Fiber.initUnscoped(c.putBatch(Chunk(101, 102)))
+                    _  <- assertEventually(c.pendingPuts.map(_ == 2))
+                    v1 <- c.poll
+                    r  <- c.takeExactly(4)
+                    _  <- f1.get
+                    _  <- f2.get
+                yield assert(v1 == Present(1) && r == Chunk(2, 3, 101, 102))
+            }
+        }
     }
     "takeExactly" - {
         "should return empty chunk if n <= 0" in {
