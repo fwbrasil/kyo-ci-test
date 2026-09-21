@@ -150,8 +150,10 @@ from a cached clone the macOS temp reaper had hollowed out (`b34f254640`).
   kyo-jsonrpcJVM/test`, `BUILD_EXIT=0`, 328 suites, 0 failed, 0 timed out, no leak detected. The leak DID NOT
   REPRODUCE in this run. Three more `kyo-httpJVM/test` runs in one container followed (`BUILD_EXIT=0`,
   `HttpServerTest` 320 passed each, no leak): 4 clean runs of 4 at HEAD against 1 leak in 1 run at `79e8094db0`.
-  The cause was never found, so this is "stopped reproducing", not "fixed". Owed: a longer repeat (10 or more) to
-  put a number on it, and if it shows up, the leak-debug run to attribute it. Commits since the red that touch this path: the interrupted-listen fix
+  The cause was never found, so this is "stopped reproducing", not "fixed".
+- **2026-09-21 night, Linux container at HEAD (after the D3 waiter change):** `kyo-httpJVM/test` ten times in one
+  container, `BUILD_EXIT=0`, 570 suite results, 0 failed, no leak detected in any run. That is 14 clean runs of 14
+  at HEAD against 1 leak in 1 run at `79e8094db0`. The repeat that was owed is done; the cause is still unknown. Commits since the red that touch this path: the interrupted-listen fix
   (`85d07419aa`) and the `UdsBackend` change (`032daf2dbb`); neither is known to be the cause.
 
 ### 4.2 Listener work on Linux backends
