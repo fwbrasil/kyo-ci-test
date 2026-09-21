@@ -184,6 +184,11 @@ abstract class Listener:
     /** The address this listener is bound to (TCP or Unix). */
     def address: NetAddress
 
-    /** Stop accepting new connections and close the listener. Synchronous, idempotent. Does not close already-accepted connections. */
+    /** Stop accepting new connections and close the listener. Idempotent. Does not close already-accepted connections.
+      *
+      * Returning does not mean the descriptor is gone. A transport that drives its sockets through a readiness selector releases it on that
+      * selector's next pass, so a caller that needs the descriptor actually released, unlinking a Unix socket file being the case that does,
+      * has to tolerate a window where the listener reports closed and the operating system still holds it.
+      */
     def close()(using AllowUnsafe, Frame): Unit
 end Listener

@@ -36,7 +36,20 @@ private[kyo] object UdsBackend:
                                 }
                             case Absent => ()
                         }
-                    }.andThen(Abort.run[FileSystemException](Path.run(sockPath.remove)).unit)
+                    }.andThen {
+                        // Closing the listener does not release its descriptor on every platform: the JVM transport
+                        // cancels the selection key and wakes the selector, and the descriptor dies on that pass.
+                        // Windows refuses to unlink a socket file while its descriptor is open, so the first attempt
+                        // races that pass and can lose. Retried until the release lands, and the last failure is
+                        // logged rather than dropped, because a socket file left behind makes the next bind on this
+                        // path fail and a silent removal tells nobody why.
+                        Abort.run[FileSystemException](
+                            Retry[FileSystemException](Schedule.fixed(5.millis).take(40))(Path.run(sockPath.remove))
+                        ).map(_.foldError(
+                            _ => (),
+                            error => Log.error(s"UdsBackend: could not remove the socket file at $sockPath", error.exception)
+                        ))
+                    }
                 }.andThen {
                     Sync.Unsafe.defer {
                         val listenFiber =
