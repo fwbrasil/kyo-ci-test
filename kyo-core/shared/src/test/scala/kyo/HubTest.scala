@@ -562,31 +562,31 @@ class HubTest extends kyo.test.Test[Any]:
         }
     }
     "listen under interruption" - {
-        // `Hub.use` spawns the publisher in one step and builds the hub in the next. A stop landing between them
-        // orphans the publisher, parked on a channel nothing else references, which no API can observe: the leaf pins
-        // what is observable, that the caller settles with the interrupt whatever step the stop lands on. The stop is
-        // requested from the leaf's own fiber spinning to a staggered offset from the step before `use`.
-        "interrupting Hub.use around its spawn settles the caller with the interrupt".notJs.notWasm in {
-            val rounds = 40
-            Loop.indexed { i =>
-                if i >= rounds then Loop.done(succeed)
-                else
-                    val entering = new java.util.concurrent.atomic.AtomicBoolean(false)
-                    for
-                        fiber <- Fiber.initUnscoped(Sync.defer(entering.set(true)).andThen(Hub.use[Int](4)(_ => Async.never)))
-                        _     <- Sync.Unsafe.defer {
-                            val bound = java.lang.System.nanoTime() + 200_000_000L
-                            while !entering.get() && java.lang.System.nanoTime() < bound do ()
-                            val target = java.lang.System.nanoTime() + (i % 40) * 25_000L
-                            while java.lang.System.nanoTime() < target do ()
-                            discard(fiber.unsafe.interrupt())
+        // `Hub.use` spawns the publisher and hands the hub that owns it to the caller's function. The publisher is live
+        // once the spawn returns and only the hub can stop it, so nothing may separate the two: a stop landing at the
+        // spawn still has to reach the function, whose bracket then closes the hub. The hook lands the stop inside the
+        // spawn, and the function records the hub as it is applied, before any step of its own could be preempted.
+        "a stop landing at Hub.use's publisher spawn still hands the hub over, and the stop then closes it".notJs.notWasm in {
+            val hook   = new SpawnHook
+            val handed = new java.util.concurrent.atomic.AtomicReference[Maybe[Hub[Int]]](Absent)
+            for
+                fiber <- Fiber.initUnscoped {
+                    SpawnHook.probing(hook) {
+                        Sync.defer(hook.armInterrupt()).andThen {
+                            Hub.use[Int](4) { hub =>
+                                handed.set(Present(hub))
+                                Async.never
+                            }
                         }
-                        r <- Abort.run[Timeout](Async.timeout(2.seconds)(fiber.getResult.map(_.isPanic)))
-                    yield
-                        assert(r.contains(true), s"round $i: the caller did not settle with the interrupt: $r")
-                        Loop.continue
-                    end for
-            }
+                    }
+                }
+                r <- fiber.getResult
+                hub = handed.get()
+                _   = assert(r.isPanic, s"the caller did not settle with the interrupt the hook requested: $r")
+                _   = assert(hub.nonEmpty, "the stop got between the publisher's spawn and the hub's handover, so the publisher has no owner")
+                _ <- assertEventually(hub.get.closed)
+            yield succeed
+            end for
         }
         // `listen` registers the listener's release before adding it to the hub's set. Were the order reversed, an
         // interrupt landing on the poll of the closed flag between the two would abandon the registration: the listener
