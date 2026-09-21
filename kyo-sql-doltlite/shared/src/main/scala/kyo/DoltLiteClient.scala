@@ -117,12 +117,15 @@ object DoltLite:
     /** The SQL flavor this backend renders, for a caller rendering a statement ahead of opening a client. */
     val dialect: Idiom = DoltLiteDialect
 
-    /** Opens a client on `url`, unscoped, for the backend factory to hand back. The connection layer is
-      * kyo-sql-sqlite's, given this engine's own bindings.
+    /** Assembles a client on `url` for the backend factory to hand back. The connection layer is kyo-sql-sqlite's,
+      * given this engine's own bindings.
+      *
+      * `Runtime.init` registers the net that closes the pool if this assembly is abandoned, which is why the scope
+      * reaches here.
       */
-    private[kyo] def openUnscoped(url: SqlConfig.Url, config: SqlConfig)(using
+    private[kyo] def opened(url: SqlConfig.Url, config: SqlConfig)(using
         Frame
-    ): Dolt < (Async & Abort[SqlException]) =
+    ): Dolt < (Async & Abort[SqlException] & Scope) =
         // The engine is a compiled library published for some platforms and not others, so failing to reach it is
         // this backend being unavailable HERE rather than anything about the URL. Translated into the declared
         // failure type, since the loader raises outside it and would otherwise reach the caller as a panic.

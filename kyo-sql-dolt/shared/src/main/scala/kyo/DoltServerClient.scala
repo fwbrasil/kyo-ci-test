@@ -102,15 +102,17 @@ object DoltServer:
     /** The SQL flavor this backend renders, for a caller rendering a statement ahead of opening a client. */
     val dialect: Idiom = DoltDialect
 
-    /** Opens a client on `url`, unscoped, for the backend factory to hand back.
+    /** Assembles a client on `url` for the backend factory to hand back.
       *
       * `config` is the portable [[SqlConfig]] and nothing else: this backend attaches no `SqlConfig.Extension`, since every setting it
       * honors is one the MySQL transport beneath already honors, and the revision a session runs against is scoped per fiber by
       * [[Dolt.onBranch]] rather than configured once per client.
+      *
+      * `Runtime.init` registers the net that closes the pool if this assembly is abandoned, which is why the scope reaches here.
       */
-    private[kyo] def openUnscoped(url: SqlConfig.Url, config: SqlConfig)(using
+    private[kyo] def opened(url: SqlConfig.Url, config: SqlConfig)(using
         Frame
-    ): Dolt < (Async & Abort[SqlException]) =
+    ): Dolt < (Async & Abort[SqlException] & Scope) =
         Runtime.init(url, config, new DoltConnectionFactory(url.options)).map(rt => new DoltServerClient(rt))
 
     /** Registers this backend so runtime discovery resolves a computed `dolt://` URL, the explicit counterpart to the

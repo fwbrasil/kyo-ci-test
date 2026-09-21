@@ -33,14 +33,16 @@ object SqliteClient:
     /** The SQL flavor this backend renders, for a caller rendering a statement ahead of opening a client. */
     val dialect: Idiom = SqliteDialect
 
-    /** Opens a client on `url`, unscoped, for the backend factory to hand back.
+    /** Assembles a client on `url` for the backend factory to hand back.
       *
       * `config` is the portable [[SqlConfig]] and nothing else: this backend attaches no `SqlConfig.Extension`, the settings one would carry
       * being transport settings and there being no transport. `acquireTimeout` does double duty as the engine's busy timeout.
+      *
+      * `Runtime.init` registers the net that closes the pool if this assembly is abandoned, which is why the scope reaches here.
       */
-    private[kyo] def openUnscoped(url: SqlConfig.Url, config: SqlConfig)(using
+    private[kyo] def opened(url: SqlConfig.Url, config: SqlConfig)(using
         Frame
-    ): SqliteClient < (Async & Abort[SqlException]) =
+    ): SqliteClient < (Async & Abort[SqlException] & Scope) =
         // The bindings are loaded once per client rather than per connection and handed to the factory, which is what
         // lets the sibling embedded backend reuse this connection layer against its own library.
         Sync.Unsafe.defer(Ffi.load[VendoredSqliteBindings]).flatMap { bindings =>

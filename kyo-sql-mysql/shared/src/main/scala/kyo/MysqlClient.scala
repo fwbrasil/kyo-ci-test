@@ -191,19 +191,22 @@ object MysqlClient:
     ): MysqlClient < (Async & Scope & Abort[SqlException]) =
         opened(url, config).flatMap(client => Scope.ensure(client.close).andThen(client))
 
-    /** Builds a client for `url`, registering no cleanup. */
+    /** Builds a client for `url`, registering no cleanup. The scope is the assembly's, not the client's: see
+      * [[kyo.SqlClient.openUnscoped]] for why one is needed to hand out a client nothing owns.
+      */
     private[kyo] def openUnscoped(url: SqlConfig.Url, config: SqlConfig)(using
         Frame
     ): MysqlClient < (Async & Abort[SqlException]) =
-        opened(url, config)
+        Scope.run(opened(url, config))
 
     /** Assembles the carrier through [[kyo.db.Runtime.init]] and wraps it in a client.
       *
       * `Runtime.init` merges the URL's options under `config`, builds the pool over the connection factory, and warms it up behind a bracket
-      * that closes whatever it opened on any failure edge, so a caller never receives a half-open client to clean up. MySQL has no type-name
-      * validation step, so unlike the PostgreSQL path this is assembly alone.
+      * that closes whatever it opened on any failure edge, so a caller never receives a half-open client to clean up. It also registers the
+      * net that closes the pool if this assembly is abandoned, which is why the scope reaches here. MySQL has no type-name validation step,
+      * so unlike the PostgreSQL path this is assembly alone.
       */
-    private def opened(url: SqlConfig.Url, config: SqlConfig)(using Frame): MysqlClient < (Async & Abort[SqlException]) =
+    private[kyo] def opened(url: SqlConfig.Url, config: SqlConfig)(using Frame): MysqlClient < (Async & Abort[SqlException] & Scope) =
         Runtime.init(url, config, MysqlSqlConnection.factory(url.options)).map(rt => new MysqlClient(rt))
 
 end MysqlClient

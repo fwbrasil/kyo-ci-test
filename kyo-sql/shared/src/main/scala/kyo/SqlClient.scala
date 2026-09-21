@@ -1464,6 +1464,9 @@ object SqlClient:
     private[kyo] def openScoped(rawUrl: String, config: SqlConfig, registry: Backend.Registry)(using
         Frame
     ): SqlClient < (Async & Scope & Abort[SqlException]) =
+        // This is the ordinary shutdown, and it is separable from the sessions by an interrupt. What covers that is
+        // the net `Runtime.init` registers on this same scope before warm-up opens anything; it fires only on an
+        // error edge, so the two never both drain the ring.
         factoryFor(rawUrl, registry).flatMap((url, backend) =>
             backend.open(url, config).flatMap(client => Scope.ensure(client.close).andThen(client))
         )
@@ -1474,7 +1477,12 @@ object SqlClient:
     private[kyo] def openUnscoped(rawUrl: String, config: SqlConfig, registry: Backend.Registry)(using
         Frame
     ): SqlClient < (Async & Abort[SqlException]) =
-        factoryFor(rawUrl, registry).flatMap((url, backend) => backend.open(url, config))
+        // The scope here is the assembly's, not the client's: it exists so the net `Runtime.init` registers has
+        // somewhere to live while the pool is being warmed, and it ends as soon as the client is built. Because that
+        // net fires only on an error edge, a clean assembly hands the client out with nothing registered against it,
+        // which is what this entry point promises. An assembly abandoned partway ends this scope with the error and
+        // is closed, which is what the caller could not have done for a client it never received.
+        factoryFor(rawUrl, registry).flatMap((url, backend) => Scope.run(backend.open(url, config)))
 
     /** Parses `rawUrl` and pairs it with the factory claiming its scheme, or fails naming the schemes that are available. */
     private[kyo] def factoryFor(rawUrl: String, registry: Backend.Registry)(using

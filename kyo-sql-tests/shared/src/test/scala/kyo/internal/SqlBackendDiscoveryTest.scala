@@ -40,11 +40,11 @@ class SqlBackendDiscoveryTest extends Test:
         val aliases: Set[String] = Set.empty
         val dialect: Idiom       = PostgresDialect
 
-        // Public and unscoped, matching the single `open` on kyo.db.Backend. It fails rather than assembling a
-        // client, since the suite never reaches it.
+        // Matching the single `open` on kyo.db.Backend. It fails rather than assembling a client, since the suite
+        // never reaches it.
         def open(url: SqlConfig.Url, config: SqlConfig)(using
             Frame
-        ): SqlClient < (Async & Abort[SqlException]) =
+        ): SqlClient < (Async & Abort[SqlException] & Scope) =
             Abort.fail(SqlConnectionUnsupportedSchemeException(url.address.scheme, Chunk.empty))
     end SchemeProbeFactory
 

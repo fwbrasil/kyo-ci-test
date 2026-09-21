@@ -7,6 +7,7 @@ import kyo.Chunk
 import kyo.Frame
 import kyo.Maybe
 import kyo.Result
+import kyo.Scope
 import kyo.SqlClient
 import kyo.SqlConfig
 import kyo.SqlConnectionException
@@ -75,14 +76,18 @@ abstract class Backend:
 
     /** Opens a warmed client for `url` under `config`.
       *
-      * The caller owns the close, and the scoped form core derives wraps this call in the enclosing [[kyo.Scope]]. An implementation
-      * validates whatever its own settings require, calls [[kyo.db.Runtime.init]] to assemble, and wraps the carrier it gets back in its
-      * client class.
+      * An implementation validates whatever its own settings require, calls [[kyo.db.Runtime.init]] to assemble, and wraps the carrier it
+      * gets back in its client class.
+      *
+      * The [[kyo.Scope]] in the row is what owns the sessions warm-up opens. Opening is not one step: warm-up parks on every session, and
+      * the client travels through this method and its caller before anyone can register a close for it, so a close registered on the far
+      * side of all that is separable from the sessions by an interrupt. `Runtime.init` registers against this scope at the instant it
+      * allocates the ring, which is why it appears here rather than being something the caller adds afterwards.
       *
       * A backend does not resolve the URL's own declarations: `init` merges them under `config`, and the merged value is the settings the
       * returned client was opened under.
       */
-    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException])
+    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException] & Scope)
 
     /** Reads `raw` into the URL this backend will be opened with.
       *
