@@ -34,4 +34,25 @@ class TransportListenerFdReleaseTest extends Test:
         }
     }
 
+    // Awaiting a fiber links the awaiter's interrupt to it. `released` reports a fact about the descriptor, so an awaiter that gives up,
+    // a caller's timeout or an interrupted fiber, must not be able to settle it: every other awaiter would then see the release "done"
+    // with the descriptor still open.
+    "an awaiter that is interrupted does not settle released" - eachBackend { transport =>
+        transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { listener =>
+            val released = listener.released.safe
+            for
+                awaiter <- Fiber.initUnscoped(released.get)
+                _       <- assertEventually(released.waiters.map(_ >= 1))
+                _       <- awaiter.interrupt
+                _       <- awaiter.getResult
+                early   <- released.done
+                _       <- Sync.Unsafe.defer(listener.close())
+                result  <- released.getResult
+            yield
+                assert(!early, "an interrupted awaiter settled released before the listener was even closed")
+                assert(result == Result.succeed(()), s"released must complete with success once the descriptor is gone, got $result")
+            end for
+        }
+    }
+
 end TransportListenerFdReleaseTest
