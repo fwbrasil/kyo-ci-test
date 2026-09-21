@@ -175,8 +175,12 @@ object Scope:
       * [[run]] for the acquisition would close the resource at the end of it, which is the opposite of handing it
       * over. Registering nothing leaves an acquisition abandoned partway holding whatever it had opened.
       *
-      * This covers the second case without causing the first: registrations made inside are run on a failure or an
-      * abandonment and never on a clean end, so the value leaves with them still armed and nobody to fire them.
+      * This covers the second case without causing the first: registrations made inside are run on a failure and
+      * never on a clean end, so the value leaves with them still armed and nobody to fire them.
+      *
+      * An abandonment is NOT covered today. The backstop does not reach a body interrupted while parked, so an
+      * acquisition stopped partway keeps what it had opened, which is what the unscoped entry points did before this
+      * existed. `ScopeTest` carries that as a pending leaf.
       *
       * The scope is a root even when one encloses it. A child would be closed by the enclosing scope, which is the
       * same resource released under a caller that was handed it to keep.

@@ -272,13 +272,23 @@ class SqlClientPoolIsAliveTest extends SqlContainerTest:
                     fail(s"no slot channel exists for ${client.url.address}, so no lease ever reached the pool")
         }
 
-    /** How many connections the pool has closed instead of pooling. */
+    /** How many connections the pool has closed instead of pooling, since the last time this was asked.
+      *
+      * `Counter.get` is `sumThenReset`, so the count moves to the caller and the counter restarts at zero. One read
+      * per assertion: reading again to report what an earlier read already checked reports nothing.
+      */
     private def discarded(client: SqlClient)(using Frame): Long < Sync =
         client.runtime.pool.metrics.connectionsDiscarded.get
 
-    /** Reads the discard counter once it has reached `target`, so an edge resolved off the calling fiber is not read early. */
+    /** Reads the discard counter once it has reached `target`, so an edge resolved off the calling fiber is not read early.
+      *
+      * The count is captured by the attempt that observes it rather than read a second time afterwards, since the
+      * second read of a counter that resets itself is always zero.
+      */
     private def untilDiscarded(client: SqlClient, target: Long)(using Frame, kyo.test.AssertScope): Long < Async =
-        assertEventually(discarded(client).map(_ >= target)).andThen(discarded(client))
+        AtomicLong.init(0L).map { seen =>
+            assertEventually(discarded(client).flatMap(seen.addAndGet).map(_ >= target)).andThen(seen.get)
+        }
 
     /** Takes a streaming lease against `client`'s own endpoint, exactly as `SqlClient.streamQuery` does. */
     private def leaseScoped(client: SqlClient)(using Frame): kyo.db.Connection < (Async & Abort[SqlException] & Scope) =
@@ -511,15 +521,16 @@ class SqlClientPoolIsAliveTest extends SqlContainerTest:
                             probeSeen.await.andThen {
                                 probing.interrupt.flatMap { interrupted =>
                                     assert(interrupted, "the probing fiber must actually be interrupted")
-                                    // The discard and the permit's return are two edges, both resolved off this fiber:
-                                    // an interrupt spawns the scope's drain rather than waiting for it. Waiting for
-                                    // one and reading the other is what made this leaf depend on which landed first,
-                                    // so both are waited for before either is read for its message.
-                                    assertEventually {
-                                        discarded(client).flatMap { count =>
-                                            permits(client).map((available, capacity) => count >= 1L && available == capacity)
-                                        }
-                                    }.andThen {
+                                    // Both edges resolve off this fiber, since an interrupt spawns the scope's drain
+                                    // rather than waiting for it, but they are ordered rather than independent: the
+                                    // slot's give-back is registered on a scope that encloses the one owning the
+                                    // destroy, and a close runs its children before its own. So the permit returning
+                                    // implies the destroy already counted, which makes it the edge to wait on.
+                                    //
+                                    // Waiting on the permit is also what keeps the count readable. `Counter.get` is
+                                    // `sumThenReset`, so the read that waits is the read that consumes; the counter
+                                    // is read once, afterwards, and reports what it accumulated.
+                                    assertEventually(permits(client).map((available, capacity) => available == capacity)).andThen {
                                         discarded(client).flatMap { count =>
                                             permits(client).map { case (available, capacity) =>
                                                 assert(
