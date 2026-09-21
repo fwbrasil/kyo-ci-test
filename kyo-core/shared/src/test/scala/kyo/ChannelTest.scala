@@ -403,6 +403,43 @@ class ChannelTest extends kyo.test.Test[Any]:
                     case other                          => fail(s"$other was not Result.Failure[Closed]")
             }
         }
+        // A value an interrupted taker hands back was accepted from a producer that has already been told so. While the
+        // channel is open it is held for the next taker; a close has to return it with the backlog, because nothing else
+        // will ever deliver it. `putBack` is what the interrupted taker's finalizer calls, invoked directly so the leaf
+        // needs no race to get a value handed back.
+        "a value handed back by an interrupted taker" - {
+            "is returned by close on a zero-capacity channel" in {
+                for
+                    c       <- Channel.init[Int](0)
+                    _       <- Sync.Unsafe.defer(c.unsafe.putBack(7))
+                    backlog <- c.close
+                yield assert(backlog == Present(Seq(7)))
+            }
+            "is returned by close after the ring's own elements when the ring was full" in {
+                for
+                    c       <- Channel.init[Int](1)
+                    _       <- c.put(1)
+                    _       <- Sync.Unsafe.defer(c.unsafe.putBack(2))
+                    backlog <- c.close
+                yield assert(backlog == Present(Seq(1, 2)))
+            }
+            "still reaches the next taker on a zero-capacity channel" in {
+                for
+                    c <- Channel.init[Int](0)
+                    _ <- Sync.Unsafe.defer(c.unsafe.putBack(7))
+                    v <- c.take
+                yield assert(v == 7)
+            }
+            "still reaches the next taker after the ring's own element when the ring was full" in {
+                for
+                    c <- Channel.init[Int](1)
+                    _ <- c.put(1)
+                    _ <- Sync.Unsafe.defer(c.unsafe.putBack(2))
+                    a <- c.take
+                    b <- c.take
+                yield assert((a, b) == (1, 2))
+            }
+        }
         // A zero-capacity channel has no ring, so a parked batch is read straight from the producer. Every reader has to
         // consume it element by element, including the remainder a partial transfer leaves behind, and hand the rest back
         // in order. Each leaf waits for the batch to park before reading, so the reads are sequential and deterministic.
