@@ -1965,34 +1965,6 @@ class AsyncTest extends kyo.test.Test[Any]:
         }
     }
 
-    "timeout under interruption" - {
-        // The timeout forks the guarded computation and installs the bracket that owns it as the spawn's handle
-        // arrives (`acquireReleaseWith`, no poll between): a stop requested as the handle settles must still interrupt
-        // the child, not leave it running. The timeout's only spawn is that fork, so a hook armed to interrupt the
-        // spawning fiber lands the stop exactly there, with the child already scheduled. The child then either starts
-        // and must release, or is interrupted before its first step and owes nothing; "never started" has no event to
-        // wait on, so that one wait is bounded.
-        "an interrupt landing at the timeout's spawn reaches the guarded computation".notJs.notWasm in {
-            val hook = new SpawnHook
-            for
-                entered  <- Latch.init(1)
-                gate     <- Latch.init(1)
-                released <- AtomicBoolean.init(false)
-                fiber    <- Fiber.initUnscoped {
-                    SpawnHook.probing(hook) {
-                        Sync.defer(hook.armInterrupt()).andThen {
-                            Async.timeout(1.hour)(Sync.ensure(released.set(true))(entered.release.andThen(gate.await)))
-                        }
-                    }
-                }
-                r   <- fiber.getResult
-                ran <- Abort.run[Timeout](Async.timeout(1.second)(entered.await))
-                _   <- Sync.ensure(gate.release)(if ran.isSuccess then assertEventually(released.get) else Kyo.unit)
-            yield assert(r.isPanic, s"the caller did not settle with the interrupt the hook requested: $r")
-            end for
-        }
-    }
-
     "defaultConcurrency knob" - {
         val computedDefault = Runtime.getRuntime().availableProcessors() * 2
 

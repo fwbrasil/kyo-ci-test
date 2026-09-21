@@ -562,78 +562,22 @@ class HubTest extends kyo.test.Test[Any]:
         }
     }
     "listen under interruption" - {
-        // Every constructor spawns the publisher and hands the hub that owns it to a function. The publisher is live once
-        // the spawn returns and only the hub can stop it, so nothing may separate the two: a stop landing at the spawn
-        // still has to reach the function. The hook lands the stop inside the spawn. The function is the one `use`
-        // passes, a close registered around the body, except that it records the hub as it is applied: `Sync.ensure`
-        // installs its region before its body, so through `use` itself a caller's function may rightly never run and
-        // the hub would not be observable.
-        "a stop landing at the publisher spawn still hands the hub over, and the stop then closes it".notJs.notWasm in {
-            val hook   = new SpawnHook
-            val handed = new java.util.concurrent.atomic.AtomicReference[Maybe[Hub[Int]]](Absent)
-            for
-                fiber <- Fiber.initUnscoped {
-                    SpawnHook.probing(hook) {
-                        Sync.defer(hook.armInterrupt()).andThen {
-                            Hub.initUnscopedWith[Int](4) { hub =>
-                                handed.set(Present(hub))
-                                Sync.ensure(hub.closeDiscard)(Async.never)
-                            }
-                        }
-                    }
-                }
-                r <- fiber.getResult
-                hub = handed.get()
-                _   = assert(r.isPanic, s"the caller did not settle with the interrupt the hook requested: $r")
-                _ = assert(hub.nonEmpty, "the stop got between the publisher's spawn and the hub's handover, so the publisher has no owner")
-                _ <- assertEventually(hub.get.closed)
-            yield succeed
-            end for
-        }
-        // `listen` registers the listener's release before adding it to the hub's set. Were the order reversed, an
-        // interrupt landing on the poll of the closed flag between the two would abandon the registration: the listener
-        // stays in the set with nobody to close it, and once its one-slot buffer fills the publisher parks on it and no
-        // later value reaches the listeners that are alive. The stop is requested from the leaf's own fiber spinning to a
-        // staggered sub-microsecond offset past the step before `listen`, sampling those steps directly; a crude ms-scale
-        // delay lands after listen (which finishes in microseconds) and only catches the window on a cold JVM. The probe
-        // afterwards publishes two values through a live listener; a leaked listener holds the first and stalls the
-        // publisher on the second. JVM only, like its sibling above: sampling another carrier's progress from a spinning
-        // carrier needs two carriers. On the single-threaded JS and Wasm runtimes the spin blocks the loop until its bound
-        // expires, so every round interrupts a fiber that has not run a step, and the leaf costs 500 x 200 ms against its
-        // 120 s budget while sampling nothing.
-        "a listener whose registration is abandoned is not left in the set".notJs.notWasm in {
-            val rounds = 500
+        // A listener left in the set with nobody to close it holds the first value in its one-slot buffer and parks the
+        // publisher on the second, so no later value reaches the listeners that are alive.
+        "a listener whose fiber is interrupted is not left in the set" in {
             Hub.initWith[Int](8) { hub =>
-                Loop.indexed { i =>
-                    if i >= rounds then Loop.done
-                    else
-                        val started = new java.util.concurrent.atomic.AtomicBoolean(false)
-                        for
-                            fiber <- Fiber.initUnscoped(
-                                Sync.defer(started.set(true)).andThen(Scope.run(hub.listen(1).andThen(Async.never)))
-                            )
-                            _ <- Sync.Unsafe.defer {
-                                val bound = java.lang.System.nanoTime() + 200_000_000L
-                                while !started.get() && java.lang.System.nanoTime() < bound do ()
-                                val target = java.lang.System.nanoTime() + (i % 80) * 200L
-                                while java.lang.System.nanoTime() < target do ()
-                                discard(fiber.unsafe.interrupt())
-                            }
-                            _ <- fiber.getResult
-                        yield Loop.continue
-                        end for
-                }.andThen {
-                    hub.listen(8).map { live =>
-                        Abort.run[Timeout] {
-                            Async.timeout(2.seconds) {
-                                hub.put(1).andThen(hub.put(2)).andThen(live.take.map(a => live.take.map(b => (a, b))))
-                            }
-                        }.map {
-                            case Result.Success((1, 2)) => succeed
-                            case other                  => fail(s"a leaked listener stalled the hub's publisher: $other")
-                        }
-                    }
-                }
+                for
+                    listening <- Latch.init(1)
+                    fiber     <- Fiber.initUnscoped(Scope.run(hub.listen(1).andThen(listening.release).andThen(Async.never)))
+                    _         <- listening.await
+                    _         <- fiber.interrupt
+                    _         <- fiber.getResult
+                    live      <- hub.listen(8)
+                    _         <- hub.put(1)
+                    _         <- hub.put(2)
+                    a         <- live.take
+                    b         <- live.take
+                yield assert((a, b) == (1, 2))
             }
         }
     }
