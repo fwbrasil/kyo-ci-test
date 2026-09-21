@@ -143,17 +143,24 @@ from a cached clone the macOS temp reaper had hollowed out (`b34f254640`).
 - **Task:** `kyo-httpJVM/test` in a Linux container with `KYO_TEST_LEAK_DEBUG=1` (the check reads Linux socket
   state) to attribute the descriptor to a leaf. Then a reproducing leaf, root cause, fix. If it does not
   reproduce under leak debug, which serialises leaves, repeat without it and count.
+- **2026-09-21 evening, Linux container at `20e363955e`, no leak debug:** `all kyo-httpJVM/test kyo-netJVM/test
+  kyo-jsonrpcJVM/test`, `BUILD_EXIT=0`, 328 suites, 0 failed, 0 timed out, no leak detected. The leak DID NOT
+  REPRODUCE in this run. One clean run does not close it: three more `kyo-httpJVM/test` runs in one container are
+  in flight to count occurrences. Commits since the red that touch this path: the interrupted-listen fix
+  (`85d07419aa`) and the `UdsBackend` change (`032daf2dbb`); neither is known to be the cause.
 
 ### 4.2 Listener work on Linux backends
 
-Everything after the review fixes (`72e1124cc2`, `85d07419aa`, `032daf2dbb`) has run on macOS (kqueue, nio)
-and Node only. Owed, in the same container run as 4.1: `TransportListenerFdReleaseTest`, `NioIoDriverTest`,
-`JsonRpcTransportUnixTest`, full kyo-net and kyo-jsonrpc on epoll and io_uring.
+RAN GREEN in the Linux container of 2026-09-21 evening (`20e363955e`, `BUILD_EXIT=0`): full kyo-net and
+kyo-jsonrpc JVM. `TransportListenerFdReleaseTest` 9 passed on epoll, nio and io_uring (3 cancelled are the kqueue
+legs); `NioIoDriverTest` 54; `JsonRpcTransportUnixTest` 5; `JsonRpcHandlerTest` 44; `TransportStartTlsTest` 61
+passed, the edited leaf on epoll and io_uring with both TLS implementations. Before that run, everything after
+the review fixes (`72e1124cc2`, `85d07419aa`, `032daf2dbb`) had run on macOS and Node only.
 
 Review finding 7 is still open: the single-shot re-bind in `TransportListenerFdReleaseTest` can go red with no
 defect in `released` (inferred, not run): a parallel leaf binding port 0 can be handed the same port, and on
-io_uring an in-flight accept SQE holds the kernel socket after the fd number is closed. Needs the io_uring
-run under parallel leaves.
+io_uring an in-flight accept SQE holds the kernel socket after the fd number is closed. The leaf passed on
+io_uring under parallel leaves in the container run above, once; that is one sample, not a proof.
 
 Windows has no local target. It stays unverified until CI.
 
