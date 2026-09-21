@@ -539,9 +539,13 @@ object Channel:
 
             protected def flush()(using Frame): Unit
 
+            // A waiter is the runtime representation of the opaque promise type.
+            private def promise[B](waiter: Waiter[Closed, B]): Promise.Unsafe[B, Abort[Closed]] =
+                waiter.asInstanceOf[Promise.Unsafe[B, Abort[Closed]]]
+
             private def waiter[B](count: AtomicInt.Unsafe): Promise.Unsafe[B, Abort[Closed]] =
                 discard(count.incrementAndGet())
-                Promise.Unsafe.fromIOPromise(new Waiter[Any, B < Abort[Closed]](count))
+                promise(new Waiter[Closed, B](count))
 
             final def putFiber(value: A)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
                 val promise = waiter[Unit](livePuts)
@@ -571,11 +575,7 @@ object Channel:
               */
             final private[kyo] def reuseTake(waiter: Waiter[Closed, A])(using AllowUnsafe, Frame): Unit =
                 discard(liveTakes.incrementAndGet())
-                // The take queue holds the opaque promise type, which a waiter is at runtime.
-                require(
-                    takes.offer(waiter.asInstanceOf[Promise.Unsafe[A, Abort[Closed]]]),
-                    "reuseTake: unbounded queue offer must not fail"
-                )
+                require(takes.offer(promise(waiter)), "reuseTake: unbounded queue offer must not fail")
                 flush()
             end reuseTake
 
