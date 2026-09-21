@@ -588,15 +588,18 @@ class HubTest extends kyo.test.Test[Any]:
                     end for
             }
         }
-        // `listen` adds the listener to the hub's set in one step and registers its release in the next, behind a
-        // poll of the hub's closed flag. An interrupt landing on that poll abandons the registration: the listener
-        // stays in the set with nobody to close it, and once its one-slot buffer fills the publisher parks on it
-        // and no later value reaches the listeners that are alive. The stop is requested from the leaf's own fiber
-        // spinning to a staggered sub-microsecond offset past the step before `listen`, sampling that poll directly; a
-        // crude ms-scale delay lands after listen (which finishes in microseconds) and only catches the window on a cold
-        // JVM. The probe afterwards publishes two values
-        // through a live listener; a leaked listener holds the first and stalls the publisher on the second.
-        "a listener whose registration is abandoned is not left in the set" in {
+        // `listen` registers the listener's release before adding it to the hub's set. Were the order reversed, an
+        // interrupt landing on the poll of the closed flag between the two would abandon the registration: the listener
+        // stays in the set with nobody to close it, and once its one-slot buffer fills the publisher parks on it and no
+        // later value reaches the listeners that are alive. The stop is requested from the leaf's own fiber spinning to a
+        // staggered sub-microsecond offset past the step before `listen`, sampling those steps directly; a crude ms-scale
+        // delay lands after listen (which finishes in microseconds) and only catches the window on a cold JVM. The probe
+        // afterwards publishes two values through a live listener; a leaked listener holds the first and stalls the
+        // publisher on the second. JVM only, like its sibling above: sampling another carrier's progress from a spinning
+        // carrier needs two carriers. On the single-threaded JS and Wasm runtimes the spin blocks the loop until its bound
+        // expires, so every round interrupts a fiber that has not run a step, and the leaf costs 500 x 200 ms against its
+        // 120 s budget while sampling nothing.
+        "a listener whose registration is abandoned is not left in the set".notJs.notWasm in {
             val rounds = 500
             Hub.initWith[Int](8) { hub =>
                 Loop.indexed { i =>
