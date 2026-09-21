@@ -1244,7 +1244,9 @@ final private[net] class JsListener(
     // AllowUnsafe.
     private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
     // Unsafe: same construction-time bridge as closedFlag; completed from the server handle's close callback on the Node loop.
-    private val releasedPromise = Promise.Unsafe.init[Unit, Any]()(using AllowUnsafe.embrace.danger)
+    // Uninterruptible because awaiting a fiber links the awaiter's interrupt to it: an awaiter that gives up must not be able to settle a
+    // fact about the descriptor for every other awaiter.
+    private val releasedPromise = Promise.Unsafe.initUninterruptible[Unit, Any]()(using AllowUnsafe.embrace.danger)
 
     // Write-once address fields: `_address` (constructor), `_port`, and `_host` are written exactly once, in `setAddress` from the listen
     // callback, and read-only thereafter. The Node event loop is single-threaded, so the write happens-before every later read on the same loop

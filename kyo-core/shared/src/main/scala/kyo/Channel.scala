@@ -660,6 +660,7 @@ object Channel:
                 // A value already read is returned even when the channel closed meanwhile: its producer was told the put succeeded.
                 val value = readParked(1).headMaybe
                 if value.isEmpty then succeedIfOpen(value) else Result.succeed(value)
+            end poll
 
             def drainUpTo(max: Int)(using AllowUnsafe, Frame) =
                 succeedIfNonEmptyOrOpen(readParked(max))

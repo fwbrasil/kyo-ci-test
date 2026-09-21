@@ -583,7 +583,7 @@ class HubTest extends kyo.test.Test[Any]:
                 r <- fiber.getResult
                 hub = handed.get()
                 _   = assert(r.isPanic, s"the caller did not settle with the interrupt the hook requested: $r")
-                _   = assert(hub.nonEmpty, "the stop got between the publisher's spawn and the hub's handover, so the publisher has no owner")
+                _ = assert(hub.nonEmpty, "the stop got between the publisher's spawn and the hub's handover, so the publisher has no owner")
                 _ <- assertEventually(hub.get.closed)
             yield succeed
             end for

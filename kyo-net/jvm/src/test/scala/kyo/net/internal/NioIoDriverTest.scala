@@ -111,8 +111,9 @@ class NioIoDriverTest extends Test:
             discard(driver.start())
             val ssc = openServer()
             assert(driver.registerServerChannel(ssc))
+            // No registration check here: the loop is running, so its next pass can deregister the cancelled key at any point after the
+            // close. The never-started leaves below pin that a release does not complete before a pass.
             ssc.close()
-            assert(ssc.isRegistered)
             val released = Promise.Unsafe.init[Unit, Any]()
             driver.releaseListener(ssc, released)
             released.safe.get.map { _ =>

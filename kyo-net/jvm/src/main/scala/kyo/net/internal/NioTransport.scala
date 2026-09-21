@@ -1791,7 +1791,9 @@ final private[net] class NioListener(
     // AllowUnsafe.
     private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
     // Unsafe: same construction-time bridge as closedFlag; the driver completes it on the carrier that observes the descriptor gone.
-    private val releasedPromise = Promise.Unsafe.init[Unit, Any]()(using AllowUnsafe.embrace.danger)
+    // Uninterruptible because awaiting a fiber links the awaiter's interrupt to it: an awaiter that gives up must not be able to settle a
+    // fact about the descriptor for every other awaiter.
+    private val releasedPromise = Promise.Unsafe.initUninterruptible[Unit, Any]()(using AllowUnsafe.embrace.danger)
 
     def isClosed(using AllowUnsafe): Boolean = closedFlag.get()
 

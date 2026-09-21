@@ -1044,18 +1044,21 @@ final private[net] class PosixTransport private[posix] (
         // reliably interrupt an accept on Linux); it is harmless where the accept already failed (ENOTCONN on a listener is discarded).
         listener.onClose { () =>
             // Reclaim any handshake this listener accepted that is still in flight. This is the reclamation point that actually happens for a
-            // server: the transport-wide sweep runs only from close(), which the process-shared transport never sees.
-            dischargeListenerHandshakes(listener)
-            driver.closeListener(
-                handle,
-                () =>
-                    // The release completes after the fd close on this same carrier, which on io_uring is the reap carrier behind the
-                    // engine FIFO: the descriptor is gone by the time the promise is observed.
-                    try
-                        discard(sockets.shutdown(listener.serverFd, PosixConstants.SHUT_RDWR))
-                        discard(sockets.close(listener.serverFd))
-                    finally listener.releasedPromise.completeDiscard(Result.succeed(()))
-            )
+            // server: the transport-wide sweep runs only from close(), which the process-shared transport never sees. The fd teardown
+            // follows in a `finally`: the reclaim runs handshake teardown thunks, and a throw from one must not strand the listen fd.
+            try dischargeListenerHandshakes(listener)
+            finally
+                driver.closeListener(
+                    handle,
+                    () =>
+                        // The release completes after the fd close on this same carrier, which on io_uring is the reap carrier behind
+                        // the engine FIFO: the descriptor is gone by the time the promise is observed.
+                        try
+                            discard(sockets.shutdown(listener.serverFd, PosixConstants.SHUT_RDWR))
+                            discard(sockets.close(listener.serverFd))
+                        finally listener.releasedPromise.completeDiscard(Result.succeed(()))
+                )
+            end try
         }
 
         def scheduleNextAccept()(using AllowUnsafe, Frame): Unit =
@@ -2588,8 +2591,9 @@ final private[net] class PosixListener(
     private[posix] def onClose(f: () => Unit): Unit = teardownAccept = Present(f)
 
     // Unsafe: created at construction with no ambient AllowUnsafe, like the listener flags; completed on whichever carrier closes the fd:
-    // this one on the readiness drivers, the reap carrier on io_uring.
-    private[posix] val releasedPromise = Promise.Unsafe.init[Unit, Any]()(using AllowUnsafe.embrace.danger)
+    // this one on the readiness drivers, the reap carrier on io_uring. Uninterruptible because awaiting a fiber links the awaiter's
+    // interrupt to it: an awaiter that gives up must not be able to settle a fact about the descriptor for every other awaiter.
+    private[posix] val releasedPromise = Promise.Unsafe.initUninterruptible[Unit, Any]()(using AllowUnsafe.embrace.danger)
 
     def isClosed(using AllowUnsafe): Boolean = closedFlag.get()
 

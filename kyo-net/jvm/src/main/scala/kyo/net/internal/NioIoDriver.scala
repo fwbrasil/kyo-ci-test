@@ -1110,9 +1110,10 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
       *
       * `isRegistered()` is the observation: `SelectorImpl.processDeregisterQueue` decrements the channel's key count one statement before it
       * calls `kill()`, so a false read after `select()` returned means the fd is closed. A channel still registered cancelled its key after that
-      * pass's deregistration ran; the wakeup armed here makes the next pass run its deregistration before parking and return at once, so an
-      * entry is re-queued at most once and the single extra zero-key return cannot accumulate toward the rebuild threshold. Bounded by the size
-      * snapshot so a re-queued entry is not revisited within the pass. After a re-queue the closed flag is re-read: a `close()` that ran between
+      * pass's deregistration ran; the wakeup armed here makes the next pass run its deregistration before parking and return at once. An entry
+      * is re-queued at most twice: once per selector, the second time only when a rebuild re-registers a listener that is closed while the
+      * rebuild runs, so its key is cancelled on the new selector after that selector's first pass. The extra zero-key returns therefore cannot
+      * accumulate toward the rebuild threshold. Bounded by the size snapshot so a re-queued entry is not revisited within the pass. After a re-queue the closed flag is re-read: a `close()` that ran between
       * the registration check and the re-offer drained a queue this entry was absent from, and this carrier then completes it itself.
       */
     private def drainListenerReleases()(using AllowUnsafe): Unit =
@@ -1137,51 +1138,59 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             Log.live.unsafe.debug(
                 s"$label closing driver, failing ${pendingReads.size()} reads, ${pendingWritables.size()} writes, ${pendingConnects.size()} connects, ${pendingAccepts.size()} accepts"
             )
-            val closed = Closed(label, Frame.internal, "driver closed")
-            // This sweep iterates the pendingReads map, unlike cleanupPending's slot-first per-handle sweep: an armed cell whose entry a
-            // dispatch consumed (the STARTTLS salvage shape) is invisible here. Covered in practice because the transport's close cancels
-            // every connection (cleanupPending) before the driver close runs; this map walk is the backstop for entries those closes missed.
-            pendingReads.forEach { (_, h) =>
-                h.readArm.getAndSet(Absent).foreach { armCell =>
-                    armCell.promise.completeDiscard(Result.fail(closed))
-                }
-            }
-            pendingReads.clear()
-            pendingWritables.forEach { (_, promise) =>
-                promise.completeDiscard(Result.fail(closed))
-            }
-            pendingWritables.clear()
-            pendingConnects.forEach { (_, entry) =>
-                entry._1.completeDiscard(Result.fail(closed))
-            }
-            pendingConnects.clear()
-            pendingAccepts.forEach { (_, promise) =>
-                promise.completeDiscard(Result.fail(closed))
-            }
-            pendingAccepts.clear()
-            // Drop any handles awaiting deferred registration: the driver is gone, so the poll carrier will never drain them. Their downstream
-            // awaitX promises (if any were armed during the deferred window) are already failed by the pending-op-map cleanup above; the channels
-            // are owned and closed by the caller (the upgrade teardown). Clearing prevents a stranded queue entry from outliving the driver.
-            pendingRegistrations.clear()
-            // Fail any STARTTLS upgrade whose bootstrap arm was enqueued but not yet applied: the driver is gone, so drainUpgradeArms will never run.
-            // Such a handle is not yet in pendingReads (applyUpgradeArm puts it), so the loop above did not fail its handshake waiter; the waiter
-            // parked on the upgrade handoff slot by driveHandshake right after the bootstrap enqueue is failed here so the handshake tears down.
-            var pendingArm = pendingUpgradeArms.poll()
-            while pendingArm ne null do
-                pendingArm.upgradeHandoff.getAndSet(NioHandle.UpgradeHandoff.Idle) match
-                    case NioHandle.UpgradeHandoff.Waiter(p, _) => p.completeDiscard(Result.fail(closed))
-                    case _                                     => ()
-                pendingArm = pendingUpgradeArms.poll()
-            end while
-            // Closing the selector runs implCloseSelector, which deregisters and kills every channel, so each queued listener release is true
-            // once it returns. The flag is set before the drain so a release armed after this drain completes itself.
-            try selector.close()
-            catch case _: IOException => ()
-            selectorClosed.set(true)
-            drainListenerReleases()
-            diagRegistration.close()
+            // Failing a promise runs its callbacks inline, so the selector teardown is in a `finally`: a throw from one of them must not
+            // leave the selector open or the queued listener releases pending. Closing the selector runs implCloseSelector, which
+            // deregisters and kills every channel, so each queued release is true once it returns. The flag is set before the drain so a
+            // release armed after this drain completes itself.
+            try failPendingOps()
+            finally
+                try selector.close()
+                catch case _: IOException => ()
+                selectorClosed.set(true)
+                drainListenerReleases()
+                diagRegistration.close()
+            end try
         end if
     end close
+
+    private def failPendingOps()(using AllowUnsafe, Frame): Unit =
+        val closed = Closed(label, Frame.internal, "driver closed")
+        // This sweep iterates the pendingReads map, unlike cleanupPending's slot-first per-handle sweep: an armed cell whose entry a
+        // dispatch consumed (the STARTTLS salvage shape) is invisible here. Covered in practice because the transport's close cancels
+        // every connection (cleanupPending) before the driver close runs; this map walk is the backstop for entries those closes missed.
+        pendingReads.forEach { (_, h) =>
+            h.readArm.getAndSet(Absent).foreach { armCell =>
+                armCell.promise.completeDiscard(Result.fail(closed))
+            }
+        }
+        pendingReads.clear()
+        pendingWritables.forEach { (_, promise) =>
+            promise.completeDiscard(Result.fail(closed))
+        }
+        pendingWritables.clear()
+        pendingConnects.forEach { (_, entry) =>
+            entry._1.completeDiscard(Result.fail(closed))
+        }
+        pendingConnects.clear()
+        pendingAccepts.forEach { (_, promise) =>
+            promise.completeDiscard(Result.fail(closed))
+        }
+        pendingAccepts.clear()
+        // Drop any handles awaiting deferred registration: the driver is gone, so the poll carrier will never drain them. Their downstream
+        // awaitX promises (if any were armed during the deferred window) are already failed by the pending-op-map cleanup above; the channels
+        // are owned and closed by the caller (the upgrade teardown). Clearing prevents a stranded queue entry from outliving the driver.
+        pendingRegistrations.clear()
+        // Fail any STARTTLS upgrade whose bootstrap arm was enqueued but not yet applied: the driver is gone, so drainUpgradeArms will never run.
+        // Such a handle is not yet in pendingReads (applyUpgradeArm puts it), so the loop above did not fail its handshake waiter; the waiter
+        // parked on the upgrade handoff slot by driveHandshake right after the bootstrap enqueue is failed here so the handshake tears down.
+        var pendingArm = pendingUpgradeArms.poll()
+        while pendingArm ne null do
+            pendingArm.upgradeHandoff.getAndSet(NioHandle.UpgradeHandoff.Idle) match
+                case NioHandle.UpgradeHandoff.Waiter(p, _) => p.completeDiscard(Result.fail(closed))
+                case _                                     => ()
+            pendingArm = pendingUpgradeArms.poll()
+        end while
+    end failPendingOps
 
     /** Register a channel with this driver's selector. Must be called before awaitRead/awaitWritable. */
     def registerChannel(handle: NioHandle)(using AllowUnsafe): Boolean =
@@ -1641,6 +1650,15 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                 // swap in the volatile synchronization order.
                 wakeupPending.set(false)
                 discard(newSelector.wakeup())
+
+                // A close() racing this swap may have read and closed the old selector. It sets closedFlag before it reads `selector`,
+                // and this reads closedFlag after writing `selector`, so one of the two always sees the other: either close() closes the
+                // new selector, or this does. Without it the new selector is closed by nobody, the channels re-registered below are
+                // never killed, and a listener release would be reported for a descriptor that is still open.
+                if closedFlag.get() then
+                    try newSelector.close()
+                    catch case e: IOException => Log.live.unsafe.error(s"$label could not close the selector a closing driver rebuilt", e)
+                end if
 
                 // Re-register every channel on the new selector, restoring its armed interest from the
                 // pending-op maps so an in-flight read, write, connect, or accept survives the rebuild.
