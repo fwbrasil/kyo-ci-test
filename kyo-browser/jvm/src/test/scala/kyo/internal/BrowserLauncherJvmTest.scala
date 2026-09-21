@@ -85,23 +85,34 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
 
     // Chrome's helpers (zygotes, GPU process, network service) outlive the main process by a few milliseconds and write
     // into the user-data-dir as they go down, so a removal that runs as soon as the main process is dead can find the
-    // directory re-created behind it.
+    // directory re-created behind it. `terminateTree` returns once none of the tree is left, so the survivors are counted
+    // the moment it returns. The quoted `mkdir` text picks out the shell and its subshell, whose argv carry the script:
+    // the `mkdir` each iteration forks has the path unquoted in its own argv and is not part of the tree.
     "terminateTree leaves no descendant alive to write into the directory" in {
         assume(!Platform.isWindows, "POSIX process tree")
-        val outerTmp                = Paths.get(java.lang.System.getProperty("java.io.tmpdir"))
-        val dir                     = outerTmp.resolve(s"kyo-browser-jvm-test-${UUID.randomUUID()}")
-        val script                  = s"mkdir -p '$dir'; (while true; do mkdir -p '$dir/x'; sleep 0.005; done) & wait"
+        val outerTmp                                           = Paths.get(java.lang.System.getProperty("java.io.tmpdir"))
+        val dir                                                = outerTmp.resolve(s"kyo-browser-jvm-test-${UUID.randomUUID()}")
+        val step                                               = s"mkdir -p '$dir/x'"
+        val script                                             = s"mkdir -p '$dir'; (while true; do $step; sleep 0.005; done) & wait"
+        def survivors: Int < (Async & Abort[CommandException]) =
+            Command("pgrep", "-f", "--", step).textWithExitCode.map {
+                case (out, ExitCode.Success)  => out.linesIterator.count(_.trim.nonEmpty)
+                case (_, ExitCode.Failure(1)) => 0
+                case (out, code)              => fail(s"pgrep could not count the tree's processes: $code $out")
+            }
         def removeDir: Unit < Async =
             Abort.run[FileSystemException](Path.run(Path(dir.toString).removeAll)).unit
         Scope.run {
             Scope.ensure(removeDir).andThen {
                 for
-                    proc <- Command("sh", "-c", script).spawnUnscoped
-                    _    <- assertEventually(Sync.defer(Files.exists(dir.resolve("x"))))
-                    _    <- BrowserLauncher.terminateTree(proc)
-                    _    <- removeDir
-                    _    <- Async.sleep(300.millis)
-                yield assert(!Files.exists(dir), s"a descendant survived terminateTree and re-created $dir")
+                    proc   <- Command("sh", "-c", script).spawnUnscoped
+                    _      <- assertEventually(Sync.defer(Files.exists(dir.resolve("x"))))
+                    before <- survivors
+                    _      <- BrowserLauncher.terminateTree(proc)
+                    left   <- survivors
+                yield
+                    assert(before > 0, "the process count never saw the tree, so a zero afterwards would prove nothing")
+                    assert(left == 0, s"terminateTree returned with $left process(es) of the tree still alive")
             }
         }
     }
