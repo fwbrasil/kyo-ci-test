@@ -261,6 +261,9 @@ object Hub:
             val channel          = Channel.Unsafe.init[A](capacity, Access.MultiProducerSingleConsumer).safe
             val listeners        = new CopyOnWriteArraySet[Listener[A]]
             def currentListeners = Chunk.fromNoCopy(listeners.toArray()).asInstanceOf[Chunk[Listener[A]]]
+            // `ensureMap` rather than `map` below: the publisher is live once the spawn returns and only the hub built from it
+            // can stop it. `map` polls the safepoint first, so a pending interrupt would park there with `f` never applied,
+            // leaving the publisher running with nothing holding it.
             Fiber.initUnscoped {
                 Loop.foreach {
                     channel.take.map { value =>
@@ -276,7 +279,7 @@ object Hub:
                         }
                     }
                 }
-            }.map { fiber =>
+            }.ensureMap { fiber =>
                 f(new Hub(channel, fiber, listeners))
             }
         }
