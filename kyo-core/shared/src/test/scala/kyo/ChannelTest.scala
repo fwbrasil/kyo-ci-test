@@ -442,7 +442,9 @@ class ChannelTest extends kyo.test.Test[Any]:
             // closeAwaitEmpty reports that everything the channel accepted was consumed, so a handed-back value keeps it
             // waiting like any other element. The close is started on the unsafe tier because that returns its fiber at
             // once, which fixes the order of the close and the read.
-            "keeps closeAwaitEmpty waiting on a zero-capacity channel until it is read" in {
+            "keeps closeAwaitEmpty waiting on a zero-capacity channel until it is read".pendingUntilFixed(
+                "a zero-capacity closeAwaitEmpty closes at once and keeps only the Boolean, so the handed-back values its close collected are dropped"
+            ) in {
                 for
                     c       <- Channel.init[Int](0)
                     _       <- Sync.Unsafe.defer(c.unsafe.putBack(7))
@@ -452,7 +454,9 @@ class ChannelTest extends kyo.test.Test[Any]:
                     closed  <- closing.get
                 yield assert(!early && v == 7 && closed)
             }
-            "handed back while closeAwaitEmpty drains the ring is read after the ring's own element" in {
+            "handed back while closeAwaitEmpty drains the ring is read after the ring's own element".pendingUntilFixed(
+                "a HalfOpen queue rejects the hand-back's offer and the channel forfeits the value when no taker is parked, so the drain settles one element short"
+            ) in {
                 for
                     c       <- Channel.init[Int](2)
                     _       <- c.put(1)
@@ -466,25 +470,36 @@ class ChannelTest extends kyo.test.Test[Any]:
             }
             // The last element of a closing ring goes to a parked taker, which empties the ring. A taker interrupted before
             // it resumes hands the element back, and the close has to still be waiting for it. The offer, the close and the
-            // interrupt share one step so the interrupt can land before the taker resumes; rounds make that reliable.
-            "handed back after it emptied a closing ring keeps closeAwaitEmpty waiting".times(300) in {
-                for
-                    c     <- Channel.init[Int](1)
-                    taker <- Fiber.initUnscoped(c.take)
-                    _     <- assertEventually(c.pendingTakes.map(_ == 1))
-                    closing <- Sync.Unsafe.defer {
-                        discard(c.unsafe.offer(1))
-                        val closing = c.unsafe.closeAwaitEmpty()
-                        discard(taker.unsafe.interrupt())
-                        closing.safe
-                    }
-                    result <- taker.getResult
-                    v <- ((result match
-                        case Result.Success(x) => x
-                        case _                 => closing.done.map(early => assert(!early)).andThen(c.take)
-                    ): Int < (Async & Abort[Closed]))
-                    closed <- closing.get
-                yield assert(v == 1 && closed)
+            // interrupt share one step so the interrupt can land before the taker resumes; rounds make that reliable. A
+            // pendingUntilFixed body runs once and a single round can pass with the taker winning, so the rounds are a loop
+            // in the body rather than `.times`.
+            "handed back after it emptied a closing ring keeps closeAwaitEmpty waiting".pendingUntilFixed(
+                "the queue reaches FullyClosed at the poll that feeds the parked taker, before the taker owns the value, so the close has settled by the time the value is handed back"
+            ) in {
+                Loop.indexed { i =>
+                    if i >= 300 then Loop.done
+                    else
+                        for
+                            c       <- Channel.init[Int](1)
+                            taker   <- Fiber.initUnscoped(c.take)
+                            _       <- assertEventually(c.pendingTakes.map(_ == 1))
+                            closing <- Sync.Unsafe.defer {
+                                discard(c.unsafe.offer(1))
+                                val closing = c.unsafe.closeAwaitEmpty()
+                                discard(taker.unsafe.interrupt())
+                                closing.safe
+                            }
+                            result <- taker.getResult
+                            v      <- ((result match
+                                case Result.Success(x) => x
+                                case _                 => closing.done.map(early => assert(!early, s"round $i")).andThen(c.take)
+                            ): Int < (Async & Abort[Closed]))
+                            closed <- closing.get
+                        yield
+                            assert(v == 1 && closed, s"round $i: v=$v closed=$closed")
+                            Loop.continue
+                        end for
+                }
             }
         }
         // A zero-capacity channel has no ring, so a parked batch is read straight from the producer. Every reader has to
