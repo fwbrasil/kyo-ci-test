@@ -1671,11 +1671,13 @@ class ScopeTest extends kyo.test.Test[Any]:
             yield assert(result.isFailure && n == 1, s"a failed acquisition kept its resource: closes=$n")
         }
 
+        // Bounded well under the suite default: a leaf that is expected to fail spends its whole budget before
+        // reporting, and two minutes of that on every run of this module is time nobody gets back.
         "releases when the body is abandoned".pendingUntilFixed(
             "the Sync.ensure backstop does not reach a runUnowned whose body was abandoned while parked, so an " +
                 "acquisition interrupted partway keeps whatever it had opened. This is what the unscoped entry " +
                 "points did before runUnowned existed, so it is a gap to close rather than something they lost"
-        ) in {
+        ).timeout(10.seconds) in {
             for
                 closes <- AtomicInt.init(0)
                 gate   <- Latch.init(1)
