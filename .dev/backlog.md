@@ -70,9 +70,9 @@ rollback on 2026-09-21 ("I actually think these are good changes") and is review
 | `kyo-core/.../FiberTest.scala` | 5 s bound removed, stop flag moved into `Sync.ensure` | RAN GREEN, JVM and JS |
 | `kyo-core/.../KyoAppTest.scala` | 2 s bound on the finalizer wait removed | RAN GREEN, JVM and JS |
 | `kyo-core/.../StreamCoreExtensionsTest.scala` | four 2 s and 3 s bounds removed | RAN GREEN, JVM and JS |
-| `kyo-combinators/.../AsyncCombinatorsTest.scala` | 2 s bound removed | NEVER RUN |
-| `kyo-net/.../TransportStartTlsTest.scala` | 1 ms sleep poll replaced by `assertEventually` | NEVER RUN |
-| `kyo-net/js-wasm/.../JsIoDriverUpgradeHandoffDropTest.scala` | `nanoTime` deadline polls replaced, cleanup in `Sync.ensure`, third poll is a direct assert | NEVER RUN |
+| `kyo-combinators/.../AsyncCombinatorsTest.scala` | 2 s bound removed | RAN GREEN, JVM, 16 passed |
+| `kyo-net/.../TransportStartTlsTest.scala` | 1 ms sleep poll replaced by `assertEventually` | RAN GREEN on kqueue/jdk and nio/jdk (25 passed); its epoll, io_uring and BoringSSL legs are cancelled on the host and need the Linux container |
+| `kyo-net/js-wasm/.../JsIoDriverUpgradeHandoffDropTest.scala` | `nanoTime` deadline polls replaced, cleanup in `Sync.ensure`, third poll is a direct assert | RAN GREEN, JS, 3 passed |
 | `kyo-jsonrpc/.../JsonRpcHandlerTest.scala` | three leaves: bounds removed, each asserts the caller's outcome (a logic rewrite) | RAN GREEN, JVM |
 | `kyo-system/.../CommandTest.scala` | see H4 | RAN GREEN, JVM |
 
@@ -107,6 +107,24 @@ No hot loop added by the kernel work remains on this branch. State per site:
 | H10 | `HttpServerTest` client connection | the client already tracks a connection in the step that creates it. Barrier leaf "a request stopped in flight leaves no connection behind once its client closes", `.times(300)` | one round RAN GREEN on the JVM; rounds in flight |
 | H11, H12 | `SqlClientInterruptTest`, two leaves | spin removed, stop requested directly, rounds (120 and 200), assertions and bounds unchanged, gate removed (`1b69e878d2`) | NEVER RUN. Needs the real Postgres container on JVM and JS |
 | H13 | `FlowEngineLifecycleTest` supervision | production fix (`af574a4edd`): `superviseDetached` recorded the supervision in a `map` after the spawn, a real gap. Now `ensureMap` with the registry update and the completion callback in one unsafe block; the spawn stays `initUnscoped` because renewals run on the `Clock` local. Barrier leaf through the file's `settle` helper, `.times(30)`, all platforms | one round RAN GREEN on the JVM; rounds in flight |
+
+**Host runs of 2026-09-21 evening, which supersede the state column above** (all `SBT_EXIT=0`, rounds included):
+
+| suite | JVM | JS |
+|---|---|---|
+| `HubTest` (H2, H3, 500 rounds) | 38 passed | 36 passed |
+| `AsyncTest` (H1) | 134 passed | not rerun since the leaf was deleted |
+| `CommandTest` (H4) | 51 passed | 51 passed |
+| `JsonRpcHandlerTest` (H5) | 44 passed | 38 passed |
+| `AeronTransportTest` (H6, 80 rounds) | 35 passed | 35 passed |
+| `AeronClientTest` (H7, 40 rounds) | 7 passed, 1 pending | 7 passed, 1 pending |
+| `BrowserLauncherJvmTest` (H8, 40 rounds) | 3 passed | JVM-only suite |
+| `HttpServerTest` (H9 80 rounds, H10 300 rounds) | 320 passed | 319 passed (H10 is JVM and Native only) |
+| `FlowEngineLifecycleTest` (H13, 30 rounds) | 6 passed | 6 passed |
+| `SqlClientInterruptTest` (H11, H12) | NEVER RUN: needs the Postgres container | NEVER RUN |
+
+Still owed for this section: H11 and H12 on the real Postgres container; every suite above on Linux, Native and
+Wasm; no leaf here has a red proof, because the windows they used to sample no longer exist or never did.
 
 Found while setting up the Aeron run, fixed and PROVEN on this machine: `build-aeron.sh` could not recover
 from a cached clone the macOS temp reaper had hollowed out (`b34f254640`).
