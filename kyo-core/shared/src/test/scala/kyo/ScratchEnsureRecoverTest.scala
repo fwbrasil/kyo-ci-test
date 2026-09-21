@@ -2,7 +2,7 @@ package kyo
 
 // SCRATCH: diagnosis only, to be deleted. Does a panic raised inside `Abort.recover(onFail, onPanic)` reach `onPanic` when
 // the recover sits inside `Sync.ensure`?
-class ScratchEnsureRecoverTest extends Test:
+class ScratchEnsureRecoverTest extends kyo.test.Test[Any]:
 
     val boom = new RuntimeException("boom")
 
