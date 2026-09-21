@@ -350,14 +350,25 @@ private[kyo] object CdpBackend:
     private[kyo] def runtimeEvaluate(backend: CdpBackend, params: EvalParams)(using
         Frame
     ): EvalResult < (Async & Abort[BrowserReadException]) =
+        recoverEvaluate(backend.send[EvalParams, EvalResult](RuntimeEvaluateMethod, params))
+
+    /** [[runtimeEvaluate]] for an expression that leaves something on the page, owed `release` on `finalizer` from the moment its
+      * reply arrives: see [[CdpBackend.acquire]].
+      */
+    private[kyo] def runtimeEvaluateAcquire(backend: CdpBackend, finalizer: Scope.Finalizer, params: EvalParams)(
+        release: EvalResult => Unit < (Async & Abort[BrowserReadException])
+    )(using Frame): EvalResult < (Async & Abort[BrowserReadException]) =
+        recoverEvaluate(backend.acquire[EvalParams, EvalResult](finalizer, RuntimeEvaluateMethod, params)(release))
+
+    private def recoverEvaluate(evaluate: => EvalResult < (Async & Abort[BrowserReadException]))(using
+        Frame
+    ): EvalResult < (Async & Abort[BrowserReadException]) =
         recoverContextDestroyed {
             Abort.recover[BrowserProtocolErrorException] { e =>
                 if e.error.contains(CdpErrorStrings.UnreturnableValueErrorMessage) then
                     EvalResult(RemoteObject.`undefined`(), Absent)
                 else Abort.fail(e)
-            } {
-                backend.send[EvalParams, EvalResult](RuntimeEvaluateMethod, params)
-            }
+            }(evaluate)
         }
 
     private[kyo] def setDeviceMetricsOverride(backend: CdpBackend, params: ViewportParams)(using

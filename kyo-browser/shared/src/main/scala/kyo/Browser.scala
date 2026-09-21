@@ -2156,9 +2156,7 @@ object Browser:
             HoldStill.withFrozenPage {
                 Browser.use { tab =>
                     Scope.run {
-                        Scope.acquireRelease(BrowserEval.evalJs(injectJs)) { token =>
-                            Browser.releaseHook(tab)(BrowserEval.evalJs(removeJs(token)).unit)
-                        }.andThen {
+                        BrowserEval.acquireJs(injectJs)(removeJs).andThen {
                             HoldStill.holdStillFrame {
                                 CdpBackend.captureScreenshot(
                                     tab.session,
