@@ -45,8 +45,9 @@ class PubSubTest extends kyo.test.Test[Any]:
         }
         // The add commits to the shared set, so a removal registered in a later step is separable from it by an
         // interrupt, and the subscriber then stays published to for good. Unlike the linearized case there is no
-        // join to aim at: the window is a single preemption point between two steps of one fiber, so the rounds
-        // sweep the interrupt across it rather than waiting for a moment that would already be past it.
+        // join to aim at: the window is a single preemption point between two steps of one fiber. The interrupt is
+        // requested with nothing ordering it against the subscribe, so across rounds it lands on both sides of that
+        // point and on it.
         "a subscriber interrupted as it joins the set is not left there" in {
             val rounds = 200
             Loop.indexed { i =>
@@ -56,12 +57,13 @@ class PubSubTest extends kyo.test.Test[Any]:
                         topic <- PubSub.init[Int]
                         chan  <- Channel.init[Int](4)
                         fiber <- Fiber.initUnscoped(Scope.run(topic.subscribe(Subject.init(chan)).andThen(Async.never)))
-                        _     <- Async.delay((i % 8).micros)(fiber.interrupt)
+                        _     <- fiber.interrupt
                         _     <- fiber.getResult
-                        n     <- topic.subscriberCount
-                    yield
-                        assert(n == 0, s"round $i: the subscriber stayed in the set after its fiber was interrupted")
-                        Loop.continue
+                        // Retried rather than read once: an interrupt spawns the scope's drain and does not wait for
+                        // it, so the fiber's result is available before the removal has run. A registered removal
+                        // arrives; one that was never registered never does, and the leaf timeout is what says so.
+                        _ <- assertEventually(topic.subscriberCount.map(_ == 0))
+                    yield Loop.continue
             }
         }
         "delivers to live subscribers even when a dead one is pruned in the same publish" in {
@@ -188,10 +190,11 @@ class PubSubTest extends kyo.test.Test[Any]:
                         _     <- assertEventually(topic.subscriberCount.map(_ == 1))
                         _     <- fiber.interrupt
                         _     <- fiber.getResult
-                        n     <- topic.subscriberCount
-                    yield
-                        assert(n == 0, s"round $i: the subscriber stayed in the set after its fiber was interrupted")
-                        Loop.continue
+                        // Retried rather than read once, for the reason given on the init leaf: the interrupt spawns
+                        // the scope's drain without waiting for it. Reading once happens to pass here only because
+                        // the count is an actor round trip, which is usually long enough for the drain to have landed.
+                        _ <- assertEventually(topic.subscriberCount.map(_ == 0))
+                    yield Loop.continue
             }
         }
         "publish after close fails with Closed" in {
