@@ -205,8 +205,10 @@ object Scope:
                         case Absent =>
                             Abort.get(result.asInstanceOf[Result[Nothing, A]])
                 }
-                // The abandonment edge, which carries a panic rather than a clean end, so it closes.
-                .handle(Sync.ensure(finalizer.close))
+                // The abandonment edge. Guarded on the error because this backstop runs on EVERY ending, a clean
+                // one included, where it carries `Absent`: handing it `close` unguarded would release the value on
+                // its way out, which is the one thing this must never do.
+                .handle(Sync.ensure(error => if error.isDefined then finalizer.close(error) else Kyo.unit))
         }
 
     /** The finalizers registered against one scope, run in reverse registration order when it closes. A nested run

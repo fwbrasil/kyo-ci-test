@@ -1648,4 +1648,51 @@ class ScopeTest extends kyo.test.Test[Any]:
             Loop.repeat(rounds)(round).andThen(succeed)
         }
     }
+
+    "runUnowned" - {
+        // The whole point of the shape: the value leaves with its release still armed and nobody to fire it, which
+        // is what lets an `initUnscoped`-style entry hand out a resource the caller owns. A backstop that runs on
+        // every ending, which `Sync.ensure` does, releases it on the way out unless it is guarded on the error.
+        "does not release when the body reaches its end" in {
+            for
+                closes <- AtomicInt.init(0)
+                value  <- Scope.runUnowned(Scope.ensure(closes.incrementAndGet.unit).andThen("handle"))
+                n      <- closes.get
+            yield assert(value == "handle" && n == 0, s"the handle was released on its way out: closes=$n")
+        }
+
+        "releases when the body fails" in {
+            for
+                closes <- AtomicInt.init(0)
+                result <- Abort.run[String](
+                    Scope.runUnowned(Scope.ensure(closes.incrementAndGet.unit).andThen(Abort.fail("no")))
+                )
+                n <- closes.get
+            yield assert(result.isFailure && n == 1, s"a failed acquisition kept its resource: closes=$n")
+        }
+
+        "releases when the body is abandoned" in {
+            for
+                closes <- AtomicInt.init(0)
+                gate   <- Latch.init(1)
+                fiber  <- Fiber.initUnscoped(
+                    Scope.runUnowned(Scope.ensure(closes.incrementAndGet.unit).andThen(gate.await))
+                )
+                _ <- fiber.interrupt
+                _ <- fiber.getResult
+                // The interrupt spawns the drain rather than waiting for it, so this is retried, not read once.
+                _ <- assertEventually(closes.get.map(_ == 1))
+            yield succeed
+        }
+
+        // A child would be closed by the enclosing scope, which is the same resource released under a caller that
+        // was handed it to keep.
+        "is a root, so an enclosing scope ending does not release it" in {
+            for
+                closes <- AtomicInt.init(0)
+                value  <- Scope.run(Scope.runUnowned(Scope.ensure(closes.incrementAndGet.unit).andThen("handle")))
+                n      <- closes.get
+            yield assert(value == "handle" && n == 0, s"the enclosing scope released a handle it does not own: closes=$n")
+        }
+    }
 end ScopeTest
