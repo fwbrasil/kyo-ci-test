@@ -1057,10 +1057,8 @@ class IOPromiseTest extends kyo.test.Test[Any]:
     end TestablePromise
 
     /** A reusable promise that can be used as a Channel taker and reset between cycles. */
-    class ReusableChannelPromise[A] extends IOPromise[Any, A < Abort[Closed]]:
-        def reset(): Boolean                                 = becomeAvailable()
-        def toUnsafe: Fiber.Promise.Unsafe[A, Abort[Closed]] =
-            Fiber.Promise.Unsafe.fromIOPromise(this)
+    class ReusableChannelPromise[A](count: AtomicInt.Unsafe)(using AllowUnsafe) extends Channel.Unsafe.Waiter[Closed, A](count):
+        def reset(): Boolean = becomeAvailable()
     end ReusableChannelPromise
 
     /** Helper to extract value from a channel block result. */
@@ -1069,6 +1067,9 @@ class IOPromiseTest extends kyo.test.Test[Any]:
         val result = fiber.block(deadline())
         result.getOrThrow.eval
     end blockValue
+
+    private def blockValue[A](waiter: Channel.Unsafe.Waiter[Closed, A]): A =
+        waiter.block(deadline()).getOrThrow
 
     "becomeAvailable" - {
         "reset completed success promise" in {
@@ -1174,7 +1175,7 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             import AllowUnsafe.embrace.danger
             Sync.defer {
                 val ch      = Channel.Unsafe.init[Int](4)
-                val promise = Promise.Unsafe.init[Int, Abort[Closed]]()
+                val promise = new Channel.Unsafe.Waiter[Closed, Int](ch.liveTakes)
                 ch.reuseTake(promise)
                 discard(ch.offer(1))
                 val value = blockValue(promise)
@@ -1186,12 +1187,11 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             import AllowUnsafe.embrace.danger
             Sync.defer {
                 val ch      = Channel.Unsafe.init[Int](4)
-                val promise = new ReusableChannelPromise[Int]
-                val unsafe  = promise.toUnsafe
+                val promise = new ReusableChannelPromise[Int](ch.liveTakes)
                 for i <- 1 to 5 do
-                    ch.reuseTake(unsafe)
+                    ch.reuseTake(promise)
                     discard(ch.offer(i))
-                    val value = blockValue(unsafe)
+                    val value = blockValue(promise)
                     assert(value == i)
                     assert(promise.reset())
                 end for
@@ -1203,7 +1203,7 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             import AllowUnsafe.embrace.danger
             Sync.defer {
                 val ch      = Channel.Unsafe.init[Int](4)
-                val promise = Promise.Unsafe.init[Int, Abort[Closed]]()
+                val promise = new Channel.Unsafe.Waiter[Closed, Int](ch.liveTakes)
                 discard(ch.offer(10))
                 ch.reuseTake(promise)
                 val value = blockValue(promise)
@@ -1215,7 +1215,7 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             import AllowUnsafe.embrace.danger
             Sync.defer {
                 val ch      = Channel.Unsafe.init[Int](4)
-                val promise = Promise.Unsafe.init[Int, Abort[Closed]]()
+                val promise = new Channel.Unsafe.Waiter[Closed, Int](ch.liveTakes)
                 discard(ch.close())
                 ch.reuseTake(promise)
                 val result = promise.block(deadline())
@@ -1227,7 +1227,7 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             import AllowUnsafe.embrace.danger
             Sync.defer {
                 val ch      = Channel.Unsafe.init[Int](4)
-                val promise = Promise.Unsafe.init[Int, Abort[Closed]]()
+                val promise = new Channel.Unsafe.Waiter[Closed, Int](ch.liveTakes)
 
                 ch.reuseTake(promise)
                 discard(ch.offer(1))
@@ -1239,7 +1239,7 @@ class IOPromiseTest extends kyo.test.Test[Any]:
                 val r2 = blockValue(fiber)
                 assert(r2 == 2)
 
-                val promise2 = Promise.Unsafe.init[Int, Abort[Closed]]()
+                val promise2 = new Channel.Unsafe.Waiter[Closed, Int](ch.liveTakes)
                 ch.reuseTake(promise2)
                 discard(ch.offer(3))
                 val r3 = blockValue(promise2)
@@ -1259,7 +1259,7 @@ class IOPromiseTest extends kyo.test.Test[Any]:
                     discard(ch.offer(i))
 
                 for _ <- 1 to 10 do
-                    val promise = Promise.Unsafe.init[Int, Abort[Closed]]()
+                    val promise = new Channel.Unsafe.Waiter[Closed, Int](ch.liveTakes)
                     ch.reuseTake(promise)
                     val value = blockValue(promise)
                     discard(results.add(value))
