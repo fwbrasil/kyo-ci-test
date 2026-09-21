@@ -562,20 +562,22 @@ class HubTest extends kyo.test.Test[Any]:
         }
     }
     "listen under interruption" - {
-        // `Hub.use` spawns the publisher and hands the hub that owns it to the caller's function. The publisher is live
-        // once the spawn returns and only the hub can stop it, so nothing may separate the two: a stop landing at the
-        // spawn still has to reach the function, whose bracket then closes the hub. The hook lands the stop inside the
-        // spawn, and the function records the hub as it is applied, before any step of its own could be preempted.
-        "a stop landing at Hub.use's publisher spawn still hands the hub over, and the stop then closes it".notJs.notWasm in {
+        // Every constructor spawns the publisher and hands the hub that owns it to a function. The publisher is live once
+        // the spawn returns and only the hub can stop it, so nothing may separate the two: a stop landing at the spawn
+        // still has to reach the function. The hook lands the stop inside the spawn. The function is the one `use`
+        // passes, a close registered around the body, except that it records the hub as it is applied: `Sync.ensure`
+        // installs its region before its body, so through `use` itself a caller's function may rightly never run and
+        // the hub would not be observable.
+        "a stop landing at the publisher spawn still hands the hub over, and the stop then closes it".notJs.notWasm in {
             val hook   = new SpawnHook
             val handed = new java.util.concurrent.atomic.AtomicReference[Maybe[Hub[Int]]](Absent)
             for
                 fiber <- Fiber.initUnscoped {
                     SpawnHook.probing(hook) {
                         Sync.defer(hook.armInterrupt()).andThen {
-                            Hub.use[Int](4) { hub =>
+                            Hub.initUnscopedWith[Int](4) { hub =>
                                 handed.set(Present(hub))
-                                Async.never
+                                Sync.ensure(hub.closeDiscard)(Async.never)
                             }
                         }
                     }
