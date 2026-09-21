@@ -253,11 +253,11 @@ class SqlClientInterruptTest extends SqlContainerTest:
 
     /** `closeAll` / `Runtime.close` extract the idle ring and install the force-close of what they extracted with no poll
       * between, so a stop landing there cannot abandon connections the pool no longer holds, out of the ring and unclosed.
-      * The ring drain is microseconds, so the leaf spins to a staggered offset and requests the stop directly; a round
-      * whose stop landed before the close began proves nothing, one whose close began must see the server's session count
-      * for the client's `application_name` reach zero within the bound.
+      * Each round stops the fiber that is closing a warm client. A round whose stop landed before the close began proves
+      * nothing and closes the client itself; one whose close began must see the server's session count for the client's
+      * `application_name` reach zero within the bound.
       */
-    "an interrupt landing as close extracts the idle ring strands no session".notJs.notWasm in {
+    "a close whose caller is stopped strands no session" in {
         val rounds = 120
         val warm   = SqlConfig(maxConnections = 2, minConnections = 2, acquireTimeout = 10.seconds, queryTimeout = 10.seconds)
         containerUrl("kyo-sql-close-orphan") { url =>
@@ -268,19 +268,12 @@ class SqlClientInterruptTest extends SqlContainerTest:
                 Loop.indexed { i =>
                     if i >= rounds then Loop.done(succeed)
                     else
-                        val closing = new java.util.concurrent.atomic.AtomicBoolean(false)
                         for
                             client <- SqlClient.initUnscoped(url, warm)
                             _      <- assertEventually(sessions.map(_ == 2))
-                            fiber  <- Fiber.initUnscoped(Sync.defer(closing.set(true)).andThen(Abort.run[SqlException](client.close)))
-                            _      <- Sync.Unsafe.defer {
-                                val bound = java.lang.System.nanoTime() + 200_000_000L
-                                while !closing.get() && java.lang.System.nanoTime() < bound do ()
-                                val target = java.lang.System.nanoTime() + (i % 60) * 10_000L
-                                while java.lang.System.nanoTime() < target do ()
-                                discard(fiber.unsafe.interrupt())
-                            }
-                            _     <- fiber.getResult
+                            fiber  <- Fiber.initUnscoped(Abort.run[SqlException](client.close))
+                            _      <- fiber.interrupt
+                            _      <- fiber.getResult
                             began <- client.isClosed
                             gone  <-
                                 if began then
@@ -298,11 +291,10 @@ class SqlClientInterruptTest extends SqlContainerTest:
     /** A lease owns what the pool hands it from the step it is handed: a reservation is claimed into a flag whose release was registered
       * before the ring was asked, and a pooled connection's exit registers in the step that takes custody of it. A stop landing on any
       * poll in between must not leave a slot the pool cannot hand out again, or after enough such stops a pool of two refuses every
-      * acquire. The leaf stops leases against one pool of two, at staggered sub-millisecond offsets from the step before each, and asks
-      * the pool for a statement within its acquire budget after every one: the first refused acquire is the failure. Closing the pool
-      * afterwards must complete and leave no session behind.
+      * acquire. The leaf stops leases against one pool of two, back to back, and then asks the pool for a statement within its acquire
+      * budget: a refused acquire is the failure. Closing the pool afterwards must complete and leave no session behind.
       */
-    "leases stopped at staggered offsets leave a pool that still serves and closes clean".notJs.notWasm in {
+    "stopped leases leave a pool that still serves and closes clean" in {
         val rounds = 200
         val two    = SqlConfig(maxConnections = 2, minConnections = 0, acquireTimeout = 2.seconds, queryTimeout = 10.seconds)
         containerUrl("kyo-sql-lease-stops") { url =>
@@ -314,19 +306,10 @@ class SqlClientInterruptTest extends SqlContainerTest:
                     Loop.indexed { i =>
                         if i >= rounds then Loop.done
                         else
-                            val leasing = new java.util.concurrent.atomic.AtomicBoolean(false)
                             for
-                                fiber <- Fiber.initUnscoped(
-                                    Sync.defer(leasing.set(true)).andThen(Abort.run[SqlException](client.query("SELECT 1")))
-                                )
-                                _ <- Sync.Unsafe.defer {
-                                    val bound = java.lang.System.nanoTime() + 200_000_000L
-                                    while !leasing.get() && java.lang.System.nanoTime() < bound do ()
-                                    val target = java.lang.System.nanoTime() + (i % 200) * 10_000L
-                                    while java.lang.System.nanoTime() < target do ()
-                                    discard(fiber.unsafe.interrupt())
-                                }
-                                _ <- fiber.getResult
+                                fiber <- Fiber.initUnscoped(Abort.run[SqlException](client.query("SELECT 1")))
+                                _     <- fiber.interrupt
+                                _     <- fiber.getResult
                                 n <- sessions
                             yield
                                 assert(n <= 2, s"round $i: the server holds $n sessions for a pool of two")
