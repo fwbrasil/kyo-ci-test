@@ -193,16 +193,28 @@ class ChannelTest extends kyo.test.Test[Any]:
                                 }
                         }
                     }
-                    // a value held as a put moves into the ring only when a flush sees room: a take is one
-                    drained <- Loop(Chunk.empty[Int]) { acc =>
-                        c.drain.map { chunk =>
-                            val acc2 = acc.concat(chunk)
-                            c.pendingPuts.map { held =>
-                                if held == 0 then Loop.done(acc2)
-                                else c.take.map(v => Loop.continue(acc2.append(v)))
+                    // A value held as a put moves into the ring only when a flush sees room, so a take is one.
+                    //
+                    // The wait is on everything being accounted for, not on `pendingPuts` reaching zero. A taker's
+                    // hand-back runs on its abandonment, which is spawned rather than waited for, so zero is also
+                    // what is read while the last round's values are still on their way back, and reading it once
+                    // is what made this leaf drop the tail. `assertEventually` suspends between attempts, which
+                    // matters here: the hand-back needs the runtime to make progress. A value that genuinely went
+                    // missing never arrives, and the leaf fails with the diff below.
+                    collected <- AtomicRef.init(Chunk.empty[Int])
+                    _         <- assertEventually {
+                        c.drain.flatMap { chunk =>
+                            collected.updateAndGet(_.concat(chunk)).flatMap { acc =>
+                                c.pendingPuts.flatMap { held =>
+                                    if held > 0 then
+                                        c.take.flatMap(v => collected.updateAndGet(_.append(v)))
+                                            .map(next => received.size + next.size >= items)
+                                    else collected.get.map(a => received.size + a.size >= items)
+                                }
                             }
                         }
                     }
+                    drained <- collected.get
                 yield
                     val found = (received.asScala.toSeq ++ drained).sorted
                     assert(found == (1 to items), s"lost: ${(1 to items).diff(found)}, extra: ${found.diff(1 to items)}")
