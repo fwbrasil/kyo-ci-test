@@ -54,7 +54,7 @@ established by reading only.
 | 2 | Test edits the user decided to keep: run the ones never run | 2 | 4 of 9 never run |
 | 3 | The one known red: kyo-http fd leak on Linux | 4.1 | not diagnosed |
 | 4 | Listener work on epoll and io_uring, incl. review finding 7 | 4.2 | never run since the review fixes |
-| 5 | Defects found and not fixed: B2, B3, B4 | 5 | not started |
+| 5 | Defects to fix, D1 to D10 (agreed with the user) | 5 | D1 fix committed, run in flight; the rest not started |
 | 6 | Verification rungs 1 to 4 | 7 | rung 1 partly done |
 
 ---
@@ -168,24 +168,37 @@ Windows has no local target. It stays unverified until CI.
 
 ---
 
-## 5. Defects found along the way, not fixed
+## 5. Defects to fix (agreed with the user on 2026-09-21: "ok, proceed")
 
-- **B2. Zero-capacity channel drops a handed-back value on close (READ).** A value an interrupted taker handed
-  back is held as a put nobody awaits, and close fails it instead of returning it in the backlog. Starts with a
-  reproduction.
-- **B3. `pendingPuts` and `pendingTakes` overcount (READ).** An interrupted fiber's entry stays queued until
-  something polls past it; the scaladoc promises "the number of fibers currently waiting". The fix makes both
-  counts exact. The queues cannot be traversed and the take path has a zero-allocation variant (`reuseTake`),
-  so the design must give an exact count without a per-park callback.
-- **B4. `Counter.get` resets on read (READ).** Documented as deliberate in `kyo-stats-registry/README.md`, and
-  `delta()` is built on it. `SqlCancellationConformanceTest` subtracts a "before" read that was itself a reset,
-  so it goes falsely red whenever the before-count is nonzero; `CancelIntegrationTest` works only because its
-  target is 1. Non-destructive read, exporter delta on its own path, both tests, README. Proof includes the
-  real Postgres and MySQL container suites.
-- **B5. `FlowEngineLifecycleTest` vacuous assertion.** Superseded by H13: the leaf now asserts that the claim
-  was written and that it did not move.
-- **B6. Stale prose and a write-only `listeners` set in kyo-net (READ).** Identical on `origin/main`. Left
-  alone, the same status as the swallowed `IOException`s.
+Rule learned here: "it is on `origin/main`" is not a reason to skip, and the `IOException` ruling covers only
+the swallowed `IOException`s. Check with the user BEFORE planning to leave anything pending.
+
+| # | defect | kernel work? | state |
+|---|---|---|---|
+| D1 | **A handed-back value is dropped by `close`.** Reproduction `6832ce40a5` (4 leaves, `putBack` called directly). Fix `029e57275b`: handed-back values live in a `returned` queue, served ahead of parked producers, read first by the zero-capacity readers, collected by `close`, untouched by the closed drains, polled only under the `batchInProgress` claim | yes (`putBack` is from `8ef4868841`) | green run in flight; red proof with a marked mutant owed |
+| D2 | **`closeAwaitEmpty` forfeits a handed-back value.** The base commit's scaladoc calls it intended ("the drain settles one element short"). Same data loss as D1: the producer was told the value was accepted. Fix: stay open until the value is consumed. Reproduction first | yes | not started |
+| D3 | **`pendingPuts` and `pendingTakes` count entries of interrupted fibers.** `origin/main`'s own `pollNextLive` scaladoc says a dead put "stays in the puts queue"; the counts are plain queue sizes; the contract is "fibers currently waiting". The kernel work's interrupt tests use these counts as "the fiber is parked" barriers. Design agreed: a `deadTakes` counter incremented by `parkedTake`'s interrupt finalizer and decremented when a flush polls past a completed take; the same for puts with `pollNextLive` as the decrement site; nothing on the fast path. Reproduction first: park, interrupt, wait for the fiber to end, assert the count is 0 | on main; affects the kernel work | not started |
+| D4 | **`Counter.get` resets on read.** `UnsafeCounter.get = adder.sumThenReset()`, byte-identical on main; documented as deliberate in `kyo-stats-registry/README.md`, and `delta()` is built on it. `SqlCancellationConformanceTest` subtracts a "before" read that is itself a reset, so it goes falsely red whenever earlier leaves left a nonzero count; `CancelIntegrationTest` works only because its target is 1. Fix: non-destructive read, exporter delta on its own path, both tests, README. Proof includes the real Postgres and MySQL container suites | no | not started |
+| D5 | **9 `pendingUntilFixed` leaves with one cause: a resource created in one step, its release registered in the next.** Actor `ask` subscribe (1), Aeron connect join (1), CDP (6: the dialog drainer, the background-color, emulated-media and download-policy overrides, the freeze-style and marks injections), the SQL advisory lock (1). Fix with the user's method: register the release before or within the acquiring step, then remove the `pendingUntilFixed` marker | yes | not started |
+| D6 | **`JsonRpcHandlerTest` carries the base commit's private spawn hook for 2 leaves.** Close the window in the engine, replace the leaves with barrier leaves, remove the hook | yes | not started |
+| D7 | **`CommandTest`: my wrapper interrupts the current fiber from test code.** `Command.spawn` is already bracketed. Replace with a barrier leaf that stops once the process is up, `.times(80)` | mine | not started |
+| D8 | **`BrowserLauncherJvmTest` "terminateTree..." sleeps 300 ms then asserts.** Count surviving processes instead | yes | not started |
+| D9 | **3 `nanoTime` hot loops in `NioIoDriverTest`**, on main since `4b609a3923` (2026-07-31). Same defect as the 13 of section 3, same method | no | not started |
+| D10 | **kyo-net prose describes a transport-wide `close()` that does not exist, and a `listeners` set is written and never read.** Identical on main. Correct the prose; if a transport-wide close is genuinely missing, raise it with the user, do not invent one | no | not started |
+
+### Waiting on the user's decision (kernel semantics, not call-site fixes)
+
+Listed to the user on 2026-09-21; no ruling yet. Do not touch without one, and do not drop them either.
+
+- **Value stranded at a join (2 `pendingUntilFixed` leaves):** `Async.uninterruptible` (AsyncTest) and `Scope.run`'s
+  drain await (ScopeInterruptTest).
+- **Leaves that contradict a recorded decision (2):** "by decision there is no backpressure on abnormal exit"
+  (ScopeTest, StreamCoreExtensionsTest). Either the decision stands and the leaves go, or the decision changes.
+- **`Scope.run` closes its scope after each shot of a replaying handler (2):** ScopeTest.
+- **Other gaps (3):** the effect trace does not carry spawning frames into a child fiber (FiberTest); nested
+  `Choice` ordering (ChoiceTest); one in `EvalTest`, not read yet.
+
+Closed earlier: **B5** (`FlowEngineLifecycleTest` vacuous assertion) is superseded by H13.
 
 ---
 
