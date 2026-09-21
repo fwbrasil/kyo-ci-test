@@ -487,6 +487,21 @@ object Channel:
             val priorityPuts    = new MpmcUnboundedUnsafeQueue[Put[A]](8)
             val batchInProgress = AtomicBoolean.Unsafe.init(false)
 
+            /** Values an interrupted taker handed back. No producer waits on them, so they are not puts: they are served ahead of every
+              * parked producer, and a close returns them with its backlog where it fails a parked put. Polled only under the
+              * `batchInProgress` claim, because a transfer holds the value outside the queue until it has delivered it or put it back.
+              */
+            val returned = new MpmcUnboundedUnsafeQueue[A](8)
+
+            /** Removes every handed-back value, for the close that returns them with its backlog. */
+            final protected def takeReturned(): Chunk[A] =
+                while !batchInProgress.compareAndSet(false, true) do ()
+                var values = Chunk.empty[A]
+                discard(returned.drain(value => values = values.appended(value)))
+                batchInProgress.set(false)
+                values
+            end takeReturned
+
             /** Backend-specific queue-state fragment for [[dumpState]]: the underlying bounded ring for a capacity channel, a
               * closed-flag for the zero-capacity rendezvous.
               */
@@ -499,6 +514,7 @@ object Channel:
                     s"takes=${takes.size()}(nextDone=${takes.peek().map(_.done())}) " +
                     s"puts=${puts.size()}(nextDone=${puts.peek().map(_.promise.done())}) " +
                     s"priorityPuts=${priorityPuts.size()}(nextDone=${priorityPuts.peek().map(_.promise.done())}) " +
+                    s"returned=${returned.size()} " +
                     s"batchInProgress=${batchInProgress.get()}"
             end dumpState
 
@@ -617,9 +633,10 @@ object Channel:
                 loop(Chunk.from(values))
             end offerAll
 
-            /** Reads up to `max` values straight from the parked producers, in the order a taker would receive them: the remainder of a
-              * partly transferred batch first, then the queued puts. A batch is consumed element by element and what is left of it goes
-              * back to `pendingBatch`, never to a queue, so it stays contiguous and ahead of every later producer.
+            /** Reads up to `max` values straight from what the channel holds, in the order a taker would receive them: handed-back
+              * values first, then the remainder of a partly transferred batch, then the queued puts. A batch is consumed element by
+              * element and what is left of it goes back to `pendingBatch`, never to a queue, so it stays contiguous and ahead of every
+              * later producer.
               *
               * Runs under the `batchInProgress` claim because `pendingBatch` belongs to whoever holds it. A `flush` that loses the claim
               * returns at once and relies on the holder to flush after releasing, which is what the trailing `flush()` is for.
@@ -629,26 +646,30 @@ object Channel:
                 def loop(remaining: Int, acc: Chunk[A]): Chunk[A] =
                     if remaining <= 0 then acc
                     else
-                        val next: Maybe[Put[A]] = pendingBatch match
-                            case Present(batch) =>
-                                pendingBatch = Absent
-                                Present(batch: Put[A])
-                            case _ =>
-                                pollNextLive()
-                        next match
-                            case Present(Put.Value(value, promise)) =>
-                                promise.completeUnitDiscard()
+                        returned.poll() match
+                            case Present(value) =>
                                 loop(remaining - 1, acc.appended(value))
-                            case Present(Put.Batch(chunk, promise)) =>
-                                if chunk.length <= remaining then
-                                    promise.completeUnitDiscard()
-                                    loop(remaining - chunk.length, acc.concat(chunk))
-                                else
-                                    pendingBatch = Present(Put.Batch(chunk.dropLeft(remaining), promise))
-                                    acc.concat(chunk.take(remaining))
                             case _ =>
-                                acc
-                        end match
+                                val next: Maybe[Put[A]] = pendingBatch match
+                                    case Present(batch) =>
+                                        pendingBatch = Absent
+                                        Present(batch: Put[A])
+                                    case _ =>
+                                        pollNextLive()
+                                next match
+                                    case Present(Put.Value(value, promise)) =>
+                                        promise.completeUnitDiscard()
+                                        loop(remaining - 1, acc.appended(value))
+                                    case Present(Put.Batch(chunk, promise)) =>
+                                        if chunk.length <= remaining then
+                                            promise.completeUnitDiscard()
+                                            loop(remaining - chunk.length, acc.concat(chunk))
+                                        else
+                                            pendingBatch = Present(Put.Batch(chunk.dropLeft(remaining), promise))
+                                            acc.concat(chunk.take(remaining))
+                                    case _ =>
+                                        acc
+                                end match
                 while !batchInProgress.compareAndSet(false, true) do ()
                 val taken = loop(max, Chunk.empty)
                 batchInProgress.set(false)
@@ -665,20 +686,24 @@ object Channel:
             def drainUpTo(max: Int)(using AllowUnsafe, Frame) =
                 succeedIfNonEmptyOrOpen(readParked(max))
 
-            /** Held as a put: the rendezvous transfers it to the next taker, or fails it with the channel. */
+            /** Held for the next taker or reader. A close returns it with the backlog; one handed back after the close has collected
+              * the backlog is forfeited, since no taker will come.
+              */
             final private[kyo] def putBack(value: A)(using AllowUnsafe, Frame): Unit =
-                discard(puts.offer(Put.Value(value, Promise.Unsafe.init[Unit, Abort[Closed]]())))
+                discard(returned.offer(value))
                 flush()
 
             def drain()(using AllowUnsafe, Frame) =
                 succeedIfNonEmptyOrOpen(readParked(Int.MaxValue))
 
-            // A zero-capacity channel has no ring, so no offer can be mid-commit and the backlog is always known immediately.
+            // A zero-capacity channel has no ring, so no offer can be mid-commit and the backlog is always known immediately: it is
+            // what interrupted takers handed back. Parked puts are not part of it, their producers are told the channel closed.
             private def closeAndFlush()(using Frame, AllowUnsafe): Maybe[Chunk[A]] =
                 if isClosed.getAndSet(true) then Absent
                 else
+                    val backlog = takeReturned()
                     flush()
-                    Present(Chunk.empty)
+                    Present(backlog)
 
             def close()(using frame: Frame, allow: AllowUnsafe) =
                 Fiber.Unsafe.fromResult(Result.succeed(closeAndFlush()))
@@ -694,9 +719,11 @@ object Channel:
                 // This method ensures that all values are processed
                 // and handles interrupted fibers by discarding them.
 
-                val putsEmpty  = pendingBatch.isEmpty && priorityPuts.isEmpty() && puts.isEmpty()
-                val takesEmpty = takes.isEmpty()
+                val putsEmpty     = pendingBatch.isEmpty && priorityPuts.isEmpty() && puts.isEmpty()
+                val returnedEmpty = returned.isEmpty()
+                val takesEmpty    = takes.isEmpty()
 
+                // The closed drain fails what waits on the channel. Handed-back values wait on nothing: the close collects them.
                 if isClosed.get() && (!takesEmpty || !putsEmpty) then
                     pendingBatch.foreach(_.promise.completeDiscard(closedResult))
                     pendingBatch = Absent
@@ -704,6 +731,16 @@ object Channel:
                     discard(priorityPuts.drain(_.promise.completeDiscard(closedResult)))
                     discard(puts.drain(_.promise.completeDiscard(closedResult)))
                     flush()
+                else if !returnedEmpty && !takesEmpty then
+                    if batchInProgress.compareAndSet(false, true) then
+                        returned.poll().foreach { value =>
+                            takes.poll() match
+                                case Present(takePromise) if takePromise.complete(Result.succeed(value)) => ()
+                                case _                                                                   => discard(returned.offer(value))
+                        }
+                        batchInProgress.set(false)
+                        flush()
+                    end if
                 else if !putsEmpty && !takesEmpty then
                     if batchInProgress.compareAndSet(false, true) then
                         val put = pendingBatch match
@@ -819,18 +856,16 @@ object Channel:
                 loop(Chunk.empty, max)
             end drainUpTo
 
-            /** Keeps a value no taker consumed in the channel: in the ring if it accepts writes, held as a placeholder put for a later
-              * transfer when the ring is full but open, and when the ring no longer accepts writes (a closeAwaitEmpty drain, where a
-              * placeholder put would just be failed by the transfer arm) delivered to the next live taker, forfeited when none waits:
-              * the value's only consumer interrupted and the closing queue will not re-buffer it, so the drain settles one element
-              * short. The caller runs the flush that transfers a held value.
+            /** Keeps a value no taker consumed in the channel: in the ring if it accepts writes, in `returned` for a later transfer when
+              * the ring is full but open, and when the ring no longer accepts writes (a closeAwaitEmpty drain) delivered to the next
+              * live taker, forfeited when none waits: the value's only consumer interrupted and the closing queue will not re-buffer
+              * it, so the drain settles one element short. The caller runs the flush that transfers a held value.
               */
             private def retain(value: A)(using Frame): Unit =
                 queue.offer(value) match
                     case r if r.contains(true) => ()
                     case Result.Success(false) =>
-                        val placeholder = Promise.Unsafe.init[Unit, Abort[Closed]]()
-                        discard(puts.offer(Put.Value(value, placeholder)))
+                        discard(returned.offer(value))
                     case _ =>
                         @tailrec
                         def retryTransfer(): Unit =
@@ -864,7 +899,9 @@ object Channel:
             end drain
 
             def close()(using Frame, AllowUnsafe) =
-                val r = queue.close()
+                // The backlog is the ring followed by what interrupted takers handed back while it was full, the order a taker
+                // would have received them in. Only the close that wins the ring collects the handed-back values.
+                val r = queue.close().map(_.map(ring => ring ++ takeReturned()))
                 // The ring is drained by whoever wins the queue's handover, which may be an offer still in flight, so the flush that
                 // fails parked puts and wakes parked takes runs on completion rather than here. Same shape as closeAwaitEmpty below.
                 r.onComplete(_ => flush())
@@ -894,10 +931,11 @@ object Channel:
             @tailrec protected def flush()(using Frame): Unit =
                 // This method ensures that all values are processed
                 // and handles interrupted fibers by discarding them.
-                val queueClosed = queue.closed()
-                val queueSize   = queue.size().getOrElse(0)
-                val takesEmpty  = takes.isEmpty()
-                val putsEmpty   = priorityPuts.isEmpty() && puts.isEmpty()
+                val queueClosed   = queue.closed()
+                val queueSize     = queue.size().getOrElse(0)
+                val takesEmpty    = takes.isEmpty()
+                val putsEmpty     = priorityPuts.isEmpty() && puts.isEmpty()
+                val returnedEmpty = returned.isEmpty()
 
                 if queueClosed && (!takesEmpty || !putsEmpty) then
                     // Queue is closed, drain all takes and puts
@@ -929,6 +967,14 @@ object Channel:
                                 discard(takes.offer(promise))
                     }
                     flush()
+                else if queueSize < capacity && !returnedEmpty && !queueClosed then
+                    // A handed-back value goes into the ring ahead of every parked producer. `retain` puts it back in `returned`
+                    // if the ring filled meanwhile, and hands it to a taker or forfeits it if the ring stopped accepting writes.
+                    if batchInProgress.compareAndSet(false, true) then
+                        returned.poll().foreach(retain)
+                        batchInProgress.set(false)
+                        flush()
+                    end if
                 else if queueSize < capacity && !putsEmpty then
                     // Attempt to transfer a value from a waiting put operation to the queue.
                     // Only one thread processes puts at a time to prevent batch interleaving.
