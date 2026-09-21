@@ -2172,7 +2172,8 @@ object Browser:
 
     /** Applies a transparent default background for `body`'s duration when `enabled`. Sets
       * `Emulation.setDefaultBackgroundColorOverride` to `{r:0,g:0,b:0,a:0}` on enter and clears it on exit (success, failure, or
-      * interruption) via `Scope.acquireRelease`. A no-op when `enabled` is false.
+      * interruption). The override is on the browser before its reply arrives, so the clear is owed from the reply on: see
+      * [[kyo.internal.CdpBackend.acquire]]. A no-op when `enabled` is false.
       */
     private def withTransparentBackground[A, S](enabled: Boolean)(
         body: => A < (Browser & Abort[BrowserReadException] & S)
@@ -2181,18 +2182,13 @@ object Browser:
         else
             Env.use[BrowserTab] { tab =>
                 Scope.run {
-                    Scope.acquireRelease(
-                        CdpBackend.setDefaultBackgroundColorOverride(
-                            tab.session,
-                            SetDefaultBackgroundColorOverrideParams(Present(RgbaColor(0, 0, 0, Present(0.0))))
-                        )
+                    tab.session.acquire[SetDefaultBackgroundColorOverrideParams, Unit](
+                        "Emulation.setDefaultBackgroundColorOverride",
+                        SetDefaultBackgroundColorOverrideParams(Present(RgbaColor(0, 0, 0, Present(0.0))))
                     )(_ =>
-                        Browser.releaseHook(tab)(
-                            CdpBackend.setDefaultBackgroundColorOverride(
-                                tab.session,
-                                SetDefaultBackgroundColorOverrideParams(Absent)
-                            )
-                        )
+                        Abort.run[BrowserReadException](
+                            CdpBackend.setDefaultBackgroundColorOverride(tab.session, SetDefaultBackgroundColorOverrideParams(Absent))
+                        ).unit
                     ).andThen(body)
                 }
             }
