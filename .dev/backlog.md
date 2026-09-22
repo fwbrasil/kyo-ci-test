@@ -56,7 +56,7 @@ established by reading only.
 | 1 | Hot loops in tests, 13 sites added by the kernel work | 3 | done: all 13 removed, rounds reinstated with `.times`, verified in the whole-tree JVM pass of 2026-09-22 |
 | 2 | Test edits the user decided to keep: run the ones never run | 2 | done on the JVM: all ran green inside the whole-tree pass of 2026-09-22 (section 2's per-file rows not updated) |
 | 3 | The one known red: kyo-http fd leak on Linux | 4.1 | 14 clean container runs of 14 at HEAD; cause never found |
-| 4 | Listener work on epoll and io_uring, incl. review finding 7 | 4.2 | Linux container run green once; finding 7 still open |
+| 4 | Listener work on epoll and io_uring, incl. review finding 7 | 4.2 | done: Linux container run green; finding 7 closed by reading and 10 more container runs (section 4.2) |
 | 5 | Defects to fix, D1 to D10 (agreed with the user) | 5 | D1, D3, D5, D6, D7, D8, D10 done; D2, D4, D9 left by the user's rulings; plus two defects found and fixed on 2026-09-22 (Hub publisher, finalizer context) |
 | 6 | Verification rungs 1 to 4 | 7 | rung 1 JVM done on the host; JS/Native/Wasm not run (user's instruction); rungs 2 to 4 blocked on the push |
 | 7 | `Scope.run` under a replaying handler (3 pending leaves) | 5 | fix built, broke the tree, undone; design fork for the user in `.dev/scope-run-replay.md` |
@@ -165,10 +165,16 @@ legs); `NioIoDriverTest` 54; `JsonRpcTransportUnixTest` 5; `JsonRpcHandlerTest` 
 passed, the edited leaf on epoll and io_uring with both TLS implementations. Before that run, everything after
 the review fixes (`72e1124cc2`, `85d07419aa`, `032daf2dbb`) had run on macOS and Node only.
 
-Review finding 7 is still open: the single-shot re-bind in `TransportListenerFdReleaseTest` can go red with no
-defect in `released` (inferred, not run): a parallel leaf binding port 0 can be handed the same port, and on
-io_uring an in-flight accept SQE holds the kernel socket after the fd number is closed. The leaf passed on
-io_uring under parallel leaves in the container run above, once; that is one sample, not a proof.
+Review finding 7, closed 2026-09-22: the single-shot re-bind in `TransportListenerFdReleaseTest` was said to be
+able to go red with no defect in `released`, for two reasons. (1) io_uring: an in-flight accept SQE holds the
+kernel socket after the fd is closed. Read: `released` completes after `shutdown(SHUT_RDWR)` + `close` on the
+reap carrier (`PosixTransport.startAcceptLoop`); on Linux, shutdown of a LISTEN socket runs `tcp_disconnect`,
+`tcp_set_state(TCP_CLOSE)` and `inet_put_port` unless the port was bound explicitly (`SOCK_BINDPORT_LOCK`, set
+only for a nonzero bind port). The leaf's first listener binds port 0, so its port is back in the pool at
+shutdown, before `released` completes, whatever the SQE still holds. Does not apply. (2) A parallel leaf binding
+port 0 handed the same port: possible in principle, one ephemeral port in about 28k per parallel bind. Measured:
+the suite 10 times in the Linux container at `b451c03eaf`, 9 passed, 0 failed each time on epoll, nio and
+io_uring (`BUILD_EXIT=0`), plus the earlier run: 0 in 33 samples per backend. Left as is.
 
 Windows has no local target. It stays unverified until CI.
 
