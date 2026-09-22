@@ -132,7 +132,7 @@ object Async extends AsyncPlatformSpecific:
     )(v: => A < (Abort[E] & Async & S))(
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
-        Fiber.internal.initUnscoped(v).ensureMap(_.uninterruptible.ensureMap(_.get))
+        Fiber.internal.initUnscoped(v).map(_.uninterruptible.map(_.get))
 
     /** Creates a computation that never completes.
       *
