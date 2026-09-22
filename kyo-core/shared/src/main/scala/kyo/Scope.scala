@@ -87,7 +87,7 @@ object Scope:
         frame: Frame
     ): A < (Scope & Sync & S) =
         ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
-            acquire.ensureMap { resource =>
+            Sync.defer(acquire).ensureMap { resource =>
                 // Unsafe: registering as an effect would put the registration in a step of its own.
                 import AllowUnsafe.embrace.danger
                 finalizer.ensureUnsafe(_ => release(resource))

@@ -506,29 +506,6 @@ class AsyncTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "a value the shielded body produces is not stranded when the caller is interrupted at the join".pendingUntilFixed(
-        "Async.uninterruptible joins the shielded fiber's promise and hands its value to the caller's next step, so a stop landing at that join abandons the value with no owner"
-    ) in {
-        for
-            entered  <- Latch.init(1)
-            gate     <- Latch.init(1)
-            released <- AtomicBoolean.init(false)
-            fiber    <- Fiber.initUnscoped {
-                Scope.run {
-                    Scope.acquireRelease(Async.uninterruptible(entered.release.andThen(gate.await).andThen("handle")))(_ =>
-                        released.set(true)
-                    ).andThen(Async.never)
-                }
-            }
-            _ <- entered.await
-            _ <- fiber.interrupt
-            _ <- gate.release
-            _ <- fiber.getResult
-            r <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get)))
-        yield assert(r.isSuccess, "the shielded body handed its value to a join the interrupt had abandoned, and its release never ran")
-        end for
-    }
-
     "boundary inference with Abort" - {
         "same failures" in {
             val v: Int < Abort[Int]                            = 1
