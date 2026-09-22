@@ -196,10 +196,15 @@ the swallowed `IOException`s. Check with the user BEFORE planning to leave anyth
 None of these is on `origin/main`. They were filed earlier as "waiting on the user's decision"; that was wrong. Four
 are open defects of the kernel work with a marker on them, two are a decision already made, one is main's behavior.
 
-Open defect, no fix yet:
+Fixed 2026-09-22 (`2f49e3ad98`):
 
 - **`Scope.run` under a handler that resumes more than once refuses the second branch with `Closed`**
-  (ScopeTest, 2 leaves): the scope closes after the first shot. Design in `.dev/scope-run-replay.md`.
+  (ScopeTest, 2 leaves): the scope closed at the end of the body as well as from the `Sync.ensure` release, so
+  the first branch's end closed it. Now the release is the only close (`Sync.ensure` hands it the run's first
+  abort), and the step after the region waits for the drain only when a close was requested
+  (`Finalizer.awaitIfClosed`, a flag set inside `close`'s suspension beside the spawn). Proof: with the markers
+  on, both leaves failed as "now passes"; markers off, `ScopeTest` 86 passed, 1 pending (the backpressure leaf).
+  Full kyo-core JVM and JS: see section 7.
 
 Removed 2026-09-22 by the user's ruling ("we do not have guarantees for interrupts during acquire, only when it
 ends we do"), after exploration:
