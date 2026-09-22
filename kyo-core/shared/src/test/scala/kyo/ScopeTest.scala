@@ -1521,6 +1521,42 @@ class ScopeTest extends kyo.test.Test[Any]:
         }
     }
 
+    "finalizer context" - {
+
+        // The drain is spawned from the region's release, which the kernel runs on a stack of its own; the
+        // finalizers must still see the regions the run was opened under.
+        "a finalizer reads the Local the run was opened under" in {
+            val local = Local.init("default")
+            for
+                seen <- AtomicRef.init("")
+                _    <- local.let("bound")(Scope.run(Scope.ensure(local.use(v => seen.set(v)))))
+                v    <- seen.get
+            yield assert(v == "bound", s"the finalizer read $v")
+            end for
+        }
+
+        "a finalizer reads the Local the run was opened under when a handler replays" in {
+            val local = Local.init("default")
+            for
+                seen <- AtomicRef.init(Chunk.empty[String])
+                res  <- local.let("bound") {
+                    Choice.run {
+                        Scope.run {
+                            Choice.eval(1, 2).map { n =>
+                                Scope.ensure(local.use(v => seen.updateAndGet(_.append(v)).unit)).andThen(n)
+                            }
+                        }
+                    }
+                }
+                _ <- assertEventually(seen.get.map(_.size == 2))
+                s <- seen.get
+            yield
+                assert(res == Chunk(1, 2))
+                assert(s == Chunk("bound", "bound"), s"the finalizers read $s")
+            end for
+        }
+    }
+
     "under a handler that replays" - {
 
         // `Choice.run` outside `Scope.run` answers the choice inside the scope's body twice, so the body runs
