@@ -205,6 +205,20 @@ Fixed 2026-09-22 (`2f49e3ad98`):
   (`Finalizer.awaitIfClosed`, a flag set inside `close`'s suspension beside the spawn). Proof: with the markers
   on, both leaves failed as "now passes"; markers off, `ScopeTest` 86 passed, 1 pending (the backpressure leaf).
   Full kyo-core JVM and JS: see section 7.
+- **Regression of that fix, caught by the held-out review and fixed (`a422575ac0`):** the drain was spawned from the
+  region's release, which the kernel evaluates on a stack of its own, so finalizers read `Local` defaults instead of
+  the run's bindings. `Finalizer.init` is now an effect that captures the crossing at its call site and spawns the
+  drain over that snapshot; `run`, `runUnowned` and `Fiber.init` use it; `runUnowned` closes only from its release.
+  Proof: 2 new `ScopeTest` "finalizer context" leaves, red on `2f49e3ad98` ("the finalizer read default"), green after.
+- **Hub publisher dies when a listener closes during a publish (`5db516142d`, same code on `origin/main`).** Found
+  by the full kyo-core run: the 500-round interrupted-listener leaf hung intermittently. A scratch probe showed the
+  dead listener closed, the hub channel empty, a witness listener registered before it holding both values and the
+  listener registered after it holding none: the publisher was gone. Cause: `Abort.recover[Throwable](e => bug(..))`
+  around each listener's put, and `bug` throws; `Listener.close` removes the listener from the set and then closes its
+  channel while the publisher may still hold it in the value's snapshot. Fix: a `Closed` from a listener's put skips
+  that listener. Proof: 2 new `HubTest` leaves (one deterministic: close while the publisher is parked on the full
+  buffer; one 200 rounds racing the close with the put), red before (the deterministic one hangs), `HubTest` 40
+  passed in 3 of 3 runs after.
 
 Removed 2026-09-22 by the user's ruling ("we do not have guarantees for interrupts during acquire, only when it
 ends we do"), after exploration:
@@ -270,7 +284,7 @@ Observed, not a failure: two `SignalTest` leaves take 1m08s each on JS on this M
 
 | rung | what | state |
 |---|---|---|
-| 1 | local: full JVM and JS of the whole tree; Native and Wasm for touched modules | kyo-core JS done (4 rounds, before the 2026-09-21 `Channel`/`Hub`/waiter changes). After those changes, full module runs on the host: `kyo-coreJVM/test` 43 suites, 1899 passed, 0 failed, 26 pending; `kyo-netJVM/test` 246 suites, 0 failed; `kyo-browserJVM/test` 70 suites, 0 failed; `kyo-aeronJVM/test` and `kyo-aeronJS/test` 13 suites each, 0 failed; all `SBT_EXIT=0`. The rest of the tree, kyo-core JS again, Native and Wasm: not started |
+| 1 | local: full JVM and JS of the whole tree; Native and Wasm for touched modules | kyo-core JS done (4 rounds, before the 2026-09-21 `Channel`/`Hub`/waiter changes). After those changes, full module runs on the host: `kyo-coreJVM/test` 43 suites, 1899 passed, 0 failed, 26 pending; `kyo-netJVM/test` 246 suites, 0 failed; `kyo-browserJVM/test` 70 suites, 0 failed; `kyo-aeronJVM/test` and `kyo-aeronJS/test` 13 suites each, 0 failed; all `SBT_EXIT=0`. 2026-09-22 night, after the `Scope.run` replay fix (`2f49e3ad98`): `kyo-coreJVM/test` 43 suites, 1901 passed, 0 failed, 22 pending; `kyo-coreJS/test` 38 suites, 1757 passed, 0 failed, 6 pending, both `SBT_EXIT=0`. After the context fix (`a422575ac0`) the full JVM run exposed the Hub publisher defect (fixed, `5db516142d`); full kyo-core JVM after it: in flight. **User's instruction 2026-09-22 night: JVM only; no JS, Native or Wasm compiles until told.** The rest of the tree on the JVM: not started |
 | 2 | one `mode=custom` CI dispatch with every proven suite | not started |
 | 3 | CI: Windows x64 and arm64 (JVM, JS); Native and Wasm on both Linux poles | not started |
 | 4 | full CI on all four OS poles: one uncounted smoke, then three counted | not started |
