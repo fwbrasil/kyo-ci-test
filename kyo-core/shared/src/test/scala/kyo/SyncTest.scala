@@ -271,8 +271,8 @@ class SyncTest extends kyo.test.Test[Any]:
                 end for
             }
 
-            // handleCont holds the region it dumps: the release moves to the holder and runs once, after every
-            // shot, so a clause that resumes twice runs both against the live resource with no refusal.
+            // handleContRepeated holds the region it dumps: the release moves to the holder and runs once, after
+            // every shot, so a clause that resumes twice runs both against the live resource with no refusal.
             "a replaying handler holds the region, releasing once after every shot" in {
                 import kyo.kernel.ArrowEffect
                 for
@@ -281,7 +281,7 @@ class SyncTest extends kyo.test.Test[Any]:
                         ArrowEffect.suspend[Any](Tag[Replayed], ())
                     }: Int < (Replayed & Sync))
                     res <- Abort.run[Closed] {
-                        ArrowEffect.handleCont[Const[Unit], Const[Int], Replayed, Int, Int, Sync, Any](Tag[Replayed], body)(
+                        ArrowEffect.handleContRepeated[Const[Unit], Const[Int], Replayed, Int, Int, Sync, Any](Tag[Replayed], body)(
                             [C] => (_, cont) => cont(1).map(a => cont(2).map(b => a + b)),
                             a => a
                         )
@@ -705,7 +705,7 @@ class SyncTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "a plain handler that resumes twice runs both shots against the live resource, released once" in {
+        "a repeated handler that resumes twice runs both shots against the live resource, released once" in {
             import kyo.kernel.ArrowEffect
             for
                 released <- AtomicInt.init(0)
@@ -716,7 +716,7 @@ class SyncTest extends kyo.test.Test[Any]:
                     )
                 }: Int < (Replayed & Sync))
                 res <- Abort.run[Closed] {
-                    ArrowEffect.handleCont[Const[Unit], Const[Int], Replayed, Int, Int, Sync, Any](Tag[Replayed], body)(
+                    ArrowEffect.handleContRepeated[Const[Unit], Const[Int], Replayed, Int, Int, Sync, Any](Tag[Replayed], body)(
                         [C] => (_, cont) => cont(1).map(a => cont(2).map(b => a + b)),
                         a => a
                     )
