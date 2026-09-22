@@ -561,6 +561,40 @@ class HubTest extends kyo.test.Test[Any]:
             }
         }
     }
+    "a listener closing during a publish" - {
+
+        // `Listener.close` removes the listener from the set and then closes its channel, and the publisher holds the
+        // snapshot it took for the value in flight, so a put to a closing listener fails Closed, or is failed while parked
+        // on its full buffer. That is the listener leaving, not a delivery failure: the publisher goes on to the others.
+        "a listener closed while the publisher is parked on its full buffer does not stop delivery to the others" in {
+            Hub.initWith[Int](8) { hub =>
+                for
+                    a    <- hub.listen(1)
+                    live <- hub.listen(8)
+                    _    <- hub.put(1)
+                    x    <- live.take
+                    _    <- hub.put(2)
+                    _    <- assertEventually(a.child.pendingPuts.map(_ == 1))
+                    _    <- a.close
+                    y    <- live.take
+                yield assert((x, y) == (1, 2))
+            }
+        }
+
+        "a listener closed between the snapshot and its put does not stop delivery to the others".times(200) in {
+            Hub.initWith[Int](8) { hub =>
+                for
+                    a    <- hub.listen(1)
+                    live <- hub.listen(8)
+                    _    <- Async.zip(hub.put(1), a.close)
+                    _    <- hub.put(2)
+                    x    <- live.take
+                    y    <- live.take
+                yield assert((x, y) == (1, 2))
+            }
+        }
+    }
+
     "listen under interruption" - {
         // A listener left in the set with nobody to close it holds the first value in its one-slot buffer and parks the
         // publisher on the second, so no later value reaches the listeners that are alive.
