@@ -271,9 +271,10 @@ object Hub:
                             Loop.continue
                         } {
                             Kyo.foreachDiscard(currentListeners) { listener =>
-                                Abort.recover[Throwable](e => bug(s"Hub fiber failed to publish to listener: $e"))(
-                                    listener.put(value)
-                                )
+                                // A listener closes on its own schedule: `Listener.close` removes it from the set and then closes its
+                                // channel, and this snapshot may still hold it, so its put fails Closed or is failed while parked on
+                                // its full buffer. That is the listener leaving, not a delivery failure.
+                                Abort.recover[Closed](_ => ())(listener.put(value))
                             }.andThen(Loop.continue)
                         }
                     }
