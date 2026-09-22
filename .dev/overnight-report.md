@@ -80,4 +80,7 @@ gap, and `runUnowned` carrying the same shape. Its second pass found no defect i
 across a parent's second `close`, and the spawn is `Fiber.initUnscoped`'s call with the same defaults; the child's
 drain runs under the child's context even when a parent's drain spawns it. Its other items (a leaf for a finalizer
 registered before the choice point, the error finalizers receive under replay) belong to the replay design, which
-is the open question above.
+is the open question above. Its verdict on the final tree: PASS-WITH-NITS; the one should-fix (the public
+`Finalizer.Unsafe.init` gained `spawn` with no scaladoc stating that it must run the drain on its own fiber) is
+fixed in `cb9f0a0369`. Left as noted: `Fiber.init` now takes two context snapshots per spawn (one for the
+finalizer, one for the fiber); one capture could feed both.
