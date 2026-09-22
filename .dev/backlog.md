@@ -53,12 +53,13 @@ established by reading only.
 
 | # | item | section | state |
 |---|---|---|---|
-| 1 | Hot loops in tests, 13 sites added by the kernel work | 3 | all 13 removed; verification in progress |
-| 2 | Test edits the user decided to keep: run the ones never run | 2 | 4 of 9 never run |
-| 3 | The one known red: kyo-http fd leak on Linux | 4.1 | not diagnosed |
-| 4 | Listener work on epoll and io_uring, incl. review finding 7 | 4.2 | never run since the review fixes |
-| 5 | Defects to fix, D1 to D10 (agreed with the user) | 5 | D1 fix committed, run in flight; the rest not started |
-| 6 | Verification rungs 1 to 4 | 7 | rung 1 partly done |
+| 1 | Hot loops in tests, 13 sites added by the kernel work | 3 | done: all 13 removed, rounds reinstated with `.times`, verified in the whole-tree JVM pass of 2026-09-22 |
+| 2 | Test edits the user decided to keep: run the ones never run | 2 | done on the JVM: all ran green inside the whole-tree pass of 2026-09-22 (section 2's per-file rows not updated) |
+| 3 | The one known red: kyo-http fd leak on Linux | 4.1 | 14 clean container runs of 14 at HEAD; cause never found |
+| 4 | Listener work on epoll and io_uring, incl. review finding 7 | 4.2 | Linux container run green once; finding 7 still open |
+| 5 | Defects to fix, D1 to D10 (agreed with the user) | 5 | D1, D3, D5, D7, D8, D10 done; D2, D4, D9 left by the user's rulings; **D6 not started**; plus two defects found and fixed on 2026-09-22 (Hub publisher, finalizer context) |
+| 6 | Verification rungs 1 to 4 | 7 | rung 1 JVM done on the host; JS/Native/Wasm not run (user's instruction); rungs 2 to 4 blocked on the push |
+| 7 | `Scope.run` under a replaying handler (3 pending leaves) | 5 | fix built, broke the tree, undone; design fork for the user in `.dev/scope-run-replay.md` |
 
 ---
 
@@ -310,3 +311,10 @@ CI needs a push, which only the user asks for.
   (dead-entry counters, then a `Waiter` with a var). Observed and not explained: the seven stuck reproduction
   leaves ran past 7 minutes although the kyo-test leaf timeout is 120 s, and killing the sbt client left the
   server holding the task. Not in the backlog; raised with the user.
+- 2026-09-22 night: `Scope.run` release-only close built (`2f49e3ad98`), its context regression fixed
+  (`a422575ac0`, `Finalizer.init` stays), then the whole-tree JVM run broke it (PathTest, StreamSystemExtensionsTest,
+  kyo-test runner hang) and it was undone (`e3b4390300`); Hub publisher defect found by that run and fixed
+  (`5db516142d`); rung 1 completed on the JVM per module (SQL against real Postgres/MySQL/Dolt); two whole-tree
+  runs stalled on Metals stealing sbt fork connections; held-out review PASS-WITH-NITS, should-fix in `cb9f0a0369`;
+  `git push fork` refused by the harness at 05:45, CI not dispatched; report in `.dev/overnight-report.md`.
+  D6 and finding 7 not reached.
