@@ -129,6 +129,10 @@ object Scope:
       * (either successfully or with an error). The cleanup phase runs resource finalizers in parallel, grouped according to the specified
       * parallelism level. For example, with closeParallelism=3, up to 3 resources can be cleaned up simultaneously.
       *
+      * The result is delivered once the finalizers have run. Under a handler outside this run that resumes the computation more than
+      * once, such as `Choice.run`, every resumption shares the scope, and it closes once, after the handler ends; the finalizers then run
+      * without a waiter, and the handler's result can be delivered while they are still running.
+      *
       * @param closeParallelism
       *   The number of parallel tasks to use when running finalizers. This controls how many resources can be cleaned up simultaneously.
       * @param v
