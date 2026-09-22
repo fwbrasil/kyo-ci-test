@@ -1,7 +1,7 @@
 # Backlog: ci-green-followup2
 
 Worktree `.claude/worktrees/ci-green-followup2`, branch `ci-green-followup2`, base `84d9274beb` (the user's kernel branch tip).
-HEAD `bd0f9a285a`, 104 commits unpushed since `b34f254640`. **Green CI runs: 0.** Goal: three green full runs on
+`origin/main` merged at `3315cb9ceb` (`c970b3c612`, no conflicts, the nine overlapping files audited). **Green CI runs: 0.** Goal: three green full runs on
 `oses='linux-x64 linux-arm64 windows-x64 windows-arm64'`.
 
 Runs: one sbt at a time, JVM only until the user says otherwise, through `scratchpad/host-sbtc.sh <log> '<cmd>'` in
@@ -22,7 +22,7 @@ Status: 🔄 in progress (me) · ⏳ blocked or waiting · ❓ needs the user's 
 | 7 | ⏳ | Rung 3: Windows x64 and arm64 (JVM, JS); Native and Wasm on both Linux poles | Windows has no local target and is unverified until CI | CI | none | after row 6 | me |
 | 8 | ⏳ | Rung 4: full CI, one uncounted smoke then three counted green runs | `-f mode=full -f oses='linux-x64 linux-arm64 windows-x64 windows-arm64'`; the dispatch default omits windows-arm64. A red at any rung sends the item back to rung 1 and resets the count | CI | green count 0 | after row 7 | me |
 | 9 | 👀 | kyo-http file-descriptor leak at end of run, Linux container | `LeakCheck$Detected` once at `79e8094db0` (a NIO client connection with a read armed); 14 clean runs of 14 at later HEADs; the cause was never found, so it stopped reproducing rather than being fixed | kyo-http, kyo-net | 1 red in 1 run at `79e8094db0`; 14 of 14 clean after | read every container and CI kyo-http run for it; if it reappears, rerun with `KYO_TEST_LEAK_DEBUG=1` to attribute the descriptor to a leaf, then reproduce and fix | me |
-| 10 | ⏳ | SQL advisory-lock `pendingUntilFixed` leaf (`SqlClientInterruptTest`) | The cause is fixed by the user's PR #1982 on main (`lockedOn` registers the release before the acquire); nothing edited here for it. When that change reaches this branch the marker must come off, or the leaf reports "now passes" | kyo-sql | leaf pending on JVM and JS against a real Postgres container | after #1982 merges and is brought in: remove the marker, run the suite in the container | user, then me |
+| 10 | 🔄 | SQL advisory-lock leaf (`SqlClientInterruptTest`) live after #1982 | #1982 (`lockedOn` registers the release before the acquire) arrived with the merge of main (`c970b3c612`); the `pendingUntilFixed` marker is off | kyo-sql | marker removed, not yet run | `kyo-sql-postgresJVM/testOnly kyo.SqlClientInterruptTest` against the real Postgres container, JVM; JS when the user lifts the JVM-only rule | me |
 | 11 | 🟡 | Final report | `.dev/overnight-report.md` brought current after rows 1, 4 to 8: what was found, fixed, proven, and the CI runs | docs | report current through `b99764e14a` | after the CI rungs | me |
 
 ## Standing rulings (not work; do not reopen)

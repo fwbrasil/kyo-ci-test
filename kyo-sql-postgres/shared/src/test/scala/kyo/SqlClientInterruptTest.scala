@@ -213,10 +213,7 @@ class SqlClientInterruptTest extends SqlContainerTest:
       * requested while it waits, then the holder releases so the grant lands into the abandoned fiber before its release
       * registers. Deterministic: the window is the holder's real lock duration, not a timer race.
       */
-    "an interrupt landing as a contended advisory lock is granted strands no lock".pendingUntilFixed(
-        "withAdvisoryLock grants the lock in a server round trip and registers Scope.ensure(release) only in the next step; " +
-            "an interrupt in that window strands the lock on the pooled session, which the pool hands to its next borrower still locked"
-    ) in {
+    "an interrupt landing as a contended advisory lock is granted strands no lock" in {
         val key = 7340032L
         val one = SqlConfig(maxConnections = 1, minConnections = 0, acquireTimeout = 15.seconds, queryTimeout = 15.seconds)
         containerUrl("kyo-sql-lockdet-orphan") { url =>
