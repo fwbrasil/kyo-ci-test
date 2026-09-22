@@ -196,15 +196,26 @@ the swallowed `IOException`s. Check with the user BEFORE planning to leave anyth
 None of these is on `origin/main`. They were filed earlier as "waiting on the user's decision"; that was wrong. Four
 are open defects of the kernel work with a marker on them, two are a decision already made, one is main's behavior.
 
-Open defects, no fix yet:
+Open defect, no fix yet:
 
-- **A resource acquired under `Async.uninterruptible` leaks when the caller is interrupted at the join**
-  (AsyncTest): `Scope.acquireRelease(Async.uninterruptible(acquire))(release)`, the shielded body still produces
-  the resource, the release never runs.
-- **A value an inner `Scope.run` produced is lost when the caller is interrupted during that scope's drain await**
-  (ScopeInterruptTest): the outer code never registers the handle's release.
 - **`Scope.run` under a handler that resumes more than once refuses the second branch with `Closed`**
-  (ScopeTest, 2 leaves): the scope closes after the first shot.
+  (ScopeTest, 2 leaves): the scope closes after the first shot. Design in `.dev/scope-run-replay.md`.
+
+Removed 2026-09-22 by the user's ruling ("we do not have guarantees for interrupts during acquire, only when it
+ends we do"), after exploration:
+
+- ~~A resource acquired under `Async.uninterruptible` leaks when the caller is interrupted at the join (AsyncTest)~~
+- ~~A value an inner `Scope.run` produced is lost when the caller is interrupted during its drain await
+  (ScopeInterruptTest)~~
+  Both asserted delivery at an abandoned join. `IOTask.abandon` documents "nothing is delivered"; a scratch run
+  confirmed any acquire that parks after producing its value loses it to `acquireRelease`. Measured on the way:
+  `ensureMap` on `uninterruptible`'s steps and removing `Sync.defer` from `acquireRelease` change nothing (the loss
+  is the caller's park at `get`, which `IOTask.interrupt` flips regardless of the promise's mask). A fix needs the
+  fiber to hold an interrupt across that park and apply it after; a masked status-word design was started and
+  dropped at the user's call. `Async.uninterruptible` therefore protects its body, not the caller's wait on it;
+  the SQL cleanup callers (`PostgresChannel`, `StreamQueryExchange`, `CopyExchange`, `MysqlChannel`,
+  `LocalInfileExchange`) are written as if it did. Nothing changed in production; `Async`, `Scope`, `IOTask`,
+  `Isolate` byte-identical to before.
 - ~~Kernel evaluator: a stop on a body's last step parks in front of an isolate crossing's capture (EvalTest)~~
   **Removed by the user's ruling.** Origin (git, read only): written on the `robustness` branch (`87b21a1ea1`) to
   pin "a value produced on the slice its interrupt landed on wins", ported here by `f6e26c4ffe` which itself filed
