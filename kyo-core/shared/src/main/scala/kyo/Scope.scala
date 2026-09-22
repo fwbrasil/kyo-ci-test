@@ -293,7 +293,7 @@ object Scope:
             def await(using Frame): Unit < Async = origin.await
         end Forked
 
-        /** A finalizer whose drain runs under the context regions live here. The drain is spawned from a bracket
+        /** A finalizer whose drain runs under the context regions live here. The drain can be spawned from a bracket
           * release, which the kernel evaluates on a stack of its own, so a spawn made there would carry no context.
           */
         private[kyo] def init(parallelism: Int)(using Frame): Finalizer < Sync =
@@ -304,6 +304,12 @@ object Scope:
         end init
 
         object Unsafe:
+            /** @param spawn
+              *   Runs the drain on a fiber of its own and returns at once. The drain suspends (it awaits the queue's
+              *   handover and the finalizers), while `close` is a single `Sync` step that a bracket release evaluates
+              *   synchronously and that `run` follows with `await` in the same step; a `spawn` that evaluates the drain
+              *   in place hangs or throws there.
+              */
             def init(parallelism: Int)(spawn: Unit < Async => Unit)(using frame: Frame, u: AllowUnsafe): Finalizer =
                 new Finalizer:
                     val queue = Queue.Unbounded.Unsafe.init[Maybe[Error[Any]] => Any < (Async & Abort[Throwable])](
