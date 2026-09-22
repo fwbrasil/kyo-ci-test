@@ -59,7 +59,7 @@ established by reading only.
 | 4 | Listener work on epoll and io_uring, incl. review finding 7 | 4.2 | done: Linux container run green; finding 7 closed by reading and 10 more container runs (section 4.2) |
 | 5 | Defects to fix, D1 to D10 (agreed with the user) | 5 | D1, D3, D5, D6, D7, D8, D10 done; D2, D4, D9 left by the user's rulings; plus two defects found and fixed on 2026-09-22 (Hub publisher, finalizer context) |
 | 6 | Verification rungs 1 to 4 | 7 | rung 1 JVM done on the host; JS/Native/Wasm not run (user's instruction); rungs 2 to 4 blocked on the push |
-| 7 | `Scope.run` under a replaying handler (3 pending leaves) | 5 | fix built, broke the tree, undone; design fork for the user in `.dev/scope-run-replay.md` |
+| 7 | `Scope.run` under a replaying handler (3 pending leaves) | 5 | user's ruling: `handleCont` single-shot, `handleContRepeated` for replays; built in `5f56e0af2a`, kernel green, downstream suites running |
 
 ---
 
@@ -210,7 +210,16 @@ Open defect, a fix built and undone on 2026-09-22 (still pending, now 3 leaves):
   made them green and broke the tree: under any `handleCont` handler outside the run (`Path.run`), the scope
   closed at that handler's end, after the steps that follow `run` (`PathTest`, `StreamSystemExtensionsTest`,
   and a hang of kyo-test's runner). Measured, recorded in `.dev/scope-run-replay.md`; undone in `e3b4390300`.
-  A fix needs the kernel to tell `run` whether the region releases in place; the user decides the shape.
+  User's ruling on 2026-09-22: the kernel had treated every `handleCont` clause as repeatable (regions held to
+  the handler's end). `handleCont` is single-shot again (escaping dump, remainder owed and settled or drained, as
+  the peel's) and `handleContRepeated` is back for replays (held regions, each application re-enters a fresh
+  region through the robustness branch's `Handler.reentering` wrapper, which also ends the spin of a re-entrant
+  repeated clause). `Choice.run` replays through it. Release-only `Scope.run` reinstated. Built in `5f56e0af2a`.
+  A remainder resumed on another evaluator stack (nested eval) is ended there and drained again by the owner;
+  as on the robustness branch, once across stacks is the region's guard (Bracket's cell), stated on
+  `ContextEffect.handle`; two cross-stack mechanisms (a mark on the snapshot, a per-thread stack chain) were
+  built and undone at the user's direction (snapshots are immutable; the chain was more machinery than the
+  branch ever had).
 - **Regression of that fix, caught by the held-out review and fixed (`a422575ac0`):** the drain was spawned from the
   region's release, which the kernel evaluates on a stack of its own, so finalizers read `Local` defaults instead of
   the run's bindings. `Finalizer.init` is now an effect that captures the crossing at its call site and spawns the
@@ -324,3 +333,8 @@ CI needs a push, which only the user asks for.
   runs stalled on Metals stealing sbt fork connections; held-out review PASS-WITH-NITS, should-fix in `cb9f0a0369`;
   `git push fork` refused by the harness at 05:45, CI not dispatched; report in `.dev/overnight-report.md`.
   Finding 7 not reached; D6 turned out done since 2026-09-21 (`6df05071d2`), the row was stale.
+- 2026-09-22 morning: finding 7 closed by reading and ten container runs. The `Scope.run` replay root cause found
+  with the user (every `handleCont` clause treated as repeatable); `handleCont`/`handleContRepeated` split
+  reintroduced from the robustness branch (`110ad76d11`, `1d3402adc6`) with the single-shot arm dumping
+  escaping; release-only `Scope.run` back; committed `5f56e0af2a` with kyo-kernelJVM 1819 green. The nested-eval
+  double release was tried two ways in the kernel and undone; the ruling is the bracket cell, as before.
