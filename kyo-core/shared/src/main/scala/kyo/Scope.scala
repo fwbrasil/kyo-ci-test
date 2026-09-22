@@ -3,6 +3,7 @@ package kyo
 import kyo.Result.Error
 import kyo.Result.Panic
 import kyo.kernel.ContextEffect
+import kyo.scheduler.IOTask
 
 /** A structured effect for safe acquisition and finalization of resources.
   *
@@ -138,8 +139,7 @@ object Scope:
       *   The result of the effect wrapped in Async and S effects.
       */
     def run[A, S](closeParallelism: Int)(v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
-        Sync.Unsafe.defer {
-            val finalizer = Finalizer.Unsafe.init(closeParallelism)
+        Finalizer.init(closeParallelism).map { finalizer =>
             // A scope closes at the end of the `Scope.run` that opened it and nowhere else.
             ContextEffect.handle(
                 Tag[Scope],
@@ -188,35 +188,38 @@ object Scope:
       * it is why the scoped entry points exist.
       */
     private[kyo] def runUnowned[A, S](v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
-        // Unsafe: the finalizer and the handover flag are allocated and read outside an effect, as `run` does for
-        // its own finalizer. `defer` supplies the capability to its body, so the grant stays inside the block.
-        Sync.Unsafe.defer {
-            val finalizer = Finalizer.Unsafe.init(1)
-            // Whether the value reached the step that delivers it. The backstop below runs on every ending, and
-            // `Absent` does not identify one: a clean end carries it, and so does a remainder dropped with nothing
-            // recorded against it. Closing on `Absent` would release the value on its way out; not closing on it
-            // would leave a dropped acquisition holding everything it had opened. This flag is the difference, and
-            // it is set in the delivering step so no step separates the two.
-            val delivered = AtomicBoolean.Unsafe.init(false)
-            ContextEffect.handle(
-                Tag[Scope],
-                derive = (_: Maybe[Finalizer]) => finalizer,
-                fork = (parent: Finalizer) => parent.forked,
-                join = (parent: Finalizer, _: Finalizer, _: Finalizer) => parent
-            )(v)
-                .handle(Abort.run[Any])
-                .map { result =>
-                    result.error match
-                        case Present(error) =>
-                            finalizer
-                                .close(Present(error))
-                                .andThen(finalizer.await)
-                                .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
-                        case Absent =>
+        Finalizer.init(1).map { finalizer =>
+            // Unsafe: the handover flag is allocated and read outside an effect. `defer` supplies the capability to
+            // its body, so the grant stays inside the block.
+            Sync.Unsafe.defer {
+                // Whether the value reached the step that delivers it. The release below runs on every ending, and
+                // `Absent` does not identify one: a clean end carries it, and so does a remainder dropped with nothing
+                // recorded against it. Closing on `Absent` would release the value on its way out; not closing on it
+                // would leave a dropped acquisition holding everything it had opened. This flag is the difference,
+                // and it is set as the value arrives, with no polled step between the write and the delivery.
+                val delivered = AtomicBoolean.Unsafe.init(false)
+                ContextEffect.handle(
+                    Tag[Scope],
+                    derive = (_: Maybe[Finalizer]) => finalizer,
+                    fork = (parent: Finalizer) => parent.forked,
+                    join = (parent: Finalizer, _: Finalizer, _: Finalizer) => parent
+                )(v)
+                    .map { a =>
+                        Sync.defer {
                             delivered.set(true)
-                            Abort.get(result.asInstanceOf[Result[Nothing, A]])
-                }
-                .handle(Sync.ensure(error => if delivered.get() then Kyo.unit else finalizer.close(error)))
+                            a
+                        }
+                    }
+                    // The close is the region's release, as in `run`; a failure closes with the error `Sync.ensure`
+                    // recorded, and only a failure waits for the drain.
+                    .handle(Sync.ensure[A, Any, Async & S](error => if delivered.get() then Kyo.unit else finalizer.close(error)))
+                    .handle(Abort.run[Any])
+                    .ensureMap { result =>
+                        result.error match
+                            case Present(_) => finalizer.awaitIfClosed.andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
+                            case Absent     => Abort.get(result.asInstanceOf[Result[Nothing, A]])
+                    }
+            }
         }
     end runUnowned
 
@@ -295,8 +298,18 @@ object Scope:
             private[kyo] def awaitIfClosed(using Frame): Unit < Async = origin.awaitIfClosed
         end Forked
 
+        /** A finalizer whose drain runs under the context regions live here. The drain is spawned from a bracket
+          * release, which the kernel evaluates on a stack of its own, so a spawn made there would carry no context.
+          */
+        private[kyo] def init(parallelism: Int)(using Frame): Finalizer < Sync =
+            val crossing = summon[Isolate[Any, Sync, Any]].crossing
+            crossing.capture { state =>
+                Sync.Unsafe.defer(Unsafe.init(parallelism)(drain => discard(IOTask(crossing)(state, drain))))
+            }
+        end init
+
         object Unsafe:
-            def init(parallelism: Int)(using frame: Frame, u: AllowUnsafe): Finalizer =
+            def init(parallelism: Int)(spawn: Unit < Async => Unit)(using frame: Frame, u: AllowUnsafe): Finalizer =
                 new Finalizer:
                     val queue = Queue.Unbounded.Unsafe.init[Maybe[Error[Any]] => Any < (Async & Abort[Throwable])](
                         Access.MultiProducerSingleConsumer
@@ -364,7 +377,7 @@ object Scope:
                     def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync =
                         Sync.Unsafe.defer {
                             closing.set(true)
-                            Fiber.initUnscoped[Nothing, Unit, Any, Any] {
+                            spawn {
                                 Sync.Unsafe.defer(queue.close().safe.get).map {
                                     case Absent         => Kyo.unit
                                     case Present(tasks) =>
@@ -391,7 +404,7 @@ object Scope:
                                             .map(_.foldError(_ => (), ex => Log.error("Scope close failed", ex.exception)))
                                             .andThen(promise.completeUnitDiscard)
                                 }
-                            }.unit
+                            }
                         }
 
                     def await(using Frame): Unit < Async = promise.get
