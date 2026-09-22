@@ -1527,9 +1527,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         // twice and each branch registers a finalizer. The bracket contract under a replaying handler
         // is that every branch runs against the live region and the release runs
         // once after all of them; a scope's registrations are the counterpart, each running once.
-        "every branch of a replaying handler registers its finalizer and each runs once".pendingUntilFixed(
-            "Scope.run closes its scope at the end of each shot of a replaying handler, so the second shot registers on a closed scope and is refused with Closed"
-        ) in {
+        "every branch of a replaying handler registers its finalizer and each runs once" in {
             for
                 log <- AtomicRef.init(Chunk.empty[String])
                 res <- Abort.run[Closed] {
@@ -1549,9 +1547,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "every branch of a replaying handler acquires its own resource and each is released once".pendingUntilFixed(
-            "Scope.run closes its scope at the end of each shot of a replaying handler, so the second shot's acquisition registers on a closed scope and is refused with Closed"
-        ) in {
+        "every branch of a replaying handler acquires its own resource and each is released once" in {
             for
                 released <- AtomicRef.init(Chunk.empty[Int])
                 seen     <- AtomicRef.init(Chunk.empty[(Int, Int)])
