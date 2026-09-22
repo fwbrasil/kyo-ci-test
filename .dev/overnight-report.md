@@ -75,5 +75,9 @@ will bite any long host run while that Metals is up.
 ## Held-out review
 
 A read-only Opus review of the first `Scope.run` commit found the context regression (fixed above), the scaladoc
-gap, and `runUnowned` carrying the same shape; its second pass on the final tree was requested and had not arrived
-when this was written.
+gap, and `runUnowned` carrying the same shape. Its second pass found no defect in what remains on the tree:
+`Finalizer.init`'s snapshot is a by-value copy with no pointer into the pooled stack, is only read when reused
+across a parent's second `close`, and the spawn is `Fiber.initUnscoped`'s call with the same defaults; the child's
+drain runs under the child's context even when a parent's drain spawns it. Its other items (a leaf for a finalizer
+registered before the choice point, the error finalizers receive under replay) belong to the replay design, which
+is the open question above.
