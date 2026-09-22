@@ -35,8 +35,17 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
         def onDone(state: State, v: A): B < S
         def onRecover(state: State, ex: Throwable): Maybe[B < S] = Absent
 
+    /** The region behind [[kyo.kernel.ArrowEffect.handleCont]]: the clause is handed the continuation and resumes it inside the region.
+      *
+      * Single-shot (the default): the clause resumes at most once, so the dumped regions travel with the continuation and close at their
+      * own end where it resumes (this region drains them if the clause drops it). [[repeated]] (`handleContRepeated`): the clause may resume
+      * more than once, so the dumped regions are held and their releases run once, at this region's end, keeping a shared resource live
+      * across every resumption. A single-shot clause that resumes twice is refused at the region it re-enters.
+      */
     abstract class ContHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
+
+        private[kyo] def repeated: Boolean = false
 
         /** The catch is here, not around the evaluator's call, so the suspension and stack are still in hand: by the time a throwable reaches
           * the loop, its region may already be off the stack.
@@ -247,6 +256,42 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
           */
         private[kyo] def reenter(state: State): Unit = ()
     end ContextHandler
+
+    /** The handler a re-entered region runs under: `outer` with `onDone` as identity, so the region a resumption re-enters yields the body's
+      * value and `outer`'s `onDone` still runs once, at the outer region's end.
+      *
+      * It repeats, as `outer` does: a continuation captured inside a re-entered region is resumed by the same clause, more than once, so what
+      * that region owes (a bracket captured in the continuation, say) must be held across every application and released when the
+      * re-entered region ends, once the last of them has run.
+      */
+    private[kyo] def reentered[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
+        outer: ContHandler[I, O, E, A, B, S]
+    ): ContHandler[I, O, E, A, A, S] =
+        new ContHandler[I, O, E, A, A, S]:
+            def tag                                              = outer.tag
+            def run[X](input: I[X], next: Arrow[O[X], A, E & S]) = outer.run(input, next)
+            def onDone(state: Unit, v: A)                        = v
+            override def repeated                                = true
+
+    /** Wraps the continuation a clause may resume more than once, so that each application re-enters the region, through [[reentered]].
+      *
+      * Entering a region stores the loop's registers as that region's continuation, which keeps the clause's own pending work out of what a
+      * later occurrence captures. Without that, the continuation captured at a later occurrence carries the enclosing clause's next
+      * resumption, and every inner resumption re-triggers it, without bound. A computation handed to the wrapped continuation runs at the
+      * clause's level first, as it does for a crossing; only the settled answer re-enters.
+      */
+    private[kyo] def reentering[I[_], O[_], E <: ArrowEffect[I, O], A, S, X0](
+        k: Arrow[O[X0], A, E & S],
+        reentered: ContHandler[I, O, E, A, A, S]
+    ): Arrow[O[X0], A, E & S] =
+        new Arrow.Step[O[X0], A, E & S]:
+            def frame                                                        = Frame.internal
+            override def apply[D, S3](v: O[X0] < S3, cont2: Arrow[A, D, S3]) =
+                v match
+                    case p: Pending[O[X0], S3] @unchecked => Effect.defer(p, this, cont2)
+                    case _ => cont2(Pending.handle[Unit, E, A, A, S](k(Nested.unnest[O[X0]](v)), reentered, ()), Arrow.id)
+        end new
+    end reentering
 
     /** The caller must pass the cont of the operation whose answer this outcome carries. That obligation is why the attachment is here rather
       * than where the region is rebuilt: a walk that fuses across a run of operations answers a different one each turn, and only the walk
