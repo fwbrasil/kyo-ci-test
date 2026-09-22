@@ -1710,9 +1710,7 @@ class CacheTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "the computing caller's interrupt fails the waiters and the next caller recomputes".pendingUntilFixed(
-            "the computing caller's interrupt completes the shared entry, so the waiters read that interrupt rather than a recomputation"
-        ) in {
+        "the computing caller's interrupt fails the waiters and the next caller recomputes" in {
             // The other half of the contract: a value that was never produced must not be served, and the entry
             // must be gone by the time a waiter learns its computation was cancelled, so a waiter that reacts by
             // asking again recomputes rather than finding the dead entry.
