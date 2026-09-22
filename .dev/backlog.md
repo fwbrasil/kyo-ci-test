@@ -196,15 +196,14 @@ the swallowed `IOException`s. Check with the user BEFORE planning to leave anyth
 None of these is on `origin/main`. They were filed earlier as "waiting on the user's decision"; that was wrong. Four
 are open defects of the kernel work with a marker on them, two are a decision already made, one is main's behavior.
 
-Fixed 2026-09-22 (`2f49e3ad98`):
+Open defect, a fix built and undone on 2026-09-22 (still pending, now 3 leaves):
 
 - **`Scope.run` under a handler that resumes more than once refuses the second branch with `Closed`**
-  (ScopeTest, 2 leaves): the scope closed at the end of the body as well as from the `Sync.ensure` release, so
-  the first branch's end closed it. Now the release is the only close (`Sync.ensure` hands it the run's first
-  abort), and the step after the region waits for the drain only when a close was requested
-  (`Finalizer.awaitIfClosed`, a flag set inside `close`'s suspension beside the spawn). Proof: with the markers
-  on, both leaves failed as "now passes"; markers off, `ScopeTest` 86 passed, 1 pending (the backpressure leaf).
-  Full kyo-core JVM and JS: see section 7.
+  (ScopeTest, 2 leaves plus the replay variant of "finalizer context"). The release-only close (`2f49e3ad98`)
+  made them green and broke the tree: under any `handleCont` handler outside the run (`Path.run`), the scope
+  closed at that handler's end, after the steps that follow `run` (`PathTest`, `StreamSystemExtensionsTest`,
+  and a hang of kyo-test's runner). Measured, recorded in `.dev/scope-run-replay.md`; undone in `e3b4390300`.
+  A fix needs the kernel to tell `run` whether the region releases in place; the user decides the shape.
 - **Regression of that fix, caught by the held-out review and fixed (`a422575ac0`):** the drain was spawned from the
   region's release, which the kernel evaluates on a stack of its own, so finalizers read `Local` defaults instead of
   the run's bindings. `Finalizer.init` is now an effect that captures the crossing at its call site and spawns the

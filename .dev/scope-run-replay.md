@@ -1,6 +1,38 @@
 # `Scope.run` under a handler that resumes more than once
 
-Status: proposal, nothing implemented. Read-only analysis, 2026-09-21.
+Status: the proposal below was built, run against the whole tree, and undone on 2026-09-22. It is wrong as a
+Scope.run design; the leaves stay pending. The record is in this first section; the proposal follows unchanged.
+
+## 2026-09-22: built, measured, undone
+
+Built as `2f49e3ad98` (release-only close, `awaitIfClosed`), with a follow-up `a422575ac0` for a regression the
+held-out review caught (the drain spawned from the release ran with no context, so finalizers read `Local`
+defaults; fixed by `Finalizer.init` capturing the crossing at its call site, which stays). The two replay leaves
+went green. The whole-tree JVM run then failed three things with one cause:
+
+- `PathTest` "Path.temp auto-deletes on scope close": `Path.run { Scope.run { Path.temp() }; exists }` found the file.
+- `StreamSystemExtensionsTest`, two leaves: partial data still in the file after `Scope.run` inside `Path.run`.
+- kyo-test's runner hung after every kyo-core suite had reported (the forked JVM parked in `SbtTask.runSuite`).
+
+Cause, measured with a scratch probe on `Sync.ensure` and on the release-only `Scope.run` (same result for both):
+
+| handler outside, answering a suspension inside | order observed |
+|---|---|
+| `Var.run` (`handleLoopState`, resumes in place) | body, release, after |
+| single-branch `Choice.run` (`handleCont`) | body, after, release |
+
+`Path.run` resumes exactly once, in tail position, but through `handleCont`, so the kernel treats it like
+`Choice`: the region's release is owed to the handler and runs at its end, after the steps that follow `run`.
+A release-only `Scope.run` therefore closes late under every `handleCont` handler, which is most effect handlers
+in the tree. The in-body close is what makes "closed when `run` returns" hold under them; it is back
+(`e3b4390300`).
+
+What a real fix needs: at the end of the body, `run` must know whether the region will release now or is owed to
+a handler below that may resume again. The kernel knows (`Stack.owesAny` / the owed releases) but nothing exposes
+it, and `handleCont` cannot tell a single resumption (`Path.run`) from a replay (`Choice.run`). Options, not
+decided: expose that fact to `run`; a "generation" finalizer that closes per body end and reopens on re-entry
+(released resources acquired before the choice point would then be used by later branches, silently); or have
+single-shot handlers resume through an in-place API. The user decides.
 
 ## The defect
 
