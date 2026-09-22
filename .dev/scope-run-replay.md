@@ -147,6 +147,65 @@ not analysed further.
 ## What this means
 
 Two of the three (`uninterruptible`, the drain await) are one kernel question: what an abandoned join does with a
-value that arrives for a continuation the kernel has discarded. The third (`EvalTest`) is a one-line-shaped change
-in `Isolate` with a verification question attached. The `Scope.run` replay defect at the top of this note is
-independent of all three.
+value that arrives for a continuation the kernel has discarded. The `Scope.run` replay defect at the top of this
+note is independent of all three.
+
+---
+
+# `Async.uninterruptible` as a kernel region, explored 2026-09-21 (nothing implemented)
+
+Measured first: with `ensureMap` on both of `uninterruptible`'s steps, and with `Sync.defer` removed from
+`acquireRelease`, the pending `AsyncTest` leaf stays pending. No poll on the caller's path is where the loss is; it
+is the caller's park at `_.get` on the shielded fiber's promise, which `IOTask.interrupt` (`IOTask.scala:183`)
+flips to `interrupted` without regard to what the fiber parked on. The promise's mask protects the body, not the
+wait on it. So `Scope.acquireRelease(Async.uninterruptible(acquire))(release)` leaks, and the primitive does not
+give what its name says.
+
+A first fix keyed on the promise (`IOTask.interrupt` deferring when the parked promise's `preInterrupt()` is
+false) was rejected by the user as the wrong shape: what is uninterruptible is the caller's region, not the
+promise it happens to wait on.
+
+## The shape: a region
+
+`Async.uninterruptible(v)` installs a `ContextHandler` region and runs `v` inline on the caller. No spawn, no
+`Isolate`, so the `using isolate` parameter goes (a signature change, allowed). While the region is installed, an
+interrupt taken on the fiber is HELD; at the region's end it is applied, so the interrupt lands at the first poll
+after the body and everything the body handed on (`ensureMap` registrations included) has run.
+
+## Parks are not the thing to mask
+
+`shouldPark` (`Eval.scala:69`) parks at a poll when `Safepoint.stopped(slot)`. Parks come from preemption
+(`IOTask.doPreempt` -> `Safepoint.stop`) and from joins (`IOTask.boundary` -> `parkOn` -> `Safepoint.stop`,
+`IOTask.scala:117`). A parked remainder resumes; nothing is lost by a park. A value is lost only by `abandon`,
+reached from `release()` when the status word holds `interrupted`. So the mask must not suppress parks (a join
+inside the region could not park, and a long body would not yield); it must stop the interrupt from taking effect.
+
+## What the scheduler needs
+
+`IOTask.interrupt` runs cross-thread and cannot read the stack, so it needs a bit on the task: "a mask region is
+installed". The region's hooks cover first entry (`derive`), every resume (`reenter`, from `Eval.installed`) and
+the end (`release`/`complete`). They do not cover the region being taken into a park (`stack.takeAll`), so a count
+kept by hooks alone drifts across parks. Two ways to close it: a new `ContextHandler` hook fired at take, or the
+boundary writing "parked and masked" into the status word at `parkOn` (it runs on the evaluating thread with the
+stack in hand). The second is smaller. With the bit in place, `interrupt` on a masked task records the error
+without flipping to `interrupted`; the region's end (or the boundary's resume, if the region ended while parked)
+applies it by requesting a stop, and `release()` at that slice's end abandons as today.
+
+## Children and callers
+
+- `fork = inert`, as `Bracket`'s cell does: a child fiber spawned inside the region is not masked, so
+  `Async.timeout` inside a region still interrupts its own child.
+- Every production caller (surveyed: `PostgresChannel`, `StreamQueryExchange`, `CopyExchange`, `MysqlChannel`,
+  `LocalInfileExchange`) wraps a cleanup wait and continues with the caller's own next step. All are written as if
+  the caller could not skip the wait; today it can (it is abandoned at the join and its finalizers run at once,
+  which returns a pooled connection while the cleanup is still on the wire). Under the region the wait cannot be
+  skipped.
+- Observable change: an interrupted caller's finalizers run after the body, not at once. The green `AsyncTest` pin
+  "interrupting the caller of uninterruptible runs the caller's finalizer while the shielded body completes"
+  asserts the current timing and changes with it.
+
+## Not read
+
+The JS/Wasm `Safepoint` (single-threaded; the cross-thread half of `interrupt` does not exist there). The
+`.uninterruptible()` uses on promises in kyo-jsonrpc and kyo-reactive-streams mask a promise, not a caller, and
+are unaffected.
