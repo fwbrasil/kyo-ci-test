@@ -86,6 +86,7 @@ private[kyo] object BrowserLauncher:
             )
             spawnChromeWith(config, tmpDir, (config.executable +: chromiumFlags(tmpDir, config.headless)) ++ config.extraArgs ++ netlog)
         }
+    end spawnChrome
 
     private def spawnChromeWith(config: Browser.LaunchConfig, tmpDir: Path, args: Seq[String])(using
         Frame
@@ -104,7 +105,7 @@ private[kyo] object BrowserLauncher:
                 BrowserLauncherPlatform.registerShutdownHook(proc).andThen(proc)
             }
         }
-    end spawnChrome
+    end spawnChromeWith
 
     /** Terminates the Chrome process tree and returns once none of it is left.
       *
