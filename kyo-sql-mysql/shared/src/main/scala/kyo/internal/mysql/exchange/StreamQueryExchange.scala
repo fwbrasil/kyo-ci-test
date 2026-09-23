@@ -235,9 +235,16 @@ private[mysql] object StreamQueryExchange:
         escalate: Unit < (Async & Abort[SqlException])
     )(using Frame): Unit < (Async & Abort[SqlException]) =
         Clock.stopwatch.flatMap { elapsedSince =>
+            var rows = 0L
+            def p(msg: String): Unit =
+                java.lang.System.err.println(s"[probe-drain t=${java.lang.System.currentTimeMillis()}] $msg")
+            p("drain start")
             def loop(killed: Boolean)(using Frame): Unit < (Async & Abort[SqlException]) =
                 channel.readRawPayload.flatMap { payload =>
                     val firstByte = payload(0) & 0xff
+                    rows += 1
+                    if rows % 100000 == 0 then p(s"rows=$rows killed=$killed")
+                    if firstByte != 0x00 then p(s"terminal byte=$firstByte rows=$rows killed=$killed")
                     if firstByte == 0xfe then
                         // Result-set terminator, drain complete. Size untested for the same reason as `emitRows` above: a
                         // sized test would miss an oversized OK terminator and keep draining a wire that owes nothing.
@@ -252,7 +259,9 @@ private[mysql] object StreamQueryExchange:
                         else
                             elapsedSince.elapsed.flatMap { spent =>
                                 if spent < DrainBudget then loop(false)
-                                else escalate.andThen(loop(true))
+                                else
+                                    p(s"escalate start rows=$rows spent=$spent")
+                                    Sync.ensure(Sync.defer(p(s"escalate settled rows=$rows")))(escalate).andThen(loop(true))
                             }
                         end if
                     else
