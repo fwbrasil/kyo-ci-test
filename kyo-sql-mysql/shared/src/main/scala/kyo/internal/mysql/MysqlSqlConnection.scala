@@ -182,7 +182,12 @@ final private[kyo] class MysqlSqlConnection private[mysql] (
     def inOpenTransaction(using AllowUnsafe): Boolean = transactionOpen.get()
 
     def cancelInFlight(using Frame): Unit < (Async & Abort[SqlException]) =
-        Sync.Unsafe.defer(requestInFlight.get() && !streamDrainedClean.get()).flatMap {
+        Sync.Unsafe.defer {
+            java.lang.System.err.println(
+                s"[probe-cancel t=${java.lang.System.currentTimeMillis()}] requestInFlight=${requestInFlight.get()} streamDrainedClean=${streamDrainedClean.get()}"
+            )
+            requestInFlight.get() && !streamDrainedClean.get()
+        }.flatMap {
             // Nothing is running: either no request was in flight, or a stream's cleanup already drained to the
             // terminator (killing the statement itself if that was faster). No sidecar is worth opening for either.
             case false => ()
@@ -202,7 +207,12 @@ final private[kyo] class MysqlSqlConnection private[mysql] (
                             }.map { sidecar =>
                                 closingOnce(sidecar) {
                                     Sync.Unsafe.defer(custody.take()).andThen {
-                                        underlying.cancelQuery(sidecar).andThen {
+                                        Sync.defer(java.lang.System.err.println(
+                                            s"[probe-cancel t=${java.lang.System.currentTimeMillis()}] sidecar connected, sending KILL QUERY"
+                                        )).andThen(underlying.cancelQuery(sidecar)).andThen {
+                                            java.lang.System.err.println(
+                                                s"[probe-cancel t=${java.lang.System.currentTimeMillis()}] KILL QUERY answered"
+                                            )
                                             // COM_QUIT is a courtesy: the server notices the socket close either way, so a
                                             // failure here must not turn a delivered kill into a failed cancel.
                                             Abort.run[SqlException](sidecar.quit()).unit

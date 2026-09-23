@@ -235,7 +235,7 @@ private[mysql] object StreamQueryExchange:
         escalate: Unit < (Async & Abort[SqlException])
     )(using Frame): Unit < (Async & Abort[SqlException]) =
         Clock.stopwatch.flatMap { elapsedSince =>
-            var rows = 0L
+            var rows                 = 0L
             def p(msg: String): Unit =
                 java.lang.System.err.println(s"[probe-drain t=${java.lang.System.currentTimeMillis()}] $msg")
             p("drain start")

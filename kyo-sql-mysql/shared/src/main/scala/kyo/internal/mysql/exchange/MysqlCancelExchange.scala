@@ -42,7 +42,10 @@ private[kyo] object MysqlCancelExchange:
             val deprecateEof = (caps & kyo.internal.mysql.Capabilities.CLIENT_DEPRECATE_EOF) != 0L
             Abort.run[SqlException](
                 SimpleQueryExchange.run(cancelConn.channel, s"KILL QUERY $targetConnectionId", deprecateEof, Maybe.Absent)
-            ).flatMap {
+            ).map { r =>
+                java.lang.System.err.println(s"[probe-kill t=${java.lang.System.currentTimeMillis()}] KILL QUERY $targetConnectionId -> $r")
+                r
+            }.flatMap {
                 // OK response: the kill was delivered, or the query was already done and the server said OK anyway.
                 case Result.Success(_) => ()
                 // The thread is gone, so the statement this cancel was for has already ended. Reporting that as a
