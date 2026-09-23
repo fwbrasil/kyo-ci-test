@@ -156,7 +156,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           os: ${{ steps.os.outputs.os }}
-          target: JVM
+          target: JS
       - name: Run command
         shell: bash
         env:
@@ -164,3 +164,10 @@ jobs:
         run: |
           echo "+ $RUN_COMMAND"
           eval "$RUN_COMMAND"
+      - name: Upload probe output
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-${{ github.run_id }}
+          path: ${{ runner.temp }}/probe
+          if-no-files-found: ignore

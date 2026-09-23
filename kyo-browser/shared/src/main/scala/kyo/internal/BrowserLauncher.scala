@@ -80,7 +80,17 @@ private[kyo] object BrowserLauncher:
         Frame
     )
         : Process < (Sync & Scope & Abort[BrowserSetupException]) =
-        val args = (config.executable +: chromiumFlags(tmpDir, config.headless)) ++ config.extraArgs
+        System.env[String]("KYO_PROBE_NETLOG_DIR").map { netlogDir =>
+            val netlog = netlogDir.fold(Seq.empty[String])(d =>
+                Seq(s"--log-net-log=$d/${tmpDir.toString.replace('\\', '/').split('/').last}.json", "--net-log-capture-mode=Everything")
+            )
+            spawnChromeWith(config, tmpDir, (config.executable +: chromiumFlags(tmpDir, config.headless)) ++ config.extraArgs ++ netlog)
+        }
+
+    private def spawnChromeWith(config: Browser.LaunchConfig, tmpDir: Path, args: Seq[String])(using
+        Frame
+    )
+        : Process < (Sync & Scope & Abort[BrowserSetupException]) =
         Abort.recover[CommandException] { (ex: CommandException) =>
             Abort.fail[BrowserSetupException](
                 BrowserSetupFailedException(s"failed to start ${config.executable}", ex)

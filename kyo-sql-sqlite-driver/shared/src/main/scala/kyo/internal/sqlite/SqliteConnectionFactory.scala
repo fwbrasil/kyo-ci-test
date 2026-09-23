@@ -19,7 +19,14 @@ final private[kyo] class SqliteConnectionFactory(bindings: SqliteBindings) exten
             case n: SqlConfig.Address.Network =>
                 // Unreachable through SqlClient.init, which routes by scheme. Present because the type can say it.
                 Abort.fail(SqlConnectionUrlParseException(Render.asString(n: SqlConfig.Address), n.scheme))
-            case local: SqlConfig.Address.Local => openLocal(local, config)
+            case local: SqlConfig.Address.Local =>
+                Sync.defer(java.lang.System.currentTimeMillis()).flatMap { t0 =>
+                    Sync.defer(java.lang.System.err.println(s"[probe-sqlite t=$t0] open ${local.path} start")).andThen {
+                        Sync.ensure(Sync.defer(java.lang.System.err.println(
+                            s"[probe-sqlite t=${java.lang.System.currentTimeMillis()}] open ${local.path} settled after ${java.lang.System.currentTimeMillis() - t0}ms"
+                        )))(openLocal(local, config))
+                    }
+                }
 
     private def openLocal(address: SqlConfig.Address.Local, config: SqlConfig)(using
         Frame

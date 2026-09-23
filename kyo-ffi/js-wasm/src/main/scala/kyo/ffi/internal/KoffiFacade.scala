@@ -29,7 +29,11 @@ private[ffi] object Koffi:
       * koffi is not installed or not resolvable.
       */
     private[ffi] def dynamic: js.Dynamic =
-        if cached == null then cached = resolve()
+        if cached == null then
+            val t0 = js.Date.now()
+            cached = resolve()
+            Probe.log(s"koffi resolve took ${js.Date.now() - t0}ms")
+        end if
         cached
 
     private def resolve(): js.Dynamic =
@@ -98,7 +102,13 @@ private[ffi] object Koffi:
       *
       * koffi signature: `koffi.load(path: string | null): IKoffiLib`.
       */
-    def load(path: String): js.Dynamic = dynamic.applyDynamic("load")(path.asInstanceOf[js.Any])
+    def load(path: String): js.Dynamic =
+        val k  = dynamic
+        val t0 = js.Date.now()
+        val r  = k.applyDynamic("load")(path.asInstanceOf[js.Any])
+        Probe.log(s"koffi.load($path) took ${js.Date.now() - t0}ms")
+        r
+    end load
 
     /** Last captured errno from the most recent koffi call on the current thread. koffi captures errno automatically when the binding is
       * declared with `captureErrno: true`, we use that on every binding.
@@ -253,7 +263,9 @@ object KoffiFacade:
         /* koffi-correctness verified in scripted integration tests */
         // Validate the koffi package ABI once per process before any downcall is wired. Fails fast with
         // FfiLoadError.Unsupported when the installed koffi is too old, too new, or missing an expected method.
+        val probeStart = js.Date.now()
         KoffiAbiProbe.probeOnce()
+        Probe.log(s"facade load($libPath): abi probe done at +${js.Date.now() - probeStart}ms")
         val lib = Koffi.load(libPath)
         val bag = js.Dynamic.literal()
         fns.foreach { fn =>
@@ -263,6 +275,7 @@ object KoffiFacade:
             bag.updateDynamic(fn.scalaName)(fnHandle)
         }
         CallbackRegistry.installKoffi()
+        Probe.log(s"facade load($libPath): ${fns.size} functions bound, total ${js.Date.now() - probeStart}ms")
         bag
     end load
 

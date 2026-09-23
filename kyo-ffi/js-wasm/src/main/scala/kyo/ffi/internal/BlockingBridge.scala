@@ -41,13 +41,20 @@ object BlockingBridge:
         AllowUnsafe
     ): Fiber.Unsafe[A, Any] =
         val p                = Promise.Unsafe.init[A, Any]()
+        val probeSubmit      = js.Date.now()
         def dispatch(): Unit =
+            val probeDispatch = js.Date.now()
+            if probeDispatch - probeSubmit > 100 then
+                Probe.log(s"blocking $name queued ${probeDispatch - probeSubmit}ms behind the meter")
             try
                 KoffiFacade.callAsync(
                     facade,
                     name,
                     args,
                     (err, raw) =>
+                        val probeDone = js.Date.now()
+                        if probeDone - probeDispatch > 100 then
+                            Probe.log(s"blocking $name completed ${probeDone - probeDispatch}ms after dispatch")
                         // Release the permit BEFORE completing the promise, so a continuation that immediately issues another
                         // @Ffi.blocking call sees the freed permit. release() admits the next queued dispatch (permit transfer) or
                         // decrements the in-flight count.
