@@ -2,6 +2,7 @@ package kyo.internal.mysql
 
 import kyo.Chunk
 import kyo.Span
+import kyo.discard
 
 // --- AccumulatedBuffer ---
 
@@ -39,8 +40,7 @@ final class AccumulatedBuffer:
         while written < n do
             val head    = chunks.head
             val canRead = math.min(n - written, head.size - offset)
-            val src     = head.toArray
-            java.lang.System.arraycopy(src, offset, result, written, canRead)
+            discard(head.slice(offset, offset + canRead).copyToArray(result, written))
             written += canRead
             if offset + canRead >= head.size then
                 chunks = chunks.tail
