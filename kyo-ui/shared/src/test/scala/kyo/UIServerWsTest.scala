@@ -148,32 +148,47 @@ class UIServerWsTest extends kyo.test.Test[Any]:
     // Stressed .times(20) to confirm non-flaky teardown cascade.
     "disconnect tears down: subscription released after socket close".notNative.times(20) in {
         for
+            it <- Sync.defer(UIServerWsTest.nextIteration())
+            mark = (s: String) => Sync.defer(UIServerWsTest.mark(it, s))
             // The test retains leafRef to assert its observation (waiters) and to SET it after teardown.
             leafRef <- Signal.initRef(0)
+            _       <- Sync.defer(UIServerWsTest.leaves.put(it, leafRef))
             app = UI.div(leafRef.map(n => UI.span(n.toString)))
             // serverEnded flips when the real serveSession handler ends on disconnect (its Scope.run completes or is
             // interrupted, either way closing the connection's subscription Scope). Public witness, no internal hook.
             serverEnded <- AtomicBoolean.init(false)
+            _           <- mark("1 connect")
             _           <- Scope.run {
                 HttpWebSocket.connect(
-                    (serverWs: HttpWebSocket) => Sync.ensure(serverEnded.set(true))(UIServer.serveSession(serverWs, app)),
+                    (serverWs: HttpWebSocket) =>
+                        Sync.ensure(mark("server ensure").andThen(serverEnded.set(true)))(
+                            UIServer.serveSession(serverWs, app).andThen(mark("server body returned"))
+                        ),
                     (clientWs: HttpWebSocket) =>
                         for
                             // Confirm the server subscription is live: it parks on the test-held leaf, so leafRef has exactly one waiter.
+                            _ <- mark("2 awaitSessionStart")
                             _ <- awaitSessionStart(clientWs)
+                            _ <- mark("3 await waiters==1")
                             _ <- assertEventually(leafRef.waiters.map(_ == 1))
                             // Close the client: fires ws.onPeerClose on the server, ending the race and closing the
                             // connection's subscription Scope (cascade teardown).
+                            _ <- mark("4 client close")
                             _ <- clientWs.close()
+                            _ <- mark("5 client closed")
                         yield ()
                 )
             }
+            _ <- mark("6 connect returned; await serverEnded")
             // The connection's owning Scope closed (serveSession ended): the cascade ran.
             _ <- assertEventually(serverEnded.get)
+            _ <- mark("7 set 99")
             // Leaf witness: SET the leaf to swap its promise, discarding the parked ghost. A leaked live subscription
             // re-parks on the new promise (waiters >= 1); a torn-down one does not, so waiters settles to 0.
             _       <- leafRef.set(99)
+            _       <- mark("8 await waiters==0")
             _       <- assertEventually(leafRef.waiters.map(_ == 0))
+            _       <- mark("9 done")
             waiters <- leafRef.waiters
         yield assert(waiters == 0)
         end for
@@ -860,4 +875,43 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         assert(Json.decode[HtmlOp](encoded) == Result.Success(op))
     }
 
+end UIServerWsTest
+
+// Diagnostic probe for the teardown hang; not for merge.
+object UIServerWsTest:
+    private val iterations = new java.util.concurrent.atomic.AtomicInteger(0)
+    private val steps      = new java.util.concurrent.ConcurrentHashMap[Int, (String, Long)]()
+    val leaves             = new java.util.concurrent.ConcurrentHashMap[Int, SignalRef[Int]]()
+    private val started    = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+    def nextIteration(): Int =
+        startWatchdog()
+        iterations.incrementAndGet()
+
+    def mark(it: Int, s: String): Unit =
+        java.lang.System.err.println(s"WSPROBE it=$it t=${java.lang.System.currentTimeMillis()} $s")
+        discard(steps.put(it, (s, java.lang.System.currentTimeMillis())))
+
+    private def startWatchdog(): Unit =
+        if started.compareAndSet(false, true) then
+            val t = new Thread(() =>
+                val reported = scala.collection.mutable.Set.empty[(Int, String)]
+                while true do
+                    Thread.sleep(1000)
+                    val now = java.lang.System.currentTimeMillis()
+                    steps.forEach { (it, entry) =>
+                        val (s, at) = entry
+                        if !s.startsWith("9") && now - at > 20000 && reported.add((it, s)) then
+                            import AllowUnsafe.embrace.danger
+                            val w = Option(leaves.get(it)).map(_.unsafe.waiters()).getOrElse(-1)
+                            java.lang.System.err.println(s"WSPROBE STUCK it=$it for ${now - at}ms at [$s] leafWaiters=$w")
+                            java.lang.System.err.println(kyo.internal.Diagnostics.dumpAll())
+                        end if
+                    }
+                end while
+            )
+            t.setDaemon(true)
+            t.start()
+        end if
+    end startWatchdog
 end UIServerWsTest
