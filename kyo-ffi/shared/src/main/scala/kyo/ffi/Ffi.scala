@@ -382,13 +382,10 @@ object Ffi:
 
     private val cache = new java.util.concurrent.ConcurrentHashMap[Class[?], AnyRef]()
 
-    private val failures = new java.util.concurrent.ConcurrentHashMap[Class[?], Throwable]()
-
     // shared so `load`'s computeIfAbsent never allocates its mapping function; see the note on `load`
     private val instantiateFn: java.util.function.Function[Class[?], AnyRef] = instantiate(_)
 
     private def instantiate(cls: Class[?]): AnyRef =
-        Maybe(failures.get(cls)).foreach(failure => throw failure)
         val traitFqn = cls.getName
         val implName = traitFqn + "Impl"
         // Manifest-driven direct-load pre-check (reflection-free). Reading `cls.getName` does NOT initialize the
@@ -408,17 +405,6 @@ object Ffi:
                     case Absent => ()
             case Absent => ()
         end match
-        // Only a failure of the construction is recorded: that is the one the platform makes permanent, where the pre-check above
-        // reads the manifest and filesystem afresh on every call.
-        try kyo.ffi.internal.FfiReflect.instantiate(implName, traitFqn)
-        catch
-            case e: VirtualMachineError => throw e
-            case e: Throwable           =>
-                val failure = e match
-                    case e: ExceptionInInitializerError if e.getCause ne null => e.getCause
-                    case e                                                    => e
-                discard(failures.putIfAbsent(cls, failure))
-                throw failures.get(cls)
-        end try
+        kyo.ffi.internal.FfiReflect.instantiate(implName, traitFqn)
     end instantiate
 end Ffi

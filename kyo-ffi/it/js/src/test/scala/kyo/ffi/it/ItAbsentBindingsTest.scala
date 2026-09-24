@@ -29,10 +29,16 @@ class ItAbsentBindingsTest extends Test:
         assert(chain.exists(t => String.valueOf(t.getMessage).contains("kyo-it-absent-")))
     }
 
+    // A JS error crosses a Scala `catch` as a fresh JavaScriptException each time, so the same failure is the same wrapped error.
+    private def thrown(t: Throwable): AnyRef =
+        t match
+            case scala.scalajs.js.JavaScriptException(e) => e.asInstanceOf[AnyRef]
+            case t                                       => t
+
     "a second Ffi.load of the same binding rethrows the first failure" in {
         val first  = loadFailure()
         val second = loadFailure()
-        assert(second eq first)
+        assert(thrown(second) eq thrown(first))
     }
 
 end ItAbsentBindingsTest
