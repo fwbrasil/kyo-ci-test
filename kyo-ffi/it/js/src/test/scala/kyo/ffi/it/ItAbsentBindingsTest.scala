@@ -26,7 +26,7 @@ class ItAbsentBindingsTest extends Test:
     "Ffi.load of a binding whose library does not open fails the load itself, with the loader's exception" in {
         val failure = loadFailure()
         val chain   = Iterator.iterate(failure)(_.getCause).takeWhile(_ ne null).toList
-        assert(chain.exists(t => String.valueOf(t.getMessage).contains("kyo-it-absent-")))
+        assert(chain.exists(t => String.valueOf(t.getMessage).contains("kyo-it-absent-")), s"failure chain: ${chain.map(_.toString)}")
     }
 
     // A JS error crosses a Scala `catch` as a fresh JavaScriptException each time, so the same failure is the same wrapped error.

@@ -26,7 +26,7 @@ private[ffi] object FfiReflectCore:
                 try ctor()
                 catch
                     case e: VirtualMachineError => throw e
-                    case e: Throwable =>
+                    case e: Throwable           =>
                         val failure = e match
                             case e: ExceptionInInitializerError if e.getCause ne null => e.getCause
                             case e                                                    => e

@@ -24,7 +24,10 @@ class ItAbsentBindingsTest extends Test:
         val chain   = Iterator.iterate(failure)(_.getCause).takeWhile(_ ne null).toList
         assert(!failure.isInstanceOf[java.lang.reflect.InvocationTargetException])
         assert(!failure.isInstanceOf[ExceptionInInitializerError])
-        assert(chain.exists(t => String.valueOf(t.getMessage).contains(notALibrary.getFileName.toString)))
+        assert(
+            chain.exists(t => String.valueOf(t.getMessage).contains(notALibrary.getFileName.toString)),
+            s"failure chain: ${chain.map(_.toString)}"
+        )
     }
 
     "a second Ffi.load of the same binding rethrows the first failure" in {
