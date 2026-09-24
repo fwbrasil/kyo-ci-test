@@ -153,6 +153,11 @@ jobs:
           action="${{ inputs.mode == 'diff' && 'testDiff' || 'test' }}"
           ./scripts/ci-test.sh "${{ matrix.target }}" "$action"
 
+      - name: probe kernel log
+        if: ${{ always() && startsWith(inputs.os, 'linux') }}
+        shell: bash
+        run: sudo dmesg -T 2>/dev/null | grep -i -E 'segfault|killed process|out of memory|oom|trap|general protection' | tail -50 || true
+
       - name: upload probe netlogs
         if: ${{ always() && startsWith(inputs.os, 'windows') }}
         uses: actions/upload-artifact@v7
