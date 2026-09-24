@@ -338,8 +338,8 @@ object Ffi:
       * this platform, before instantiating anything. Accounted for means: the manifest declares this platform and the bundled resource or a
       * readable `-Dkyo.ffi.<id>.path` override exists; or the manifest does not declare this platform and the library still resolves, by
       * override, by a bundled resource, or as a system install. A library declared for other platforms only, which is what
-      * `FfiLibrary.osTargets` produces, therefore fails HERE with a catchable `LibraryNotFound` rather than in the impl companion's
-      * initializer at the first call, where a throw poisons the class. This is a JVM guarantee: JS ships no manifest and raises its own
+      * `FfiLibrary.osTargets` produces, therefore fails with a catchable `LibraryNotFound` before the impl companion's initializer runs,
+      * rather than inside it, where a throw poisons the class. This is a JVM guarantee: JS ships no manifest and raises its own
       * `LibraryNotFound` from the loader instead, and Native links its C at build time.
       *
       * The library is then loaded here as well: constructing the generated impl initializes its companion, which opens the native, runs the
@@ -413,7 +413,7 @@ object Ffi:
         try kyo.ffi.internal.FfiReflect.instantiate(implName, traitFqn)
         catch
             case e: VirtualMachineError => throw e
-            case e: Throwable =>
+            case e: Throwable           =>
                 val failure = e match
                     case e: ExceptionInInitializerError if e.getCause ne null => e.getCause
                     case e                                                    => e
