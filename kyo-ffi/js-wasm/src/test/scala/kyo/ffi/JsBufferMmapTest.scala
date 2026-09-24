@@ -102,7 +102,9 @@ class JsBufferMmapTest extends Test:
 
         "on a host without Node's fs module throws UnsupportedOperationException" in {
             withoutGetBuiltinModule {
-                interceptThrownMessage[UnsupportedOperationException]("Buffer.mmapReadOnly") {
+                interceptThrownMessage[UnsupportedOperationException](
+                    "Buffer.mmapReadOnly needs Node's fs module (Node, Bun or Deno), which this host does not provide"
+                ) {
                     Buffer.mmapReadOnly("/any/path/to/file.bin")
                 }
             }
