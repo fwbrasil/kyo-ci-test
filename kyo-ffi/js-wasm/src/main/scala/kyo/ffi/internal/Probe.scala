@@ -12,7 +12,7 @@ object Probe:
 
     // Event-loop stall watchdog: a 50ms interval that reports any tick arriving more than 250ms late. unref'd so it never keeps
     // the process alive.
-    private var last = js.Date.now()
+    private var last  = js.Date.now()
     private val timer =
         js.Dynamic.global.setInterval(
             (() =>

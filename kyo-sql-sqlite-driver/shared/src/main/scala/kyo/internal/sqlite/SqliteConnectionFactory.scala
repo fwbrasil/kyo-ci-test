@@ -23,7 +23,8 @@ final private[kyo] class SqliteConnectionFactory(bindings: SqliteBindings) exten
                 Sync.defer(java.lang.System.currentTimeMillis()).flatMap { t0 =>
                     Sync.defer(java.lang.System.err.println(s"[probe-sqlite t=$t0] open ${local.path} start")).andThen {
                         Sync.ensure(Sync.defer(java.lang.System.err.println(
-                            s"[probe-sqlite t=${java.lang.System.currentTimeMillis()}] open ${local.path} settled after ${java.lang.System.currentTimeMillis() - t0}ms"
+                            s"[probe-sqlite t=${java.lang.System.currentTimeMillis()}] open ${local.path} settled after ${java.lang.System.currentTimeMillis() -
+                                    t0}ms"
                         )))(openLocal(local, config))
                     }
                 }

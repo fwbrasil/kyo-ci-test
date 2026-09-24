@@ -35,6 +35,7 @@ private[ffi] object Koffi:
             Probe.log(s"koffi resolve took ${js.Date.now() - t0}ms")
         end if
         cached
+    end dynamic
 
     private def resolve(): js.Dynamic =
         var lastErr: Throwable | Null = null
