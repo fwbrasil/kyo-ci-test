@@ -41,6 +41,15 @@ on:
           - windows-latest
           - windows-11-arm
         default: ubuntu-latest
+      custom-target:
+        description: 'Used only when mode=custom: the platform the runner is provisioned for.'
+        type: choice
+        options:
+          - JS
+          - JVM
+          - Native
+          - Wasm
+        default: JS
       ref:
         description: 'Git ref (branch or sha) to check out and test. Defaults to the ref the workflow is dispatched on.'
         type: string
@@ -156,7 +165,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           os: ${{ steps.os.outputs.os }}
-          target: JS
+          target: ${{ inputs.custom-target }}
       - name: Run command
         shell: bash
         env:
