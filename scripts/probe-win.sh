@@ -32,6 +32,10 @@ for i in $(seq 1 "$iterations"); do
             find kyo-sql-sqlite kyo-sql-sqlite-driver -path '*js/target*' \( -name '*.dll' -o -name '*.so' -o -name '*.dylib' \) -print -delete
             sbt 'kyo-sql-sqlite-driverJS/test' 'kyo-sql-sqliteJS/test' 2>&1 | tee "$out/pass-$i.log"
             ;;
+        aeron)
+            ulimit -c unlimited 2>/dev/null || true
+            sbt 'kyo-aeronWasm/testOnly kyo.AeronTransportTest' 'kyo-aeronJS/testOnly kyo.AeronTransportTest' 2>&1 | tee "$out/pass-$i.log"
+            ;;
         uijvm)
             sbt 'kyo-uiJVM/test' 2>&1 | tee "$out/pass-$i.log"
             ;;
