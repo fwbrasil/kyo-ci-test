@@ -438,10 +438,18 @@ class FiberTest extends kyo.test.Test[Any]:
         }
 
         "exception in use function" in {
-            val fiber = Fiber.succeed(42)
-            for
-                result <- Abort.run[Throwable](fiber.use(_ => throw new RuntimeException("Use exception")))
-            yield assert(result.isPanic)
+            // Probe, not for merge: many rounds per run, and the failing result printed.
+            Loop.indexed { i =>
+                if i >= 20000 then Loop.done
+                else
+                    val fiber = Fiber.succeed(42)
+                    Abort.run[Throwable](fiber.use(_ => throw new RuntimeException("Use exception"))).map { result =>
+                        if !result.isPanic then
+                            java.lang.System.err.println(s"FIBERPROBE round $i: $result")
+                        assert(result.isPanic, s"round $i: $result")
+                        Loop.continue
+                    }
+            }
         }
     }
 
