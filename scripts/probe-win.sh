@@ -29,7 +29,7 @@ for i in $(seq 1 "$iterations"); do
             sbt 'kyo-sql-sqliteJS/test' 2>&1 | tee "$out/pass-$i.log"
             ;;
         browser)
-            sbt 'kyo-browserJS/testOnly kyo.BrowserCoreTest kyo.BrowserIsolateTest' 2>&1 | tee "$out/pass-$i.log"
+            sbt 'kyo-browserJS/test' 2>&1 | tee "$out/pass-$i.log"
             ;;
     esac
     [ "${PIPESTATUS[0]}" -eq 0 ] || status=1
