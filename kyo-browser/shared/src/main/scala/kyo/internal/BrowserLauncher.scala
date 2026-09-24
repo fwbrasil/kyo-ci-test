@@ -82,7 +82,7 @@ private[kyo] object BrowserLauncher:
         : Process < (Sync & Scope & Abort[BrowserSetupException]) =
         System.env[String]("KYO_PROBE_NETLOG_DIR").map { netlogDir =>
             val netlog = netlogDir.fold(Seq.empty[String])(d =>
-                Seq(s"--log-net-log=$d/${tmpDir.toString.replace('\\', '/').split('/').last}.json", "--net-log-capture-mode=Everything")
+                Seq(s"--log-net-log=$d/${tmpDir.toString.replace('\\', '/').split('/').last}.json")
             )
             spawnChromeWith(config, tmpDir, (config.executable +: chromiumFlags(tmpDir, config.headless)) ++ config.extraArgs ++ netlog)
         }

@@ -140,11 +140,27 @@ jobs:
         shell: bash
         run: ./scripts/native-relink-selftest.sh
 
+      - name: probe netlog dir
+        if: ${{ startsWith(inputs.os, 'windows') }}
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/netlog"
+          echo "KYO_PROBE_NETLOG_DIR=$(cd "$RUNNER_TEMP/netlog" && pwd -W)" >> "$GITHUB_ENV"
+
       - name: ${{ inputs.mode }} ${{ matrix.target }} (${{ inputs.os }})
         shell: bash
         run: |
           action="${{ inputs.mode == 'diff' && 'testDiff' || 'test' }}"
           ./scripts/ci-test.sh "${{ matrix.target }}" "$action"
+
+      - name: upload probe netlogs
+        if: ${{ always() && startsWith(inputs.os, 'windows') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: netlog-${{ inputs.os }}-${{ matrix.target }}
+          path: ${{ runner.temp }}/netlog
+          if-no-files-found: ignore
+          compression-level: 9
 
       # A JVM that dies in native code writes its diagnosis next to the forked test process and the runner
       # discards it with the workspace, so the only trace left in the log is a task failure carrying no test
