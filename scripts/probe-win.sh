@@ -34,7 +34,7 @@ for i in $(seq 1 "$iterations"); do
             ;;
         aeron)
             ulimit -c unlimited 2>/dev/null || true
-            sbt 'kyo-aeronWasm/testOnly kyo.AeronTransportTest' 'kyo-aeronJS/testOnly kyo.AeronTransportTest' 2>&1 | tee "$out/pass-$i.log"
+            sbt 'kyo-aeronWasm/test' 2>&1 | tee "$out/pass-$i.log"
             ;;
         uijvm)
             sbt 'kyo-uiJVM/test' 2>&1 | tee "$out/pass-$i.log"
