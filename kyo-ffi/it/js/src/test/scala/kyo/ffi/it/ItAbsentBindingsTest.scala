@@ -1,18 +1,38 @@
 package kyo.ffi.it
 
 import kyo.ffi.Ffi
-import kyo.ffi.FfiLoadError
+import scala.scalajs.js
 
 class ItAbsentBindingsTest extends Test:
 
-    "Ffi.load of a binding whose library is absent throws LibraryNotFound, not a binding that fails at its first call" in {
-        val ex = intercept[FfiLoadError.LibraryNotFound](Ffi.load[ItAbsentBindings])
-        assert(ex.getMessage.contains("kyo_it_absent"))
+    // One process-wide failure, shared by both leaves: the override must be in place before the first load, and a failed load is final.
+    // The override is honored only for a file that exists.
+    private val notALibrary =
+        val require = js.Dynamic.global.require
+        val path    = require("path").join(require("os").tmpdir(), s"kyo-it-absent-${java.lang.System.nanoTime()}.txt")
+        require("fs").writeFileSync(path, "not a shared library")
+        path.asInstanceOf[String]
+    end notALibrary
+    js.Dynamic.global.process.env.updateDynamic("KYO_FFI_KYO_IT_ABSENT_PATH")(notALibrary)
+
+    private def loadFailure()(using kyo.test.AssertScope): Throwable =
+        val failure =
+            try
+                Ffi.load[ItAbsentBindings]
+                kyo.Absent
+            catch case e: Throwable => kyo.Present(e)
+        failure.getOrElse(fail("Ffi.load returned a binding whose library does not open"))
+    end loadFailure
+
+    "Ffi.load of a binding whose library does not open fails the load itself, with the loader's exception" in {
+        val failure = loadFailure()
+        val chain   = Iterator.iterate(failure)(_.getCause).takeWhile(_ ne null).toList
+        assert(chain.exists(t => String.valueOf(t.getMessage).contains("kyo-it-absent-")))
     }
 
-    "a second Ffi.load of the same absent binding throws the same LibraryNotFound" in {
-        val first  = intercept[FfiLoadError.LibraryNotFound](Ffi.load[ItAbsentBindings])
-        val second = intercept[FfiLoadError.LibraryNotFound](Ffi.load[ItAbsentBindings])
+    "a second Ffi.load of the same binding rethrows the first failure" in {
+        val first  = loadFailure()
+        val second = loadFailure()
         assert(second eq first)
     }
 
