@@ -1,19 +1,18 @@
 package kyo.ffi.it
 
 import kyo.ffi.Ffi
-import scala.scalajs.js
 
 class ItAbsentBindingsTest extends Test:
 
     // One process-wide failure, shared by both leaves: the override must be in place before the first load, and a failed load is final.
     // The override is honored only for a file that exists.
     private val notALibrary =
-        val require = js.Dynamic.global.require
+        val require = scala.scalajs.js.Dynamic.global.require
         val path    = require("path").join(require("os").tmpdir(), s"kyo-it-absent-${java.lang.System.nanoTime()}.txt")
         require("fs").writeFileSync(path, "not a shared library")
         path.asInstanceOf[String]
     end notALibrary
-    js.Dynamic.global.process.env.updateDynamic("KYO_FFI_KYO_IT_ABSENT_PATH")(notALibrary)
+    scala.scalajs.js.Dynamic.global.process.env.updateDynamic("KYO_FFI_KYO_IT_ABSENT_PATH")(notALibrary)
 
     private def loadFailure()(using kyo.test.AssertScope): Throwable =
         val failure =
