@@ -62,6 +62,18 @@ class NativeLoaderJsTest extends Test:
         assert(ex.getMessage.contains(s"package for ${ex.platformTag}"))
     }
 
+    "env var naming an existing file is not honored on a host without Node's fs module, which cannot confirm it exists" in {
+        sys.props.update(prefixProp, "@nope/never-installed")
+        setEnv(envKey, existingPath)
+        val process = sjs.Dynamic.global.process
+        val saved   = process.getBuiltinModule
+        process.updateDynamic("getBuiltinModule")(sjs.undefined)
+        val ex =
+            try intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId))
+            finally process.updateDynamic("getBuiltinModule")(saved)
+        assert(ex.libraryId == libId)
+    }
+
     "without env var, an unresolvable package prefix raises LibraryNotFound (no blind bare-name fallback)" in {
         sys.props.update(prefixProp, "@nope/never-installed")
         val ex = intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId))
