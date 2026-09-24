@@ -367,7 +367,7 @@ class CompileLoadRoundTripTest extends kyo.test.Test[Any]:
             val implClass = cl.loadClass(absentFqcn)
             val failure   =
                 try
-                    discard(implClass.getDeclaredConstructor().newInstance())
+                    implClass.getDeclaredConstructor().newInstance()
                     None
                 catch case e: java.lang.reflect.InvocationTargetException => Some(e.getCause)
             val chain = Iterator.iterate(failure.orNull)(_.getCause).takeWhile(_ ne null).toList
