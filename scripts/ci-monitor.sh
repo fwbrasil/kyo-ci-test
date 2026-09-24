@@ -265,18 +265,40 @@ sockets_headline() {
     printf 'tcp=%s timeWait=%s ephemeral=%s' "${tcp:-?}" "${timewait:-?}" "${range:-?}"
 }
 
+# Kernel-pressure headline, Windows only: `npp` is the nonpaged pool in MB and `handles` the system handle count,
+# the two resources behind a WSAENOBUFS that the port counts above do not explain; `chrome` and `node` count the
+# live processes of each, since a process a suite failed to reap keeps its sockets and pool allocations for the
+# rest of the job. Best-effort; a field that cannot be sampled prints `?`.
+kernel_headline() {
+    case "$OS" in
+        MINGW* | MSYS* | CYGWIN*) ;;
+        *) return 0 ;;
+    esac
+    local npp handles chrome node
+    if command -v typeperf >/dev/null 2>&1; then
+        read -r npp handles < <(MSYS2_ARG_CONV_EXCL='*' typeperf "\\Memory\\Pool Nonpaged Bytes" "\\Process(_Total)\\Handle Count" -sc 1 2>/dev/null |
+            tr -d '\r' | awk -F'","' 'NR==3 { gsub(/"/, "", $3); printf "%d %d", $2 / 1048576, $3 }')
+    fi
+    if command -v tasklist >/dev/null 2>&1; then
+        read -r chrome node < <(MSYS2_ARG_CONV_EXCL='*' tasklist /FO CSV /NH 2>/dev/null | tr -d '\r' |
+            awk -F'","' '{ n = tolower($1); gsub(/"/, "", n) } n ~ /^chrome/ { c++ } n == "node.exe" { d++ } END { printf "%d %d", c, d }')
+    fi
+    printf 'npp=%sM handles=%s chrome=%s node=%s' "${npp:-?}" "${handles:-?}" "${chrome:-?}" "${node:-?}"
+}
+
 ncpu=$( (command -v nproc >/dev/null 2>&1 && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo '?')
 log "started interval=${INTERVAL}s src=$MON_SRC cores=$ncpu sched=${SCHED_FILE:-none} diskWarnMB=$DISK_WARN_MB diskCritMB=$DISK_CRIT_MB diskAbortMB=${DISK_ABORT_MB:-off}"
 while true; do
     os="$(os_headline)"
     tasks="$(tasks_headline)"
     sock="$(sockets_headline)"
+    kern="$(kernel_headline)"
     top="$(proc_top)"
     sc="$(sched_snapshot)"
     free_mb=$(df -Pm . 2>/dev/null | awk 'NR==2{print $4}')
     disk_check "$free_mb"
     crit=""
     [ "$disk_critted" = "1" ] && crit=" DISK-CRIT"
-    echo "[ci-mon $(date -u +%H:%M:%S)]${os:+ $os}${tasks:+ $tasks}${sock:+ $sock}${top:+ $top}${sc:+ $sc}${crit}"
+    echo "[ci-mon $(date -u +%H:%M:%S)]${os:+ $os}${tasks:+ $tasks}${sock:+ $sock}${kern:+ $kern}${top:+ $top}${sc:+ $sc}${crit}"
     sleep "$INTERVAL"
 done
