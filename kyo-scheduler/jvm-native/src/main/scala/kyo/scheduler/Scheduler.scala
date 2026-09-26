@@ -103,10 +103,10 @@ final class Scheduler(
 
     import config.*
 
-    private val pool    = LoomSupport.tryVirtualize(virtualizeWorkers, workerExecutor)
-    private val clock   = new InternalClock(clockExecutor)
-    private val workers = new Array[Worker](maxWorkers)
-    private val flushes = new LongAdder
+    private val pool                                     = LoomSupport.tryVirtualize(virtualizeWorkers, workerExecutor)
+    private val clock                                    = new InternalClock(clockExecutor)
+    private val workers                                  = new Array[Worker](maxWorkers)
+    private val flushes                                  = new LongAdder
     @volatile private[scheduler] var cycleThread: Thread = null
     @volatile private[scheduler] var cycles: Long        = 0L
 
