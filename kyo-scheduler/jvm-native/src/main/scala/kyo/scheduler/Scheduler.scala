@@ -107,6 +107,8 @@ final class Scheduler(
     private val clock   = new InternalClock(clockExecutor)
     private val workers = new Array[Worker](maxWorkers)
     private val flushes = new LongAdder
+    @volatile private[scheduler] var cycleThread: Thread = null
+    @volatile private[scheduler] var cycles: Long        = 0L
 
     @volatile private var allocatedWorkers = 0
     @volatile private var currentWorkers   = coreWorkers
@@ -494,6 +496,7 @@ final class Scheduler(
             (
                 () => {
                     val thread = Thread.currentThread()
+                    cycleThread = thread
                     while (!thread.isInterrupted()) {
                         cycleWorkers()
                         LockSupport.parkNanos(cycleIntervalNs)
@@ -513,6 +516,7 @@ final class Scheduler(
       * Critical for work stealing and load balancing decisions.
       */
     private def cycleWorkers(): Unit = {
+        cycles += 1
         try {
             val nowMs    = clock.currentMillis()
             var position = 0

@@ -106,7 +106,7 @@ private[scheduler] class BlockingMonitor(
     private val blockedFlags  = new Array[Boolean](maxWorkers)
     private val blockCounts   = new Array[Int](maxWorkers)
 
-    @volatile private var monitorThread: Thread = null
+    @volatile private[scheduler] var monitorThread: Thread = null
     private var lastCycleNanos: Long            = 0L
     // Effective threshold scaled by scheduling pressure. When the monitor's own parkNanos
     // takes longer than expected, the system is CPU-starved and flat CPU time on worker
